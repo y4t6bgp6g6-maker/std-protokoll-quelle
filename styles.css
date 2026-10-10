@@ -1,19 +1,66 @@
+@font-face { font-family: 'Schibsted Grotesk'; src: url(fonts/schibsted-grotesk.woff2) format('woff2'); font-weight: 400 800; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url(fonts/plex-mono-600.woff2) format('woff2'); font-weight: 600; font-display: swap; }
+@font-face { font-family: 'IBM Plex Mono'; src: url(fonts/plex-mono-700.woff2) format('woff2'); font-weight: 700; font-display: swap; }
+
+/* Farben: hell (Vorgabe) und dunkel – Auswahl in den Einstellungen („Wie iPhone“, Hell, Dunkel), gesetzt als data-theme */
 :root {
-  /* Yetizettel: immer dunkel in Mitternachtsblau (wie der Hintergrund des Icons), damit man die Apps sofort unterscheidet */
-  --bg: #03060d;
-  --card: #0b1322;
-  --text: #ffffff;
-  --muted: #7d8aa3;
-  --sep: #1d2b45;
-  --accent: #5aa9ff;
-  --accent-soft: rgba(90, 169, 255, 0.18);
-  --danger: #ff453a;
-  --success: #30d158;
-  --warning: #ff9f0a;
-  --fill: #16223a;
-  --inactive: #070c17;
+  --bg: #f3f0e8;
+  --card: #fffefb;
+  --text: #181f19;
+  --muted: #62645c;
+  --sep: #e8e4d9;
+  --accent: #213f99;
+  --accent-fill: #213f99;
+  --on-accent: #ffffff;
+  --accent-soft: #e5eaf7;
+  --danger: #c9302a;
+  --success: #1e8a4a;
+  --warning: #b86200;
+  --fill: #efece2;
+  --inactive: #eae6dc;
+  --backdrop: rgba(30, 26, 18, 0.32);
+  --sheet: #f8f6f0;
+  --shadow: 0 1px 2px rgba(21, 32, 26, 0.05), 0 4px 16px rgba(21, 32, 26, 0.06);
+  --vac: #f0a23a;
+  --vac-ink: #9a5800;
+  --sick: #b12a5b;
+  --sick-ink: #b12a5b;
+  --holiday: #8e44c9;
+  --holiday-ink: #7432ad;
+  --off: #8e8e93;
+  --off-ink: #5f6862;
+  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Abstand unter der Leiste: Home-Balken; fällt weg, soweit iOS unten einen ungenutzten Streifen lässt (fitBottomGap) */
+  --tab-pad: max(0px, calc(env(safe-area-inset-bottom) - var(--vp-gap, 0px)));
+  --tab-h: calc(60px + var(--tab-pad));
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  --bg: #0c1114;
+  --card: #171d22;
+  --text: #eef1f2;
+  --muted: #98a2a9;
+  --sep: #27303a;
+  --accent: #8ea6ff;
+  --accent-fill: #3d5fe0;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(91, 124, 245, 0.18);
+  --danger: #ff6b60;
+  --success: #4ade80;
+  --warning: #f5b65c;
+  --fill: #20282f;
+  --inactive: #10151a;
   --backdrop: rgba(0, 0, 0, 0.55);
-  --sheet: #0d1628;
+  --sheet: #13191f;
+  --shadow: inset 0 0 0 1px #232b34;
+  --vac: #f0a63c;
+  --vac-ink: #f5b65c;
+  --sick: #f0679a;
+  --sick-ink: #f57faa;
+  --holiday: #c08bff;
+  --holiday-ink: #c9a0ff;
+  --off: #98a2a9;
+  --off-ink: #98a2a9;
   color-scheme: dark;
 }
 
@@ -24,7 +71,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+  font: 17px/1.3 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   overscroll-behavior-y: none;
   /* Wie eine App: kein Markieren, keine Lupe, kein Menü beim langen Drücken – außer in Eingabefeldern */
   -webkit-user-select: none;
@@ -86,10 +133,8 @@ input { font: inherit; color: inherit; }
 .to-top,
 .sum-pill {
   border-radius: 22px;
-  background: color-mix(in srgb, var(--card) 72%, transparent);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
-  backdrop-filter: saturate(180%) blur(20px);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1), inset 0 0 0 0.5px rgba(128, 128, 128, 0.3);
+  background: var(--card);
+  box-shadow: var(--shadow);
 }
 .nav > .nav-btn:not(:empty) { padding: 0; }
 .nav-title:not(:empty) { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; }
@@ -104,7 +149,7 @@ input { font: inherit; color: inherit; }
   .nav-title:not(:empty) { padding: 0 10px; }
 }
 
-.large-title { font-size: 34px; font-weight: 700; margin: 4px 4px 12px; letter-spacing: 0.01em; }
+.large-title { font-size: 34px; font-weight: 800; margin: 4px 4px 12px; letter-spacing: -0.03em; }
 .section-title {
   font-size: 13px;
   font-weight: 400;
@@ -115,7 +160,7 @@ input { font: inherit; color: inherit; }
 .footnote { font-size: 13px; color: var(--muted); margin: 7px 16px 0; }
 .center { text-align: center; margin-top: 28px; }
 
-.card { background: var(--card); border-radius: 12px; overflow: hidden; }
+.card { background: var(--card); border-radius: 20px; overflow: hidden; box-shadow: var(--shadow); }
 
 /* Liste */
 .list > * + * { border-top: 0.5px solid var(--sep); }
@@ -248,7 +293,7 @@ input { font: inherit; color: inherit; }
 .toggle:checked::after { transform: translateX(20px); }
 
 /* Tage */
-.day { background: var(--card); border-radius: 12px; margin-top: 16px; overflow: visible; }
+.day { background: var(--card); border-radius: 20px; margin-top: 16px; overflow: visible; box-shadow: var(--shadow); }
 /* Feste Farbe je Wochentag: Streifen links (Arbeitstage) */
 .day[class*="wd-"] { position: relative; }
 /* eigene Ebene über den Zeilen (die haben fürs Verschieben einen eigenen Hintergrund) */
@@ -256,7 +301,7 @@ input { font: inherit; color: inherit; }
   content: '';
   position: absolute;
   inset: 0;
-  border-radius: 12px;
+  border-radius: 20px;
   box-shadow: inset 4px 0 0 var(--wd);
   pointer-events: none;
   z-index: 2;
@@ -502,7 +547,7 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 }
 .wp-day.out { color: var(--muted); opacity: 0.55; }
 .wp-day.in-week { background: var(--fill); color: var(--muted); opacity: 1; }
-.wp-day.in-sheet { background: var(--accent); color: #fff; font-weight: 600; }
+.wp-day.in-sheet { background: var(--accent-fill); color: var(--on-accent); font-weight: 600; }
 .wp-day.in-week:nth-child(8n + 2) { border-radius: 10px 0 0 10px; }
 .wp-day.in-week:nth-child(8n + 8) { border-radius: 0 10px 10px 0; }
 .wp-day.sel::after {
@@ -595,12 +640,12 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 /* Tagesart (Krankheit, Urlaub, Feiertag, Frei) */
 .day-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .status-btn { background: var(--fill); color: var(--text); font-weight: 500; }
-.status-btn.set { color: #fff; }
-.status-krank { --status: #ff3b30; }
-.status-urlaub { --status: #34c759; }
-.status-feiertag { --status: #af52de; }
-.status-frei { --status: #8e8e93; }
-.status-btn.set { background: var(--status); }
+.status-btn.set { color: var(--status-ink); }
+.status-krank { --status: var(--sick); --status-ink: var(--sick-ink); }
+.status-urlaub { --status: var(--vac); --status-ink: var(--vac-ink); }
+.status-feiertag { --status: var(--holiday); --status-ink: var(--holiday-ink); }
+.status-frei { --status: var(--off); --status-ink: var(--off-ink); }
+.status-btn.set { background: color-mix(in srgb, var(--status) 18%, transparent); }
 /* Tage mit Tagesart: kompakte Zeile mit getöntem Etikett */
 .status-head { border-bottom: 0; padding: 10px 12px 10px 14px; gap: 10px; }
 .status-day.has-work .status-head { border-bottom: 0.5px solid var(--sep); }
@@ -714,8 +759,8 @@ button.nav-title { font-size: 17px; }
 .db-name { font-size: 12px; font-weight: 600; color: var(--muted); }
 .db-h { font-size: 13px; font-weight: 500; min-height: 17px; white-space: nowrap; }
 .db-day.off { opacity: 0.35; }
-.db-day.has-status .db-h { color: var(--status); font-weight: 600; }
-.db-day.today { background: var(--accent); }
+.db-day.has-status .db-h { color: var(--status-ink); font-weight: 600; }
+.db-day.today { background: var(--accent-fill); }
 .db-day.today .db-name, .db-day.today .db-h { color: #fff; }
 
 /* Suche in der Liste */
@@ -1017,7 +1062,8 @@ button.nav-title { font-size: 17px; }
 .ps-row > :nth-child(2) { background: rgba(90, 169, 255, 0.08); }
 .ps-row > :nth-child(3) { background: rgba(179, 140, 255, 0.08); }
 .ps-row.ov-head > :nth-child(2) { color: var(--accent); font-weight: 700; }
-.ps-row.ov-head > :nth-child(3) { color: #b38cff; font-weight: 700; }
+.ps-row.ov-head > :nth-child(3) { color: #7b4fd0; font-weight: 700; }
+:root[data-theme='dark'] .ps-row.ov-head > :nth-child(3) { color: #b38cff; }
 /* Zu breite Beträge (z. B. vierstellige Unterschiede bei leerem Monat): ganze Tabelle kleiner, Zahlenspalten breiter */
 .ps-table.tight .ps-row { grid-template-columns: minmax(0, 1fr) 84px 84px 80px; padding-left: 12px; }
 .ps-table.tight .ps-row:not(.ov-head) { font-size: 12.5px; }
@@ -1045,7 +1091,7 @@ button.nav-title { font-size: 17px; }
 .ov-seg::-webkit-scrollbar { display: none; }
 .ov-seg-in { display: flex; min-width: 100%; width: max-content; padding: 3px; box-sizing: border-box; }
 .ov-seg button { flex: 1 0 78px; height: 38px; border-radius: 19px; font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-.ov-seg button.on { background: var(--accent); color: #fff; }
+.ov-seg button.on { background: var(--accent-fill); color: var(--on-accent); }
 .ov-seg.single button.on { background: none; color: var(--text); }
 .ov-seg.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 48px); mask-image: linear-gradient(to right, transparent, #000 48px); }
 .ov-seg.fade-r { -webkit-mask-image: linear-gradient(to left, transparent, #000 48px); mask-image: linear-gradient(to left, transparent, #000 48px); }
@@ -1061,7 +1107,8 @@ button.nav-title { font-size: 17px; }
 .ov-totallink { display: block; color: inherit; text-decoration: none; }
 .ov-months .ov-row { padding-right: 46px; }
 /* Pfeil addiert sich zum Hintergrund: überall gleich gut sichtbar – auf Streifen, Karte und Gesamt-Zeile */
-.ov-chev { position: absolute; right: 12px; top: 0; bottom: 0; display: flex; align-items: center; color: #121823; mix-blend-mode: plus-lighter; }
+.ov-chev { position: absolute; right: 12px; top: 0; bottom: 0; display: flex; align-items: center; color: var(--muted); }
+:root[data-theme='dark'] .ov-chev { color: #121823; mix-blend-mode: plus-lighter; }
 .ov-month:active, .ov-totallink:active .ov-total { background: var(--fill); }
 /* Jahresübersicht */
 .yr-card { margin-bottom: 6px; }
@@ -1120,7 +1167,7 @@ button.nav-title { font-size: 17px; }
 .ws-opt { padding: 5px 10px; border-radius: 14px; background: var(--fill); color: var(--text); font-size: 14px; text-align: left; }
 .ws-opt.sel { background: var(--accent-soft); color: var(--accent); }
 .ws-go-wrap { padding: 12px 16px 0; }
-.ws-go { width: 100%; min-height: 50px; border-radius: 14px; background: var(--accent); color: #fff; font-size: 17px; font-weight: 600; }
+.ws-go { width: 100%; min-height: 50px; border-radius: 14px; background: var(--accent-fill); color: var(--on-accent); font-size: 17px; font-weight: 600; }
 
 /* Arbeitsscheine: Liste und Detailseite */
 .list-row.plain { flex: none; width: 100%; }
@@ -1131,3 +1178,54 @@ button.nav-title { font-size: 17px; }
 .ws-val { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
 .ws-work { padding: 4px 16px; }
 .ws-work p { margin: 10px 0; line-height: 1.4; }
+
+/* Zahlen in Schreibmaschinenschrift */
+.list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ov-num, .ws-fact b, .db-h {
+  font-family: var(--mono);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+.time { font-weight: 700; }
+
+/* Leiste unten: Zettel · Übersicht · + · Team · Einstellungen (nur auf diesen Seiten) */
+.tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: none;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+  height: var(--tab-h);
+  padding: 6px 4px var(--tab-pad);
+  background: var(--card);
+  border-top: 0.5px solid var(--sep);
+}
+body.tabs .tabbar { display: grid; }
+/* Den Streifen unter der Seite (siehe fitBottomGap) in der Farbe der Leiste */
+html:has(body.tabs) { background: var(--card); }
+body { min-height: 100vh; }
+body.tabs:has(input:focus, textarea:focus) .tabbar { display: none; }
+body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
+.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 3px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.tab svg { width: 26px; height: 26px; }
+.tab.on { color: var(--accent); font-weight: 700; }
+.tab-add {
+  justify-self: center;
+  display: grid;
+  place-items: center;
+  width: 60px;
+  height: 60px;
+  margin-top: -24px;
+  border-radius: 50%;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 38%, transparent);
+}
+.tab-add svg { width: 28px; height: 28px; }
+.tab-add:active, .tab:active { transform: scale(0.94); }
+:root[data-theme='dark'] .tab-add { box-shadow: none; }
+.team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
+.team-empty svg { color: var(--accent); }
+.team-empty b { display: block; margin: 12px 0 4px; color: var(--text); font-size: 19px; }

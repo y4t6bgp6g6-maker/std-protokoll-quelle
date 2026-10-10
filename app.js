@@ -178,6 +178,7 @@ const DEFAULT_SETTINGS = {
   kvExtra: '',
   otPct: '25',
   bav: '',
+  theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
 };
 
 function readJson(key, fallback) {
@@ -1494,6 +1495,59 @@ function enterReport(rep, s, dayIndex, draft) {
   toast('Eingetragen');
 }
 
+// ───────────────────────── Leiste unten, Team, Darstellung ─────────────────────────
+
+const TABS = [
+  ['#/', 'Zettel', 'tabZettel', ['list']],
+  ['#/uebersicht', 'Übersicht', 'tabStats', ['stats']],
+  null,
+  ['#/team', 'Team', 'tabTeam', ['team']],
+  ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings']],
+];
+function tabbarHTML() {
+  return `<nav class="tabbar" id="tabbar">${TABS.map((t) =>
+    t
+      ? `<button class="tab" data-act="tab" data-hash="${t[0]}">${ICON[t[2]]}<span>${t[1]}</span></button>`
+      : `<button class="tab-add" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}</button>`
+  ).join('')}</nav>`;
+}
+/** Leiste nur auf den Hauptseiten; die aktuelle Seite hervorheben */
+function updateTabbar() {
+  const tab = TABS.find((t) => t && t[3].includes(currentView));
+  document.body.classList.toggle('tabs', !!tab && searchQuery == null);
+  document.querySelectorAll('#tabbar .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
+}
+
+function renderTeam() {
+  app.innerHTML = `
+    <header class="nav">
+      <span class="nav-btn"></span>
+      <span class="nav-title"></span>
+      <span class="nav-btn"></span>
+    </header>
+    <h1 class="large-title">Team</h1>
+    <div class="team-empty">${svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48)}<b>Kommt bald</b></div>`;
+}
+
+/**
+ * Als Web-App auf dem Home-Bildschirm ist die Seite unter iOS 26 unten kürzer als der Bildschirm (innerHeight 812 statt 874);
+ * im Streifen darunter zeichnet iOS nur den Seitenhintergrund. Die Leiste lässt dann ihren Abstand zum Home-Balken weg
+ * (der liegt im Streifen), der Streifen bekommt ihre Farbe (CSS).
+ */
+function fitBottomGap() {
+  const portrait = innerHeight > innerWidth;
+  const gap = navigator.standalone && portrait ? Math.max(0, Math.min(120, screen.height - innerHeight)) : 0;
+  document.documentElement.style.setProperty('--vp-gap', `${gap}px`);
+}
+
+/** Darstellung: „Wie iPhone“ folgt dem Hell-/Dunkelmodus des iPhones */
+function applyTheme() {
+  const mode = settings.theme || 'auto';
+  const dark = mode === 'dark' || (mode === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0c1114' : '#f3f0e8');
+}
+
 // ───────────────────────── Icons ─────────────────────────
 
 const svg = (path, size = 22) =>
@@ -1521,6 +1575,11 @@ const ICON = {
   feiertag: svg('<path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 14),
   frei: svg('<path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>', 14),
   doc: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 15),
+  tabZettel: svg('<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4"/>', 26),
+  tabStats: svg('<path d="M4 20h16M7 16v-6M12 16V5M17 16v-4"/>', 26),
+  tabTeam: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 26),
+  tabGear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>', 26),
+  tabAdd: svg('<path d="M12 5v14M5 12h14"/>', 28),
   tool: svg('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.6 17.4a1.4 1.4 0 0 0 2 2l5.7-5.7a4 4 0 0 0 5.4-5.4l-2.4 2.4-2-2z"/>', 15),
 };
 
@@ -1575,6 +1634,11 @@ function route() {
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
+  } else if (hash === '#/team') {
+    currentView = 'team';
+    renderTeam();
+    syncNav();
+    window.scrollTo(0, 0);
   } else if (hash === '#/arbeitsscheine') {
     currentView = 'reports';
     renderReportList();
@@ -1613,6 +1677,7 @@ function route() {
     window.scrollTo(0, listScroll);
   }
   updateTopButton();
+  updateTabbar();
 }
 window.addEventListener('hashchange', route);
 // Zurück auf einen Eintrag mit derselben Adresse (doppelte Seite) löst kein hashchange aus
@@ -1650,21 +1715,16 @@ function renderList() {
               <span class="search-field">${ICON.search}<input type="search" data-search placeholder="Baustelle, Urlaub oder Datum" value="${escapeHtml(searchQuery)}" autocomplete="off" enterkeyhint="search"></span>
               <button class="nav-btn" data-act="search-close">Abbrechen</button>
             </div>`
-          : `<button class="nav-btn" data-act="settings" aria-label="Einstellungen">${ICON.gear}</button>
+          : `<span class="nav-btn"></span>
             <span class="nav-title"></span>
             ${sheets.length ? `<button class="nav-btn" data-act="search" aria-label="Suchen">${ICON.search}</button>` : '<span class="nav-btn"></span>'}`
       }
     </header>
-    ${!searching && sheets.length ? statsCardHTML() + tripsCardHTML() : ''}
+    
     ${searching ? '' : '<h1 class="large-title">Stundenzettel</h1>'}
     <div id="list-body">${listBodyHTML()}</div>
     ${
-      searching
-        ? `<button class="to-top floating" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>`
-        : `<div class="bottom-bar">
-            <button class="to-top" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>
-            <button class="primary" data-act="new">${ICON.plus} Neuer Stundenzettel</button>
-          </div>`
+      searching ? `<button class="to-top floating" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>` : ''
     }`;
 }
 
@@ -1916,7 +1976,7 @@ function renderStats() {
   const st = stats.get(y);
   app.innerHTML = `
     <header class="nav">
-      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-btn"></span>
       <span class="nav-title"></span>
       <span class="nav-btn"></span>
     </header>
@@ -3360,11 +3420,22 @@ function signaturePad() {
 function renderSettings() {
   app.innerHTML = `
     <header class="nav">
-      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-btn"></span>
       <span class="nav-title"></span>
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">Einstellungen</h1>
+    <h2 class="section-title">Darstellung</h2>
+    <div class="card form">
+      <label class="field"><span>Design</span><select data-s="theme">${[
+        ['auto', 'Wie iPhone'],
+        ['light', 'Hell'],
+        ['dark', 'Dunkel'],
+      ]
+        .map(([v, l]) => `<option value="${v}" ${(settings.theme || 'auto') === v ? 'selected' : ''}>${l}</option>`)
+        .join('')}</select></label>
+    </div>
+
     <h2 class="section-title">Stundenzettel</h2>
     <div class="card form">
       <label class="field"><span>Name</span><input data-s="name" placeholder="Vor- und Nachname" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done"></label>
@@ -4782,6 +4853,11 @@ document.addEventListener('click', (e) => {
     case 'settings':
       location.hash = '#/einstellungen';
       break;
+    case 'tab':
+      // Antippen der aktiven Seite: nach oben; sonst Seite wechseln (ohne neuen Verlaufseintrag)
+      if ((location.hash || '#/') === el.dataset.hash) window.scrollTo({ top: 0, behavior: 'smooth' });
+      else location.replace(el.dataset.hash);
+      break;
     case 'new':
       weekPicker(new Date(), null, (anchor) => {
         location.hash = `#/zettel/${encodeURIComponent(openOrCreate(anchor))}`;
@@ -5046,6 +5122,7 @@ document.addEventListener('input', (e) => {
   } else if (t.dataset.s) {
     settings[t.dataset.s] = t.type === 'checkbox' ? t.checked : t.value;
     saveSettings();
+    if (t.dataset.s === 'theme') applyTheme();
   }
 });
 
@@ -5294,6 +5371,11 @@ document.addEventListener('contextmenu', (e) => {
 
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 history.replaceState('root', '', location.hash || '#/');
+applyTheme();
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+fitBottomGap();
+window.addEventListener('resize', fitBottomGap);
+document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 route();
 fetchReports();
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());

@@ -8,8 +8,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Yetizettel">
 <meta name="format-detection" content="telephone=no">
-<meta name="theme-color" content="#03060d">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#f3f0e8">
+<meta name="color-scheme" content="light dark">
+<script>
+  // Darstellung sofort setzen (sonst blitzt beim Start die falsche Farbe auf); app.js übernimmt danach
+  try {
+    var t = (JSON.parse(localStorage.getItem('yetizettel.settings.v1') || '{}').theme) || 'auto';
+    if (t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'dark';
+  } catch (e) {}
+</script>
 <title>Yetizettel</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">

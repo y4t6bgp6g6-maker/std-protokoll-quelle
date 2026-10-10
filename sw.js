@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'yetizettel-v58';
+const CACHE = 'yetizettel-v59';
 const ASSETS = [
   './',
   'index.html',
@@ -11,6 +11,9 @@ const ASSETS = [
   'lohn.js',
   'payslip.js',
   'manifest.webmanifest',
+  'fonts/schibsted-grotesk.woff2',
+  'fonts/plex-mono-600.woff2',
+  'fonts/plex-mono-700.woff2',
   'icons/apple-touch-icon.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
