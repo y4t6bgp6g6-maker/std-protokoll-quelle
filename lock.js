@@ -68,35 +68,44 @@ async function verifyLock() {
 function showLock() {
   if (!lockOn() || document.getElementById('lock')) return;
   document.documentElement.classList.add('locked');
+  // Farbe hinter Uhrzeit/Akku (iOS blendet dort mit theme-color ein) passend zum dunkelblauen Sperrbildschirm
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', '#0b1d4a');
   document.body.insertAdjacentHTML(
     'beforeend',
-    `<div id="lock" role="dialog" aria-modal="true">
+    `<div id="lock" role="dialog" aria-modal="true"><div class="lock-bg"></div>
       <img src="icons/apple-touch-icon.png" alt="" class="lock-icon">
-      <b>Yetizettel ist gesperrt</b>
-      <button class="lock-btn" data-lock="open">Entsperren</button>
+      <b class="lock-title">Yetizettel ist gesperrt</b>
+      <span class="lock-sub">Mit Face ID entsperren</span>
+      <button class="lock-btn" data-lock="open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0"/></svg>Entsperren</button>
       <p class="lock-msg" id="lock-msg"></p>
       <button class="lock-renew" data-lock="renew" hidden>Sperre neu einrichten</button>
     </div>`
-  );
+  );  // Face ID gleich anfragen: iOS zeigt dann „Passkey verwenden“ – ein Tipp genügt. Bricht man ab, bleibt „Entsperren“.
+  setTimeout(() => verifyLock().then(hideLock, lockFailed), 300);
+}
+function lockFailed(err) {
+  if (err && err.name === 'AbortError') return; // durch einen neuen Tipp ersetzt
+  const msg = document.getElementById('lock-msg');
+  if (msg) msg.textContent = 'Nicht entsperrt.';
+  const renew = document.querySelector('[data-lock="renew"]');
+  if (renew) renew.hidden = false;
 }
 function hideLock() {
   document.getElementById('lock')?.remove();
   document.documentElement.classList.remove('locked');
+  if (typeof applyTheme === 'function') applyTheme();
 }
 
 document.addEventListener('click', async (e) => {
   const b = e.target.closest('[data-lock]');
   if (!b) return;
-  const msg = document.getElementById('lock-msg');
   try {
     if (b.dataset.lock === 'renew') await createLockKey();
     else await verifyLock();
     hideLock();
   } catch (err) {
-    if (err && err.name === 'AbortError') return; // durch einen neuen Tipp ersetzt
     // Abgebrochen oder Passkey gelöscht: noch einmal versuchen oder neu einrichten (fragt ebenfalls Face ID/Code)
-    msg.textContent = 'Nicht entsperrt.';
-    document.querySelector('[data-lock="renew"]').hidden = false;
+    lockFailed(err);
   }
 });
 

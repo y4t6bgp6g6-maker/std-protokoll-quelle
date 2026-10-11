@@ -1187,7 +1187,7 @@ async function fetchReports(manual = false) {
     reportFetching = false;
   }
   if (n && currentView === 'reports') renderReportList();
-  if (currentView === 'settings') {
+  if (document.getElementById('report-status')) {
     const el = document.getElementById('report-status');
     if (el) el.textContent = reportStatusText();
   } else if (n && currentView === 'editor' && !typingField() && !layer.classList.contains('open')) refreshAll();
@@ -1673,7 +1673,7 @@ const TABS = [
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
-  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'reports', 'report', 'guide']],
+  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
  *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
@@ -1803,8 +1803,8 @@ function route() {
     fetchReports();
     syncNav();
     window.scrollTo(0, 0);
-  } else if (hash === '#/einstellungen') {
-    currentView = 'settings';
+  } else if (/^#\/einstellungen(\/[a-z]+)?$/.test(hash)) {
+    currentView = settingsSub() ? 'settingsSub' : 'settings';
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
@@ -1862,7 +1862,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -1955,7 +1955,8 @@ window.addEventListener('popstate', () => backTarget && location.hash === routed
 const BACK_TARGETS = [
   [/^#\/(lohn|jahr)\//, '#/uebersicht'],
   [/^#\/arbeitsschein\//, '#/arbeitsscheine'],
-  [/^#\/(arbeitsscheine|anleitung)$/, '#/einstellungen'],
+  [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
+  [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+)$/, '#/'],
 ];
 let backTarget = null;
@@ -3690,7 +3691,55 @@ function signaturePad() {
 
 // ───────────────────────── Einstellungen ─────────────────────────
 
+/** Symbole der Einstellungen: weiße Zeichen auf farbigem Quadrat (wie in den iPhone-Einstellungen) */
+const SET_ICON = {
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  face: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+  euro: '<path d="M17 6.5A6.5 6.5 0 0 0 7.2 10M17 17.5A6.5 6.5 0 0 1 7.2 14M4.5 10.5h9M4.5 13.5h8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+  case: '<path d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 0h2V5h-2z"/>',
+  text: '<path d="M4 6h16M4 11h16M4 16h10" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>',
+  doc: '<path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm6 1.5V9h4.5"/>',
+  cloud: '<path d="M7 19a5 5 0 0 1-.6-9.96A6.5 6.5 0 0 1 19 10.5a4.25 4.25 0 0 1-.5 8.5z"/>',
+  book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5a1.5 1.5 0 0 0 0 3H19M8 7h7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+};
+const SET_COLOR = { indigo: '#5856d6', green: '#34c759', blue: '#2f6bff', orange: '#ff9500', teal: '#30b0c7', purple: '#af52de', gray: '#8e8e93' };
+const setIcon = (name, color) => `<span class="s-ico" style="background:${SET_COLOR[color]}"><svg viewBox="0 0 24 24" fill="#fff">${SET_ICON[name]}</svg></span>`;
+const setLink = (hash, icon, color, label, value = '') =>
+  `<a draggable="false" class="s-row" href="${hash}">${setIcon(icon, color)}<span class="s-label">${label}</span><span class="s-val">${escapeHtml(value)}</span><span class="s-chev">${ICON.chevronRight}</span></a>`;
+const setToggle = (icon, color, label, attrs) =>
+  `<label class="s-row">${setIcon(icon, color)}<span class="s-label">${label}</span><input type="checkbox" class="toggle" ${attrs}></label>`;
+
+/** Unterseiten der Einstellungen: #/einstellungen/<name> */
+const SETTINGS_PAGES = {
+  profil: 'Name',
+  lohn: 'Lohn',
+  reisekosten: 'Reisekosten',
+  vorschlaege: 'Vorschläge',
+  scheine: 'Arbeitsscheine',
+  sicherung: 'Datensicherung',
+};
+const settingsSub = () => (location.hash.match(/^#\/einstellungen\/([a-z]+)$/) || [])[1] || '';
+
+/** Kurze Zusammenfassung rechts in der Übersicht */
+function settingsSummary() {
+  const roman = ['I', 'II', 'III', 'IV', 'V', 'VI'][Number(settings.taxClass || 1) - 1] || 'I';
+  const url = (settings.reportUrl || '').trim();
+  const n = reports().length;
+  return {
+    lohn: settings.wage ? `${settings.wage} € · Kl. ${roman}` : `Klasse ${roman}`,
+    reisekosten: [settings.place ? settings.place : '', settings.signature ? 'Unterschrift' : ''].filter(Boolean).join(', ') || 'Ort, Unterschrift',
+    vorschlaege: settings.typoHints !== false ? 'Korrektur an' : 'Korrektur aus',
+    scheine: url ? `${n}${reportStore.at ? ` · ${sameDay(new Date(reportStore.at), new Date()) ? 'heute' : fmtDayMonth(new Date(reportStore.at))} abgeholt` : ''}` : 'nicht eingerichtet',
+    sicherung: [url && settings.autoBackup !== false ? 'Drive' : 'von Hand', settings.encryptBackup ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
+  };
+}
+
 function renderSettings() {
+  const sub = settingsSub();
+  if (sub && SETTINGS_PAGES[sub]) return renderSettingsPage(sub);
+  const name = settings.name.trim();
+  const initials = name ? name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase() : '?';
+  const sum = settingsSummary();
   app.innerHTML = `
     <header class="nav">
       <span class="nav-btn"></span>
@@ -3698,20 +3747,39 @@ function renderSettings() {
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">Einstellungen</h1>
-    <h2 class="section-title">Darstellung</h2>
-    <div class="card form">
-      <label class="field"><span>Dunkles Design</span><input type="checkbox" class="toggle" data-theme-switch ${isDarkTheme() ? 'checked' : ''}></label>
-      ${lockAvailable() ? `<label class="field"><span>Mit Face ID sperren</span><input type="checkbox" class="toggle" data-lock-switch ${lockOn() ? 'checked' : ''}></label>` : ''}
+    <a draggable="false" class="card s-profile" href="#/einstellungen/profil">
+      <span class="s-avatar">${escapeHtml(initials)}</span>
+      <span class="s-pname"><b>${name ? escapeHtml(name) : 'Name eintragen'}</b><span>${sheets.length} Stundenzettel</span></span>
+      <span class="s-chev">${ICON.chevronRight}</span>
+    </a>
+    <div class="card s-group">
+      ${setToggle('moon', 'indigo', 'Dunkles Design', `data-theme-switch ${isDarkTheme() ? 'checked' : ''}`)}
+      ${lockAvailable() ? setToggle('face', 'green', 'Mit Face ID sperren', `data-lock-switch ${lockOn() ? 'checked' : ''}`) : ''}
     </div>
+    <div class="card s-group">
+      ${setLink('#/einstellungen/lohn', 'euro', 'blue', 'Lohn', sum.lohn)}
+      ${setLink('#/einstellungen/reisekosten', 'case', 'orange', 'Reisekosten', sum.reisekosten)}
+      ${setLink('#/einstellungen/vorschlaege', 'text', 'teal', 'Vorschläge', sum.vorschlaege)}
+    </div>
+    <div class="card s-group">
+      ${setLink('#/einstellungen/scheine', 'doc', 'purple', 'Arbeitsscheine', sum.scheine)}
+      ${setLink('#/einstellungen/sicherung', 'cloud', 'blue', 'Datensicherung', sum.sicherung)}
+      ${setLink('#/anleitung', 'book', 'gray', 'Anleitung')}
+    </div>
+    ${settings.encryptBackup && !cryptStore ? '<p class="footnote warn">Passwort für die Sicherung fehlt – unter Datensicherung neu festlegen.</p>' : ''}`;
+}
 
-    <h2 class="section-title">Stundenzettel</h2>
+function renderSettingsPage(sub) {
+  const body = {
+    profil: `
     <div class="card form">
       <label class="field"><span>Name</span><input data-s="name" placeholder="Vor- und Nachname" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done"></label>
       ${pdfHintHTML(settings.name)}
     </div>
     <p class="footnote">Steht auf jedem neuen Stundenzettel.</p>
 
-    <h2 class="section-title">Lohn</h2>
+    <p class="footnote">Steht auf jedem neuen Stundenzettel.</p>`,
+    lohn: `
     <div class="card form">
       <label class="field"><span>Stundenlohn</span><input data-s="wage" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.wage)}" enterkeyhint="done"><span class="unit">€</span></label>
       <label class="field"><span>Feste Zulage im Monat</span><input data-s="bonus" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.bonus)}" enterkeyhint="done"><span class="unit">€</span></label>
@@ -3728,9 +3796,8 @@ function renderSettings() {
     </div>
     <p class="footnote">Für das geschätzte Netto in der Übersicht.</p>
 
-    ${hiddenSuggestionsHTML()}
-
-    <h2 class="section-title">Reisekosten</h2>
+`,
+    reisekosten: `
     <div class="card form">
       <label class="field"><span>Ort</span><input data-s="place" placeholder="z. B. Firmensitz" value="${escapeHtml(settings.place || '')}" enterkeyhint="done"></label>
       ${
@@ -3743,16 +3810,19 @@ function renderSettings() {
     </div>
     <p class="footnote">Steht unten auf der Reisekostenabrechnung.</p>
 
-    <h2 class="section-title">Arbeitsscheine</h2>
+`,
+    vorschlaege: hiddenSuggestionsHTML().replace('<h2 class="section-title">Vorschläge</h2>', ''),
+    scheine: `
     <div class="card form">
       <label class="field"><span>Abholadresse</span><input data-s="reportUrl" placeholder="Link einfügen" value="${escapeHtml(settings.reportUrl || '')}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"></label>
       <button class="list-btn" data-act="reports-fetch">Jetzt abholen</button>
       <button class="list-btn" data-act="reports-open">Alle Arbeitsscheine</button>
-      <button class="list-btn" data-act="guide-open">Anleitung: Abholen und Sicherung einrichten</button>
+      <button class="list-btn" data-act="guide-open">Anleitung: Einrichten</button>
     </div>
     <p class="footnote" id="report-status">${reportStatusText()}</p>
 
-    <h2 class="section-title">Datensicherung</h2>
+`,
+    sicherung: `
     <div class="card form">
       <label class="field"><span>Sicherung verschlüsseln</span><input type="checkbox" class="toggle" data-encrypt-switch ${settings.encryptBackup ? 'checked' : ''}></label>
       ${settings.encryptBackup ? '<button class="list-btn" data-act="backup-pw">Passwort ändern</button>' : ''}
@@ -3772,7 +3842,16 @@ function renderSettings() {
         : '<p class="footnote">Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.</p>'
     }
     <p class="footnote">Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.</p>
-    <p class="footnote center muted">${sheets.length} Stundenzettel gespeichert</p>`;
+    <p class="footnote center muted">${sheets.length} Stundenzettel gespeichert</p>`,
+  }[sub];
+  app.innerHTML = `
+    <header class="nav">
+      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-title"></span>
+      <span class="nav-btn"></span>
+    </header>
+    <h1 class="large-title">${SETTINGS_PAGES[sub]}</h1>
+    ${body}`;
 }
 
 function hiddenSuggestionsHTML() {
@@ -4175,7 +4254,7 @@ async function importBackup(input) {
   }
   if (conflicts.some((c) => !c.trip)) saveSheets();
   if (conflicts.some((c) => c.trip)) saveTrips();
-  if (currentView === 'settings') renderSettings();
+  if (currentView === 'settings' || currentView === 'settingsSub') renderSettings();
   if (currentView === 'list') renderList();
   if (currentView === 'trips') renderTripList();
   const done = [total ? `${total} Stundenzettel` : '', tripCount ? `${tripCount} Reisekostenabrechnung${tripCount === 1 ? '' : 'en'}` : '', reportCount ? `${reportCount} Arbeitsschein${reportCount === 1 ? '' : 'e'}` : ''].filter(Boolean);
@@ -5970,6 +6049,9 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 showLock();
 route();
+// iOS 26 startet die Home-Bildschirm-App teils um den oberen Rand verschoben (scrollY negativ); nach dem ersten
+// Seitenwechsel stünde alles höher. Gleich auf 0 setzen, damit Überschriften immer an derselben Stelle stehen.
+for (const ms of [50, 300, 900]) setTimeout(() => window.scrollY < 0 && window.scrollTo(0, 0), ms);
 tabLens();
 glassBar();
 // Vorlage der Linse vorab zeichnen, damit das erste Umschalten nicht stockt
