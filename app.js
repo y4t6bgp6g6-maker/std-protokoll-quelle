@@ -179,6 +179,7 @@ const DEFAULT_SETTINGS = {
   otPct: '25',
   bav: '',
   theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
+  autoBackup: true, // Sicherung automatisch über die Abholadresse (Google-Skript) in Google Drive
 };
 
 function readJson(key, fallback) {
@@ -1194,6 +1195,59 @@ const reportStatusText = () =>
   `${reports().length} Arbeitsschein${reports().length === 1 ? '' : 'e'}${
     reportStore.at ? ` · abgeholt ${fmtDayMonth(new Date(reportStore.at))} ${fmtTime(new Date(reportStore.at).getHours() * 60 + new Date(reportStore.at).getMinutes())}` : ''
   }`;
+
+// ───────────────────────── Sicherung in Google Drive ─────────────────────────
+// Über dieselbe Abholadresse wie die Arbeitsscheine: das Google-Skript (doPost) legt die Datei im Ordner
+// „Yetizettel-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
+
+const DRIVE_KEY = 'yetizettel.drive.v1';
+const driveState = readJson(DRIVE_KEY, { at: 0, hash: '', error: '' });
+let driveBusy = false;
+
+/** Kurzer Fingerabdruck der Daten (ohne Zeitstempel der Sicherung), um unveränderte Stände nicht erneut zu senden */
+function textHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + s.length.toString(36);
+}
+
+async function driveBackup(manual = false) {
+  const url = (settings.reportUrl || '').trim();
+  if (!url || driveBusy || (!manual && settings.autoBackup === false)) return;
+  const data = backupJson();
+  const hash = textHash(data.replace(/"exportedAt":"[^"]*",/, ''));
+  if (!manual && (hash === driveState.hash || Date.now() - driveState.at < 20 * 3600e3)) return;
+  driveBusy = true;
+  if (manual) toast('Sichern …');
+  try {
+    // text/plain: ohne Vorabanfrage (CORS); das Skript liest den Inhalt selbst
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'backup', name: `Yetizettel-Sicherung ${isoDate(new Date())}.json`, data }) });
+    let out;
+    try {
+      out = await res.json();
+    } catch {
+      throw new Error('Google-Skript noch nicht aktualisiert');
+    }
+    if (out.error) throw new Error(out.error === 'key' ? 'Schlüssel in der Abholadresse falsch' : out.error);
+    Object.assign(driveState, { at: Date.now(), hash, error: '' });
+    if (manual) toast('In Google Drive gesichert');
+  } catch (e) {
+    driveState.error = (e && e.message) || 'Keine Verbindung';
+    if (manual) infoDialog('Sichern fehlgeschlagen', escapeHtml(driveState.error));
+  } finally {
+    driveBusy = false;
+    try {
+      localStorage.setItem(DRIVE_KEY, JSON.stringify(driveState));
+    } catch {}
+  }
+  const el = document.getElementById('backup-status');
+  if (el) el.textContent = driveStatusText();
+}
+const driveStatusText = () => {
+  const at = driveState.at ? new Date(driveState.at) : null;
+  const when = at ? `Gesichert ${fmtDayMonth(at)} ${fmtTime(at.getHours() * 60 + at.getMinutes())}` : 'Noch nicht gesichert';
+  return driveState.error ? `${when} · Fehler: ${driveState.error}` : when;
+};
 
 // Rechtsformen und Allerweltswörter zählen beim Wiedererkennen eines Kunden nicht
 const LEGAL_FORMS = new Set(['gmbh', 'mbh', 'se', 'ag', 'kg', 'ohg', 'ug', 'co', 'co.', '&', '+', 'e.k.', 'e.v.', 'gbr', '(haftungsbeschränkt)']);
@@ -3580,7 +3634,15 @@ function renderSettings() {
       <button class="list-btn" data-act="backup-export">Sicherung speichern …</button>
       <label class="list-btn">Sicherung einlesen …<input type="file" multiple accept="${IMPORT_ACCEPT}" data-act-change="backup-import" hidden></label>
     </div>
-    <p class="footnote">Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.</p>
+    ${
+      (settings.reportUrl || '').trim()
+        ? `<div class="card form drive-card">
+      <label class="field"><span>Automatisch in Google Drive</span><input type="checkbox" class="toggle" data-s="autoBackup" ${settings.autoBackup !== false ? 'checked' : ''}></label>
+      <button class="list-btn" data-act="backup-drive">Jetzt in Google Drive sichern</button>
+    </div>
+    <p class="footnote" id="backup-status">${driveStatusText()}</p>`
+        : '<p class="footnote">Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.</p>'
+    }
     <p class="footnote">Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.</p>
     <p class="footnote center muted">${sheets.length} Stundenzettel gespeichert</p>`;
 }
@@ -3604,8 +3666,11 @@ function hiddenSuggestionsHTML() {
     </div>`;
 }
 
+const backupJson = (indent) =>
+  JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets, trips, settings, payslips, reports: reports() }, null, indent);
+
 function exportBackup() {
-  const data = JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets, trips, settings, payslips, reports: reports() }, null, 2);
+  const data = backupJson(2);
   const file = new File([data], `Yetizettel-Sicherung ${isoDate(new Date())}.json`, { type: 'application/json' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     navigator.share({ files: [file] }).catch((e) => {
@@ -5117,6 +5182,9 @@ document.addEventListener('click', (e) => {
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
       break;
     }
+    case 'backup-drive':
+      driveBackup(true);
+      break;
     case 'backup-export':
       exportBackup();
       break;
@@ -5725,7 +5793,14 @@ glassBar();
 setTimeout(() => document.querySelector('#tabbar .tab-caps').offsetWidth && lensSource(), 800);
 
 fetchReports();
-document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());
+driveBackup();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  fetchReports();
+  driveBackup();
+});
+// iOS bitten, die Daten nie von selbst zu löschen (z. B. bei knappem Speicher)
+navigator.storage?.persist?.().catch(() => {});
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
