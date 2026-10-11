@@ -5423,7 +5423,6 @@ document.addEventListener('contextmenu', (e) => {
 const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
 const LENS_EDGE = 0.45; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
 const LENS_CHROMA = 0.05; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
-let lensBusyUntil = 0; // solange die Linse läuft, warten die Glas-Kopien mit dem Erneuern
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5567,7 +5566,6 @@ function animateTabLens(from, to) {
 
   cancelAnimationFrame(animateTabLens.raf);
   caps.classList.add('lens-moving');
-  lensBusyUntil = performance.now() + total;
   clearTimeout(animateTabLens.timer);
   // Die Markierung blendet ein, sobald die Linse am Ziel schrumpft
   animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), T_GROW + T_MOVE + T_HOLD);
@@ -5601,234 +5599,12 @@ function haptic() {
   if (navigator.vibrate) navigator.vibrate(8);
 }
 
-// ───────────────────────── Glas der Leiste: Spiegelung am Rand ─────────────────────────
-// Wie die Glasleiste unter iOS 26: Die Mitte ist klares Glas (backdrop-filter). Im Streifen am Rand erscheint der Inhalt
-// hinter der Leiste kopfüber: an der Innenkante des Streifens wenig gestaucht (dort verschmilzt er mit sich selbst), zum
-// Rand hin immer stärker, bis Inhalt hinter der Mitte der Leiste nur noch ein Strich am Rand ist. Umgesetzt mit zwei
-// Teilstreifen je Randabschnitt, jeder eine an der Tangente gespiegelte und gestauchte Kopie der Seite; die Stauchungen
-// schließen nahtlos aneinander an. Oben und unten gerade, an den runden Enden je eine Ebene. Mitgescrollt
-// werden die Kopien über eine an die Scrollposition gekoppelte Animation (animation-timeline, ab iOS 26, Grafikkarte);
-// beim Nachfedern am Seitenanfang/-ende per Skript.
-
-const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
-const GLASS_BAND = 11; // Breite des Spiegelstreifens am Rand (px)
-const GLASS_SPLIT = 5; // Grenze zwischen innerem (wenig gestaucht) und äußerem Teilstreifen (stark gestaucht)
-const GLASS_K1 = 0.85; // Stauchung innen (fast 1: Spiegelbild und Text laufen an der Innenkante ineinander)
-const GLASS_K_END = 0.55; // Stauchung an den runden Enden
-// Ebenen: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn), Kante (oben/unten gerade, l/r rundes Ende) und
-// Teilstreifen (0 innen, 1 außen; −1 = ganzer Streifen). Wenige Ebenen – jede ist eine ganze Kopie der Seite.
-// Oben und unten je zwei Teilstreifen (innen kaum gestaucht: Spiegelbild und Text laufen ineinander; außen stark
-// gestaucht: zum Rand hin dünn), an den runden Enden je eine Kopie
-const GLASS_LAYERS = [
-  { side: 'top', deg: 0, sub: 0 },
-  { side: 'top', deg: 0, sub: 1 },
-  { side: 'bottom', deg: 180, sub: 0 },
-  { side: 'bottom', deg: 180, sub: 1 },
-  { side: 'l', deg: 270, sub: -1 },
-  { side: 'r', deg: 90, sub: -1 },
-];
-const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0, dirty: false };
-
+// ───────────────────────── Glas der Leiste ─────────────────────────
+// Klares Glas über Safaris eigenem Glasfilter (backdrop-filter, läuft auf der Grafikkarte) mit dünner heller Randlinie.
+// Keine Kopien der Seite: die liefen auf dem iPhone gegen den Inhalt weg, setzten beim Nachfedern aus und ließen die
+// Symbole zittern.
 function glassBar() {
-  const caps = document.querySelector('#tabbar .tab-caps');
-  caps.insertAdjacentHTML(
-    'afterbegin',
-    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${GLASS_LAYERS.map(
-      () => '<div class="glass-layer"><div class="glass-copy"><div class="glass-scroll"></div></div></div>'
-    ).join('')}</div>`
-  );
-  glass.caps = caps;
-  glass.clip = caps.querySelector('.glass-clip');
-  glass.layers = [...glass.clip.querySelectorAll('.glass-layer')];
-  glassClone();
-  // Seite geändert: Kopien erneuern, sobald es kurz ruhig ist (nicht, solange die Leiste beim Tippen fehlt)
-  new MutationObserver(() => {
-    clearTimeout(glass.timer);
-    // nicht während die Linse läuft (sonst stockt sie)
-    glass.timer = setTimeout(glassClone, Math.max(60, lensBusyUntil - performance.now() + 40));
-  }).observe(app, { subtree: true, childList: true, characterData: true, attributes: true });
-  addEventListener('resize', () => {
-    glass.key = '';
-    glassPlace();
-  });
-  addEventListener('scroll', glassScroll, { passive: true });
-  addEventListener('touchend', () => requestAnimationFrame(glassScroll), { passive: true });
-  // Beim Ziehen über den Seitenanfang meldet iOS keine Scroll-Ereignisse: solange der Finger liegt, jedes Bild prüfen
-  addEventListener('touchstart', () => {
-    if (glass.touching) return;
-    glass.touching = true;
-    const tick = () => {
-      glassScroll();
-      if (glass.touching) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  }, { passive: true });
-  addEventListener('touchend', () => (glass.touching = false), { passive: true });
-  addEventListener('touchcancel', () => (glass.touching = false), { passive: true });
-  // Nach dem Tippen kommt die Leiste wieder
-  document.addEventListener('focusout', () =>
-    requestAnimationFrame(() => (glass.dirty ? glassClone() : glassPlace()))
-  );
-}
-
-function glassClone() {
-  if (!glass.caps.offsetWidth) {
-    glass.dirty = true;
-    return;
-  }
-  glass.dirty = false;
-  const c = app.cloneNode(true);
-  c.removeAttribute('id');
-  // Abstände, die an der ID #app hängen, übernehmen
-  const cs = getComputedStyle(app);
-  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'maxWidth', 'marginLeft', 'marginRight', 'boxSizing']) c.style[k] = cs[k];
-  c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
-  c.setAttribute('inert', '');
-  // Teile der Kopie fern der Leiste zeichnet Safari nicht (content-visibility); die gemessene Größe hält die Lage gleich
-  const orig = [...app.children];
-  [...c.children].forEach((el, i) => {
-    const o = orig[i];
-    if (!o || getComputedStyle(o).position === 'fixed') return;
-    el.style.contentVisibility = 'auto';
-    el.style.containIntrinsicSize = `${o.offsetWidth}px ${o.offsetHeight}px`;
-  });
-  glass.layers.forEach((l, i) => l.querySelector('.glass-scroll').replaceChildren(i ? c.cloneNode(true) : c));
-  glass.key = '';
-  glass.range = null;
-  glassPlace();
-}
-
-/** Maske eines Teilstreifens (Abstand u0–u1 vom Rand nach innen gemessen: 0 = Rand); an den Enden auf einen
- *  Winkelbereich begrenzt. Ganz außen läuft die Spiegelung etwas aus. */
-function glassMask(part, W, H, u0, u1) {
-  const r = H / 2;
-  const f = 6; // weicher Übergang zwischen Abschnitten
-  const e = 0.6; // weiche Kante zwischen Teilstreifen
-  const fade = (d) => (d < 1.5 ? 0.55 : 1); // am äußersten Rand schwächer
-  if ((part.side === 'top' || part.side === 'bottom') && part.sub < 0) {
-    // ganzer Streifen: am Rand voll, zur Mitte sanft auslaufend (keine sichtbare Kante)
-    const dir = part.side === 'top' ? '180deg' : '0deg';
-    const band = `linear-gradient(${dir}, rgba(0,0,0,.6), #000 1.5px, rgba(0,0,0,.85) ${u1 * 0.5}px, rgba(0,0,0,.45) ${u1 * 0.9}px, transparent ${u1 * 1.2}px)`;
-    return `${band}, linear-gradient(90deg, transparent ${r * 0.55}px, #000 ${r * 1.1}px, #000 ${W - r * 1.1}px, transparent ${W - r * 0.55}px)`;
-  }
-  if (part.side === 'top' || part.side === 'bottom') {
-    const dir = part.side === 'top' ? '180deg' : '0deg';
-    // innerer Teilstreifen läuft zur Mitte weich aus (keine Kante)
-    const end = u1 >= GLASS_BAND ? `#000 ${u1 - 3}px, rgba(0,0,0,.45) ${u1}px, transparent ${u1 + 3}px` : `#000 ${u1 - e}px, transparent ${u1 + e}px`;
-    const band = `linear-gradient(${dir}, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${Math.max(0, u0 - e)}px, rgba(0,0,0,${fade(u0)}) ${u0 + e}px, ${end})`;
-    return `${band}, linear-gradient(90deg, transparent ${r * 0.55}px, #000 ${r * 1.1}px, #000 ${W - r * 1.1}px, transparent ${W - r * 0.55}px)`;
-  }
-  const cx = part.side === 'l' ? r : W - r;
-  if (part.sub < 0) {
-    // ganzes rundes Ende: zur Mitte sanft auslaufend, oben und unten in die geraden Streifen übergehend
-    const ringW = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - u1 * 1.2}px, rgba(0,0,0,.45) ${r - u1 * 0.9}px, rgba(0,0,0,.85) ${r - u1 * 0.5}px, #000 ${r - 1.5}px, rgba(0,0,0,.6) ${r}px)`;
-    const half = part.side === 'l' ? `linear-gradient(90deg, #000 ${r * 0.55}px, transparent ${r * 1.1}px)` : `linear-gradient(270deg, #000 ${r * 0.55}px, transparent ${r * 1.1}px)`;
-    return `${ringW}, ${half}`;
-  }
-  const ring = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - u1 - e}px, #000 ${r - u1 + e}px, rgba(0,0,0,${fade(u0)}) ${r - u0 - e}px, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${r - u0 + e}px)`;
-  const a = part.deg;
-  const sector = `conic-gradient(from ${a - 95}deg at ${cx}px ${r}px, transparent 0deg, #000 15deg, #000 175deg, transparent 190deg, transparent 360deg)`;
-  return `${ring}, ${sector}`;
-}
-
-/** Kopien an der Tangente des jeweiligen Randabschnitts spiegeln und stauchen (Lage bei Scrollposition 0) */
-function glassPlace() {
-  const { caps, clip, layers } = glass;
-  if (!caps || !caps.offsetWidth) return;
-  const cr = caps.getBoundingClientRect();
-  const ar = app.getBoundingClientRect();
-  const root = document.scrollingElement || document.documentElement;
-  const max = glass.range ?? Math.max(0, root.scrollHeight - root.clientHeight);
-  const top = ar.top + scrollY; // Lage der Seite ohne Scrollen
-  const key = `${cr.left},${cr.top},${cr.width},${cr.height},${ar.left},${ar.width},${top},${max}`;
-  if (key === glass.key) return;
-  glass.key = key;
-  glass.max = max;
-  glass.top = top;
-  clip.style.setProperty('--glass-max', `${-max}px`);
-  const W = cr.width;
-  const H = cr.height;
-  const r = H / 2;
-  const B = GLASS_BAND;
-  // Innenkante des Streifens = Spiegelachse. Inhalt s px innerhalb davon erscheint im Streifen bei u (von der Innenkante
-  // nach außen): innen u = k1·s bis zur Grenze, danach u = a2 + k2·s – so liegt Inhalt hinter der Mitte der Leiste knapp
-  // am Rand.
-  const s1 = GLASS_SPLIT / GLASS_K1;
-  const k2 = (B - 1.2 - GLASS_SPLIT) / Math.max(4, r - B - s1);
-  const a2 = GLASS_SPLIT - k2 * s1;
-  const move = `translate(${ar.left - cr.left}px, ${top - cr.top}px)`;
-  layers.forEach((l, i) => {
-    const part = GLASS_LAYERS[i];
-    const inner = part.sub === 0;
-    const whole = part.sub < 0;
-    const img = glassMask(part, W, H, whole ? 0 : inner ? B - GLASS_SPLIT : 0, whole || inner ? B : B - GLASS_SPLIT);
-    l.style.webkitMaskImage = l.style.maskImage = img;
-    l.style.webkitMaskComposite = 'source-in';
-    l.style.maskComposite = 'intersect';
-    // Randnormale n (nach außen) und Punkt T auf der Innenkante des Streifens
-    const rad = (part.deg * Math.PI) / 180;
-    const n = [Math.sin(rad), -Math.cos(rad)];
-    const T =
-      part.side === 'top'
-        ? [W / 2, B]
-        : part.side === 'bottom'
-          ? [W / 2, H - B]
-          : [(part.side === 'l' ? r : W - r) + (r - B) * n[0], r + (r - B) * n[1]];
-    // p ↦ T + (a + k·s)·n mit s = (T − p)·n  ⇒  A = I − (1 + k)·n·nᵀ, Verschiebung (1 + k)(T·n)·n + a·n
-    const k = whole ? GLASS_K_END : inner ? GLASS_K1 : k2;
-    const off = whole || inner ? 0 : a2;
-    const q = 1 + k;
-    const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
-    const tn = T[0] * n[0] + T[1] * n[1];
-    const ex = (q * tn + off) * n[0];
-    const ey = (q * tn + off) * n[1];
-    const copy = l.firstChild;
-    copy.style.width = `${ar.width}px`;
-    copy.style.transform = `matrix(${A.map((v) => v.toFixed(5)).join(',')},${ex.toFixed(2)},${ey.toFixed(2)}) ${move}`;
-  });
-  glassScroll();
-}
-/** Den Scrollweg nachmessen, den Safari der an die Scrollposition gekoppelten Animation tatsächlich zugrunde legt
- *  (auf dem iPhone weicht er als Home-Bildschirm-App von scrollHeight − Fensterhöhe ab; die Kopien liefen sonst weg):
- *  Fortschritt der Animation und scrollY ergeben den Weg. */
-function glassCalibrate() {
-  if (!GLASS_TIMELINE || scrollY < 80) return;
-  const now = performance.now();
-  if (now - (glass.calAt || 0) < 400) return;
-  glass.calAt = now;
-  const an = glass.layers[0]?.querySelector('.glass-scroll').getAnimations()[0];
-  const ct = an && an.currentTime;
-  const pct = ct && typeof ct === 'object' ? ct.value : null;
-  if (!pct || pct <= 0 || pct >= 100) return;
-  const range = Math.round(scrollY / (pct / 100));
-  if (Math.abs(range - (glass.max ?? range)) < 2) return;
-  glass.range = range;
-  glass.key = '';
-  glassPlace();
-}
-/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur beim Nachfedern am Seitenanfang/-ende: dann ist die an
- *  die Scrollposition gekoppelte Animation abgeschaltet und das Skript führt die Kopien. Gemessen wird die tatsächliche
- *  Lage der Seite (nicht scrollY); solange die Seite federt, wird in jedem Bild nachgeprüft, bis sie wieder ruht. */
-function glassScroll() {
-  if (!glass.caps) return;
-  glassCalibrate();
-  const y = glass.top - app.getBoundingClientRect().top; // wie weit die Seite verschoben ist
-  const bouncing = y < -0.5 || y > glass.max + 0.5;
-  const manual = !GLASS_TIMELINE || bouncing;
-  const pos = manual ? Math.round(y * 2) / 2 : null;
-  if (pos !== glass.bounce) {
-    glass.bounce = pos;
-    glass.clip.classList.toggle('manual', GLASS_TIMELINE && bouncing);
-    const t = manual ? `translate3d(0, ${-pos}px, 0)` : '';
-    glass.layers.forEach((l) => (l.querySelector('.glass-scroll').style.transform = t));
-  }
-  if (bouncing && !glass.polling) {
-    glass.polling = true;
-    requestAnimationFrame(() => {
-      glass.polling = false;
-      glassScroll();
-    });
-  }
+  document.querySelector('#tabbar .tab-caps').insertAdjacentHTML('afterbegin', '<div class="glass-clip" aria-hidden="true"></div>');
 }
 
 // ───────────────────────── Start ─────────────────────────

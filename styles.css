@@ -1203,27 +1203,16 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 :root[data-theme='dark'] .tab-caps { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
-/* Glas: Mitte leicht milchig (Safaris Glasfilter), am Rand gespiegelte Kopien der Seite (glassBar in app.js) */
+/* Glas: Inhalt dahinter leicht weich und gedämpft (Safaris Glasfilter) */
 .glass-clip {
   position: absolute;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  overflow: hidden;
   border-radius: inherit;
-  /* wie das Glas unter iOS 26: Inhalt dahinter leicht weich und gedämpft */
-  background: color-mix(in srgb, var(--card) 48%, transparent);
-  -webkit-backdrop-filter: blur(1.2px) saturate(1.4);
-  backdrop-filter: blur(1.2px) saturate(1.4);
-}
-.glass-layer { position: absolute; inset: 0; opacity: 0.5; filter: blur(0.8px) saturate(1.3); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
-.glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.glass-scroll { will-change: transform; }
-/* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
-.glass-clip.timeline:not(.manual) .glass-scroll { animation: glass-scroll linear both; animation-timeline: scroll(root block); }
-@keyframes glass-scroll {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(0, var(--glass-max, 0px), 0); }
+  background: color-mix(in srgb, var(--card) 45%, transparent);
+  -webkit-backdrop-filter: blur(3px) saturate(1.6);
+  backdrop-filter: blur(3px) saturate(1.6);
 }
 /* Lichtkante und leichter Schimmer über dem Glas */
 .tab-caps::after {
@@ -1233,12 +1222,15 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   z-index: 1;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0.06));
-  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.6), inset 0 -1px 0.5px rgba(255, 255, 255, 0.2), inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+  /* dünner heller Strich am Rand, oben und an den Enden etwas kräftiger (wie das Glas unter iOS 26) */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 1px rgba(255, 255, 255, 0.15),
+    inset 6px 0 6px -5px rgba(255, 255, 255, 0.25), inset -6px 0 6px -5px rgba(255, 255, 255, 0.25);
 }
 :root[data-theme='dark'] .tab-caps::after {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.01) 45%, rgba(255, 255, 255, 0.03));
-  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.1), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02));
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+    inset 6px 0 6px -5px rgba(255, 255, 255, 0.14), inset -6px 0 6px -5px rgba(255, 255, 255, 0.14);
 }
 .tab-row {
   position: absolute;
