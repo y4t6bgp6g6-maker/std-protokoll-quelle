@@ -3505,7 +3505,10 @@ function hiddenSuggestionsHTML() {
             .join('')}</div>`
         : ''
     }
-    <p class="footnote">Lange drücken blendet einen Vorschlag aus.</p>`;
+    <p class="footnote">Lange drücken blendet einen Vorschlag aus.</p>
+    <div class="card form">
+      <label class="field"><span>Korrekturvorschläge</span><input type="checkbox" class="toggle" data-s="typoHints" ${settings.typoHints !== false ? 'checked' : ''}></label>
+    </div>`;
 }
 
 function exportBackup() {
@@ -4424,14 +4427,16 @@ function editDistance(a, b) {
 
 /**
  * Tippfehler bei Baustelle / Art der Arbeit: Ein Eintrag, den es so in keiner anderen Zeile gibt, der aber fast einem
- * schon benutzten gleicht (nur Groß-/Kleinschreibung, Leerzeichen, Satzzeichen oder 1–2 Buchstaben anders).
- * Kurze Texte sind strenger: unter 5 Zeichen nie, unter 10 Zeichen höchstens 1 Buchstabe Unterschied; andere Zahlen nie.
+ * Eintrag gleicht, der schon in mindestens zwei anderen Zeilen steht (bei einmal gegen einmal ist unklar, was richtig ist).
+ * Als Tippfehler zählen: Leerzeichen („Kühl Haus“/„Kühlhaus“), Groß-/Kleinschreibung im Text und 1–2 Buchstaben
+ * je Wort (Wörter unter 5 Zeichen nie, unter 10 Zeichen höchstens 1, erster Buchstabe gleich). Nicht: nur Satzzeichen oder großer Anfangsbuchstabe,
+ * Mehrzahl und Endungen („Klimaanlage“/„Klimaanlagen“), Vorsilben („abgebaut“/„aufgebaut“, „Zelle“/„TK-Zelle“), andere Zahlen.
  * Ergebnis: { part, suggestion } oder null. „So lassen“ (✕) merkt sich der Eintrag in row.typoOk.
  */
 function typoFor(field, row) {
   const value = row[field] || '';
-  if (!value.trim() || (row.typoOk && row.typoOk[field] === value)) return null;
-  // Schreibweisen aus allen anderen Zeilen: sameKey → { Schreibweise → Anzahl }
+  if (settings.typoHints === false || !value.trim() || (row.typoOk && row.typoOk[field] === value)) return null;
+  // Schreibweisen aus allen anderen Zeilen mit Anzahl
   const known = new Map();
   for (const sh of sheets)
     for (const d of sh.days)
@@ -4439,34 +4444,56 @@ function typoFor(field, row) {
         if (r === row) continue;
         for (const part of field === 'work' ? (r[field] || '').split(',') : [r[field] || '']) {
           const v = part.trim();
-          if (!v) continue;
-          if (!known.has(sameKey(v))) known.set(sameKey(v), new Map());
-          const m = known.get(sameKey(v));
-          m.set(v, (m.get(v) || 0) + 1);
+          if (v) known.set(v, (known.get(v) || 0) + 1);
         }
       }
   const hidden = new Set(settings.hiddenSuggestions[field].map(sameKey));
-  const best = (m) => [...m].sort((a, b) => b[1] - a[1])[0];
-  const candidates = [...known].filter(([k]) => !hidden.has(k)).map(([, m]) => best(m));
+  const candidates = [...known].filter(([v, n]) => n >= 2 && !hidden.has(sameKey(v)));
+  // Ohne Satzzeichen, Anfangsbuchstabe klein: was hier gleich ist, ist kein Tippfehler
+  const loose = (x) => {
+    const t = x.trim().replace(/[’‘`´ʼ′]/g, "'").replace(/[.,'\-–]/g, ' ').replace(/\s+/g, ' ').trim();
+    return t.charAt(0).toLowerCase() + t.slice(1);
+  };
+  const words = (x) => sameKey(x).replace(/[.,'\-–]/g, ' ').split(/\s+/).filter(Boolean);
+  const digits = (x) => x.replace(/\D/g, '');
   for (const raw of field === 'work' ? value.split(',') : [value]) {
     const part = raw.trim();
-    if (!part) continue;
-    const same = known.get(sameKey(part));
-    if (same && same.has(part)) continue; // genau so schon benutzt
-    if (same && !hidden.has(sameKey(part))) return { part, suggestion: best(same)[0] };
+    if (!part || known.has(part)) continue; // genau so schon benutzt
     const key = searchKey(part);
-    const max = key.length >= 10 ? 2 : key.length >= 5 ? 1 : 0;
     let hit = null;
-    const digits = (x) => x.replace(/\D/g, '');
     for (const [v, n] of candidates) {
+      if (loose(v) === loose(part)) continue;
       // Andere Zahlen („Halle 3“ / „Halle 4“, „Markt 12“ / „Markt 13“) sind kein Tippfehler
       if (digits(searchKey(v)) !== digits(key)) continue;
-      const dist = searchKey(v) === key ? 0 : max ? editDistance(key, searchKey(v)) : Infinity;
-      if (dist <= max && (!hit || dist < hit.dist || (dist === hit.dist && n > hit.n))) hit = { v, n, dist };
+      let dist = 0;
+      if (searchKey(v) !== key) {
+        const a = words(part);
+        const b = words(v);
+        if (a.length !== b.length) continue;
+        for (let i = 0; i < a.length && dist !== Infinity; i++) {
+          if (a[i] === b[i]) continue;
+          const max = a[i].length >= 10 ? 2 : a[i].length >= 5 ? 1 : 0;
+          // Ein Tippfehler ändert kaum den ersten Buchstaben („Tiefkühlzelle“/„Bierkühlzelle“ sind zwei Wörter)
+          const d = max && a[i][0] === b[i][0] && !sameStem(a[i], b[i]) ? editDistance(a[i], b[i]) : Infinity;
+          dist = d <= max ? dist + d : Infinity;
+        }
+        if (dist === Infinity) continue;
+      }
+      if (!hit || dist < hit.dist || (dist === hit.dist && n > hit.n)) hit = { v, n, dist };
     }
     if (hit) return { part, suggestion: hit.v };
   }
   return null;
+}
+const TYPO_PREFIXES = ['', 'ab', 'an', 'auf', 'aus', 'be', 'ein', 'ent', 'ge', 'mit', 'nach', 'um', 'ver', 'vor', 'weg', 'zer', 'zu'];
+/** Zwei Wörter, die sich nur in Endung (Mehrzahl, Beugung, Umlaut) oder Vorsilbe unterscheiden – so gewollt, kein Tippfehler */
+function sameStem(a, b) {
+  const fold = (w) => w.replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u');
+  const [s, l] = [fold(a), fold(b)].sort((x, y) => x.length - y.length);
+  if (s === l || l.endsWith(s) || (l.startsWith(s) && l.length - s.length <= 3)) return true;
+  let k = 0;
+  while (k < s.length && s[s.length - 1 - k] === l[l.length - 1 - k]) k++;
+  return k >= 4 && TYPO_PREFIXES.includes(s.slice(0, s.length - k)) && TYPO_PREFIXES.includes(l.slice(0, l.length - k));
 }
 /** Hinweis, wenn ein Text Zeichen enthält, die im PDF als „?“ erscheinen; sonst '' */
 function pdfCharHint(text) {
@@ -4493,7 +4520,7 @@ const typoHintHTML = (field, row) => {
   if (pdf) return pdf.replace('class="typo-hint pdf-hint"', `class="typo-hint pdf-hint" data-typo="${field}"`);
   const t = typoFor(field, row);
   return t
-    ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">⚠️ Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
+    ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
     : '';
 };
 /** Hinweis eines Feldes neu setzen (nach dem Verlassen des Feldes); beim Tippen ausblenden */
@@ -4706,10 +4733,10 @@ document.addEventListener('focusout', () => (fieldTouch = null));
  *  (den Klick danach unterdrücken, sonst scrollt iOS doch). Verdeckt die Tastatur oder die
  *  Vorschlagsleiste das Feld, schiebt es `revealField` bzw. `placeSuggestBar` nur so weit wie nötig nach oben. */
 const TAP_FIELDS = 'textarea, input:not([type]), input[type="text"]';
-let tapStart = null; // { x, y }
+let tapStart = null; // { x, y, at }
 document.addEventListener(
   'touchstart',
-  (e) => (tapStart = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null),
+  (e) => (tapStart = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY, at: Date.now() } : null),
   { passive: true }
 );
 document.addEventListener(
@@ -4719,6 +4746,8 @@ document.addEventListener(
     const t = e.changedTouches[0];
     if (!el || el === document.activeElement || el.disabled || el.readOnly || !tapStart) return;
     if (Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) > 10) return;
+    // Langes Drücken: iOS setzt den Cursor selbst dorthin, wo die Lupe stand
+    if (Date.now() - tapStart.at > 400) return;
     const pos = caretAt(el, t.clientX, t.clientY);
     // Ohne den folgenden Klick, der iOS sonst doch noch scrollen lässt
     if (e.cancelable) e.preventDefault();
@@ -5284,7 +5313,7 @@ document.addEventListener(
 );
 
 // ───────────────────────── Zeilen verschieben ─────────────────────────
-// Lange auf eine Zeile drücken (nicht in ein Textfeld), dann nach oben oder unten ziehen.
+// Lange auf eine Zeile drücken (nicht auf ein Textfeld – dort kommt die Lupe), dann nach oben oder unten ziehen.
 
 let press = null; // { rowEl, timer, x, y }
 let drag = null; // { rowEl, dayEl, grab, moved }
@@ -5336,7 +5365,7 @@ document.addEventListener(
   'touchstart',
   (e) => {
     const rowEl = e.target.closest('.day .row');
-    if (!rowEl || e.touches.length > 1 || e.target.closest('input')) return;
+    if (!rowEl || e.touches.length > 1 || e.target.closest('input, textarea')) return;
     const t = e.touches[0];
     press = { rowEl, x: t.clientX, y: t.clientY, timer: setTimeout(startDrag, 450) };
   },
@@ -5368,7 +5397,7 @@ document.addEventListener('touchend', endPress, { passive: false });
 document.addEventListener('touchcancel', endPress, { passive: false });
 // Kein Kontextmenü beim langen Drücken auf eine Zeile
 document.addEventListener('contextmenu', (e) => {
-  if (e.target.closest('.day .row') && !e.target.closest('input')) e.preventDefault();
+  if (e.target.closest('.day .row') && !e.target.closest('input, textarea')) e.preventDefault();
 });
 
 // ───────────────────────── Start ─────────────────────────

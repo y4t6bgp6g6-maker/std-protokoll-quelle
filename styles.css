@@ -30,8 +30,9 @@
   --off: #8e8e93;
   --off-ink: #5f6862;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  /* Abstand unter der Leiste: Home-Balken; fällt weg, soweit iOS unten einen ungenutzten Streifen lässt (fitBottomGap) */
-  --tab-pad: max(0px, calc(env(safe-area-inset-bottom) - var(--vp-gap, 0px)));
+  /* Abstand unter der Leiste: Home-Balken; fällt weg, soweit iOS unten einen ungenutzten Streifen lässt (fitBottomGap),
+     mindestens 16 px, damit die Beschriftungen nicht in die runden Ecken des Displays geraten */
+  --tab-pad: max(16px, calc(env(safe-area-inset-bottom) - var(--vp-gap, 0px)));
   --tab-h: calc(60px + var(--tab-pad));
   color-scheme: light;
 }
