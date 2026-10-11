@@ -1205,17 +1205,24 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   align-items: stretch;
   padding: 5px;
   border-radius: 32px;
-  background: color-mix(in srgb, var(--card) 58%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(1.8) brightness(1.04);
-  backdrop-filter: blur(14px) saturate(1.8) brightness(1.04);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
-:root[data-theme='dark'] .tab-caps {
-  background: color-mix(in srgb, var(--card) 62%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(1.6) brightness(0.9);
-  backdrop-filter: blur(14px) saturate(1.6) brightness(0.9);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+:root[data-theme='dark'] .tab-caps { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+/* Durchsichtiges Glas: Kopien der Seite (glassBar in app.js) */
+.glass-clip { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; background: var(--bg); }
+.glass-layer { position: absolute; inset: 0; }
+.glass-layer:nth-child(n + 4) { filter: blur(0.4px); }
+.glass-layer:last-child { filter: blur(0.5px) saturate(1.35) brightness(1.08); }
+.glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.glass-scroll { will-change: transform; }
+/* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
+.glass-clip.timeline .glass-scroll { animation: glass-scroll linear both; animation-timeline: scroll(root block); }
+@keyframes glass-scroll {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(0, var(--glass-max, 0px), 0); }
 }
+/* Kein Nachfedern am Seitenanfang/-ende: das Glas könnte der federnden Seite nicht folgen */
+html:has(body.tabs) { overscroll-behavior-y: none; }
 /* Lichtkante und leichter Schimmer über dem Glas */
 .tab-caps::after {
   content: '';
@@ -1274,7 +1281,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 }
 .tab-lens-row { position: absolute; left: 0; top: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 5px; transform-origin: 0 0; will-change: transform; }
 .tab-lens-row .tab { color: var(--accent); }
-.haptic { position: fixed; left: -100px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.tap-haptic { position: absolute; inset: 0; z-index: 5; width: 100%; height: 100%; margin: 0; opacity: 0.011; cursor: pointer; }
 .tab-add:active, .tab:active { transform: scale(0.94); }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
 .team-empty svg { color: var(--accent); }

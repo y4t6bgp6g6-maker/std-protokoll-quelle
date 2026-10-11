@@ -1505,18 +1505,21 @@ const TABS = [
   ['#/team', 'Team', 'tabTeam', ['team']],
   ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings', 'reports', 'report']],
 ];
+/** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
+ *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
+const HAPTIC_SWITCH = '<input type="checkbox" switch class="tap-haptic" tabindex="-1" aria-hidden="true">';
 function tabbarHTML() {
   return `<nav class="tabbar" id="tabbar"><div class="tab-caps">${TABS.map((t) =>
     t
-      ? `<button class="tab" data-act="tab" data-hash="${t[0]}">${ICON[t[2]]}<span>${t[1]}</span></button>`
-      : `<button class="tab-add" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}</button>`
+      ? `<div class="tab" role="button" data-act="tab" data-hash="${t[0]}">${ICON[t[2]]}<span>${t[1]}</span>${HAPTIC_SWITCH}</div>`
+      : `<div class="tab-add" role="button" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}${HAPTIC_SWITCH}</div>`
   ).join('')}</div></nav>`;
 }
 /** Leiste auf allen Seiten; die aktuelle (Haupt-)Seite hervorheben */
 function updateTabbar() {
   const tab = TABS.find((t) => t && t[3].includes(currentView));
   document.body.classList.add('tabs');
-  document.querySelectorAll('#tabbar .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
+  document.querySelectorAll('#tabbar .tab-caps > .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
 }
 
 function renderTeam() {
@@ -4878,7 +4881,7 @@ document.addEventListener('click', (e) => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
         break;
       }
-      const from = document.querySelector('#tabbar .tab.on');
+      const from = document.querySelector('#tabbar .tab-caps > .tab.on');
       if (!from || from === el) {
         location.replace(el.dataset.hash);
         break;
@@ -5413,14 +5416,14 @@ document.addEventListener('contextmenu', (e) => {
 // sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
 const LENS_MAG = 1.22; // Vergrößerung unter der Linse
-const LENS_MS = 520;
+const LENS_MS = 760;
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
   caps.insertAdjacentHTML(
     'beforeend',
     `<div class="tab-lens" aria-hidden="true"><div class="tab-lens-row">${TABS.map((t) =>
-      t ? `<span class="tab">${ICON[t[2]]}<span>${t[1]}</span></span>` : '<span></span>'
+      t ? `<span class="tab lens-tab">${ICON[t[2]]}<span>${t[1]}</span></span>` : '<span></span>'
     ).join('')}</div></div>`
   );
 }
@@ -5482,23 +5485,108 @@ function animateTabLens(from, to) {
   an.onfinish = () => caps.classList.remove('lens-moving');
 }
 
-/** Kurzer Vibrations-Tick. iOS-Safari kennt navigator.vibrate nicht – dort tickt das Umlegen eines iOS-Schalters
- *  (input type=checkbox switch, ab iOS 18); muss direkt im Antippen passieren. */
-let hapticLabel = null;
+/** Kurzer Vibrations-Tick, wo es navigator.vibrate gibt (Android); auf dem iPhone tickt HAPTIC_SWITCH */
 function haptic() {
-  if (navigator.vibrate) {
-    navigator.vibrate(8);
-    return;
-  }
-  if (!hapticLabel) {
-    hapticLabel = document.createElement('label');
-    hapticLabel.className = 'haptic';
-    hapticLabel.setAttribute('aria-hidden', 'true');
-    hapticLabel.innerHTML = '<input type="checkbox" switch tabindex="-1">';
-    document.body.appendChild(hapticLabel);
-  }
-  hapticLabel.click();
-  hapticLabel.firstChild.blur();
+  if (navigator.vibrate) navigator.vibrate(8);
+}
+
+// ───────────────────────── Glas der Leiste: durchsichtig mit Lichtbrechung ─────────────────────────
+// Safari kann den Hintergrund hinter einem Element nicht verzerren. Darum liegen Kopien der Seite in der Kapsel: die
+// Mitte unverändert, zum Rand hin Ringe, deren Kopie immer stärker gestreckt ist (gebogenes Glas holt Inhalt von außen
+// herein). Mitgescrollt werden die Kopien über eine an die Scrollposition gekoppelte Animation (animation-timeline,
+// ab iOS 26) – das rechnet die Grafikkarte im selben Takt wie die Seite, ohne Skript. Ältere Geräte: Scroll-Ereignis.
+
+// Ringe von innen nach außen: Abstand zum Rand (px), ab dem der Ring beginnt, und Verschiebung am Ring (px)
+const GLASS_RINGS = [
+  [17, 1.5],
+  [11.5, 4],
+  [6.5, 7.5],
+  [2.5, 12],
+];
+const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
+const glass = { caps: null, clip: null, layers: [], key: '', timer: 0 };
+
+function glassBar() {
+  const caps = document.querySelector('#tabbar .tab-caps');
+  caps.insertAdjacentHTML(
+    'afterbegin',
+    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${'<div class="glass-layer"><div class="glass-copy"><div class="glass-scroll"></div></div></div>'.repeat(GLASS_RINGS.length + 1)}</div>`
+  );
+  glass.caps = caps;
+  glass.clip = caps.querySelector('.glass-clip');
+  glass.layers = [...glass.clip.querySelectorAll('.glass-layer')];
+  glassClone();
+  // Seite geändert: Kopien erneuern, sobald es kurz ruhig ist
+  new MutationObserver(() => {
+    clearTimeout(glass.timer);
+    glass.timer = setTimeout(glassClone, 60);
+  }).observe(app, { subtree: true, childList: true, characterData: true, attributes: true });
+  addEventListener('resize', () => {
+    glass.key = '';
+    glassPlace();
+  });
+  if (!GLASS_TIMELINE) addEventListener('scroll', glassScroll, { passive: true });
+  // Nach dem Tippen kommt die Leiste wieder
+  document.addEventListener('focusout', () => requestAnimationFrame(glassPlace));
+}
+
+/** Maske „innerhalb von d px vom Kapselrand“ aus CSS-Verläufen (SVG-Masken zeigt Safari hier nicht):
+ *  oben/unten ein Streifen über die ganze Breite, an den runden Enden je ein Kreisring */
+function glassRingMask(h, d) {
+  const r = h / 2;
+  const s = 2.5;
+  const band = `linear-gradient(180deg, #000 ${d - s}px, transparent ${d + s}px, transparent ${h - d - s}px, #000 ${h - d + s}px)`;
+  const ring = (x) => `radial-gradient(circle at ${x}px 50%, transparent ${r - d - s}px, #000 ${r - d + s}px)`;
+  return { image: `${band}, ${ring(r)}, ${ring(0)}`, size: `100% 100%, ${r}px 100%, ${r}px 100%`, position: '0 0, 0 0, 100% 0' };
+}
+
+function glassClone() {
+  const c = app.cloneNode(true);
+  c.removeAttribute('id');
+  // Abstände, die an der ID #app hängen, übernehmen
+  const cs = getComputedStyle(app);
+  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'maxWidth', 'marginLeft', 'marginRight', 'boxSizing']) c.style[k] = cs[k];
+  c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+  c.setAttribute('inert', '');
+  glass.layers.forEach((l, i) => l.querySelector('.glass-scroll').replaceChildren(i ? c.cloneNode(true) : c));
+  glass.key = '';
+  glassPlace();
+}
+
+/** Kopien unter die Kapsel legen (Lage bei Scrollposition 0) und die Ringe um die Kapselmitte strecken */
+function glassPlace() {
+  const { caps, clip, layers } = glass;
+  if (!caps || !caps.offsetWidth) return;
+  const cr = caps.getBoundingClientRect();
+  const ar = app.getBoundingClientRect();
+  const max = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+  const top = ar.top + scrollY; // Lage der Seite ohne Scrollen
+  const key = `${cr.left},${cr.top},${cr.width},${cr.height},${ar.left},${ar.width},${top},${max}`;
+  if (key === glass.key) return;
+  glass.key = key;
+  clip.style.clipPath = `inset(0 round ${cr.height / 2}px)`;
+  clip.style.setProperty('--glass-max', `${-max}px`);
+  const cx = cr.width / 2;
+  const cy = cr.height / 2;
+  layers.forEach((l, i) => {
+    if (i) {
+      const m = glassRingMask(cr.height, GLASS_RINGS[i - 1][0]);
+      l.style.webkitMaskImage = l.style.maskImage = m.image;
+      l.style.webkitMaskSize = l.style.maskSize = m.size;
+      l.style.webkitMaskPosition = l.style.maskPosition = m.position;
+      l.style.webkitMaskRepeat = l.style.maskRepeat = 'no-repeat';
+    }
+    const off = i ? GLASS_RINGS[i - 1][1] : 0;
+    const copy = l.firstChild;
+    copy.style.width = `${ar.width}px`;
+    copy.style.transform = `translate(${cx}px, ${cy}px) scale(${1 + off / cx}, ${1 + off / cy}) translate(${ar.left - cr.left - cx}px, ${top - cr.top - cy}px)`;
+  });
+  if (!GLASS_TIMELINE) glassScroll();
+}
+/** Nur ohne animation-timeline: Kopien per Skript mitschieben */
+function glassScroll() {
+  const y = `translate3d(0, ${-Math.max(0, scrollY)}px, 0)`;
+  glass.layers.forEach((l) => (l.firstChild.firstChild.style.transform = y));
 }
 
 // ───────────────────────── Start ─────────────────────────
@@ -5510,6 +5598,7 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 route();
 tabLens();
+glassBar();
 fetchReports();
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());
 
