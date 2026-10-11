@@ -4871,11 +4871,27 @@ document.addEventListener('click', (e) => {
     case 'settings':
       location.hash = '#/einstellungen';
       break;
-    case 'tab':
+    case 'tab': {
       // Antippen der aktiven Seite: nach oben; sonst Seite wechseln (ohne neuen Verlaufseintrag)
-      if ((location.hash || '#/') === el.dataset.hash) window.scrollTo({ top: 0, behavior: 'smooth' });
-      else location.replace(el.dataset.hash);
+      haptic();
+      if ((location.hash || '#/') === el.dataset.hash) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        break;
+      }
+      const from = document.querySelector('#tabbar .tab.on');
+      if (!from || from === el) {
+        location.replace(el.dataset.hash);
+        break;
+      }
+      // Erst die Linse starten, die Seite zwei Bilder später wechseln: dann läuft die Animation schon auf der
+      // Grafikkarte und wird vom Aufbau der neuen Seite nicht mehr aufgehalten
+      animateTabLens(from, el);
+      from.classList.remove('on');
+      el.classList.add('on');
+      const hash = el.dataset.hash;
+      requestAnimationFrame(() => requestAnimationFrame(() => location.replace(hash)));
       break;
+    }
     case 'new':
       weekPicker(new Date(), null, (anchor) => {
         location.hash = `#/zettel/${encodeURIComponent(openOrCreate(anchor))}`;
@@ -5390,95 +5406,99 @@ document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.day .row') && !e.target.closest('input, textarea')) e.preventDefault();
 });
 
-// ───────────────────────── Glas der Leiste (Lichtbrechung) ─────────────────────────
-// Safari kann den Hintergrund hinter einem Element nicht verzerren, SVG-Verschiebungskarten bleiben dort leer oder
-// unvollständig. Darum liegen Kopien der Seite in der Kapsel: die Mitte unverändert, zum Rand hin Ringe, deren Kopie
-// immer stärker gestreckt ist (wie gebogenes Glas, das Inhalt von außen hereinholt). Die Ringe gehen weich ineinander über.
+// ───────────────────────── Leiste: Glas-Linse beim Umschalten, Vibration ─────────────────────────
+// Wie die Leiste unter iOS 26: Beim Antippen wächst aus der Markierung eine klare Glas-Linse, gleitet gedehnt zum neuen
+// Symbol (darunter vergrößert und eingefärbt) und wird dort wieder zur Markierung. Die Linse enthält nur eine Kopie
+// der Symbole; die Bewegung läuft über die Web Animations API mit reinen Transformationen, also auf der Grafikkarte –
+// sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
-// Ringe von innen nach außen: Abstand zum Rand (px), ab dem der Ring beginnt, und Verschiebung am Ring (px)
-const GLASS_RINGS = [
-  [20, 0.8],
-  [16, 2],
-  [12.5, 3.6],
-  [9.5, 5.6],
-  [7, 8],
-  [4.5, 10.8],
-  [2, 14],
-];
-const glass = { caps: null, clip: null, layers: [], size: '', timer: 0 };
+const LENS_MAG = 1.22; // Vergrößerung unter der Linse
+const LENS_MS = 520;
 
-function glassBar() {
+function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
   caps.insertAdjacentHTML(
-    'afterbegin',
-    `<div class="glass-clip" aria-hidden="true">${'<div class="glass-layer"><div class="glass-copy"></div></div>'.repeat(GLASS_RINGS.length + 1)}</div>`
+    'beforeend',
+    `<div class="tab-lens" aria-hidden="true"><div class="tab-lens-row">${TABS.map((t) =>
+      t ? `<span class="tab">${ICON[t[2]]}<span>${t[1]}</span></span>` : '<span></span>'
+    ).join('')}</div></div>`
   );
-  glass.caps = caps;
-  glass.clip = caps.querySelector('.glass-clip');
-  glass.layers = [...glass.clip.querySelectorAll('.glass-layer')];
-  glassClone();
-  // Seite geändert: Kopien erneuern, wenn es kurz ruhig ist
-  new MutationObserver(() => {
-    clearTimeout(glass.timer);
-    glass.timer = setTimeout(glassClone, 150);
-  }).observe(app, { subtree: true, childList: true, characterData: true, attributes: true });
-  addEventListener('scroll', glassPlace, { passive: true });
-  addEventListener('resize', () => {
-    glass.size = '';
-    glassPlace();
-  });
-  // Nach dem Tippen kommt die Leiste wieder
-  document.addEventListener('focusout', () => requestAnimationFrame(glassPlace));
 }
 
-/** Maske „innerhalb von d px vom Kapselrand“ aus CSS-Verläufen (SVG-Masken zeigt Safari hier nicht):
- *  oben/unten ein Streifen über die ganze Breite, an den runden Enden je ein Kreisring */
-function glassRingMask(h, d) {
-  const r = h / 2;
-  const s = 2;
-  const band = `linear-gradient(180deg, #000 ${d - s}px, transparent ${d + s}px, transparent ${h - d - s}px, #000 ${h - d + s}px)`;
-  const ring = (x) => `radial-gradient(circle at ${x}px 50%, transparent ${r - d - s}px, #000 ${r - d + s}px)`;
-  return { image: `${band}, ${ring(r)}, ${ring(0)}`, size: `100% 100%, ${r}px 100%, ${r}px 100%`, position: '0 0, 0 0, 100% 0' };
-}
-
-function glassClone() {
-  const c = app.cloneNode(true);
-  c.removeAttribute('id');
-  // Abstände, die an der ID #app hängen, übernehmen
-  const cs = getComputedStyle(app);
-  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'maxWidth', 'marginLeft', 'marginRight', 'boxSizing']) c.style[k] = cs[k];
-  c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
-  c.setAttribute('inert', '');
-  glass.layers.forEach((l, i) => l.firstChild.replaceChildren(i ? c.cloneNode(true) : c));
-  glassPlace();
-}
-
-/** Kopien deckungsgleich unter die Kapsel legen; die Ringe um die Kapselmitte strecken (am Rand genau ihre Verschiebung) */
-function glassPlace() {
-  const { caps, clip, layers } = glass;
-  if (!caps || !caps.offsetWidth) return;
+/** Linse von einem Eintrag zum anderen gleiten lassen */
+function animateTabLens(from, to) {
+  const caps = document.querySelector('#tabbar .tab-caps');
+  const lens = caps.querySelector('.tab-lens');
+  const row = lens.firstChild;
   const cr = caps.getBoundingClientRect();
-  const key = `${cr.width}x${cr.height}`;
-  if (key !== glass.size) {
-    glass.size = key;
-    clip.style.clipPath = `inset(0 round ${cr.height / 2}px)`;
-    layers.slice(1).forEach((l, i) => {
-      const m = glassRingMask(cr.height, GLASS_RINGS[i][0]);
-      l.style.webkitMaskImage = l.style.maskImage = m.image;
-      l.style.webkitMaskSize = l.style.maskSize = m.size;
-      l.style.webkitMaskPosition = l.style.maskPosition = m.position;
-      l.style.webkitMaskRepeat = l.style.maskRepeat = 'no-repeat';
-    });
+  const W = cr.width;
+  const H = cr.height;
+  const center = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.left - cr.left + r.width / 2;
+  };
+  const a = center(from);
+  const b = center(to);
+  const w = from.getBoundingClientRect().width + 14; // Linse etwas breiter und höher als die Markierung
+  const h = H + 12;
+  lens.style.width = `${w}px`;
+  lens.style.height = `${h}px`;
+  lens.style.top = `${(H - h) / 2}px`;
+  row.style.width = `${W}px`;
+  row.style.height = `${H}px`;
+
+  // Weg mit leichtem Überschwingen (gedämpfte Feder), Dehnung nach Geschwindigkeit
+  const spring = (t) => 1 - Math.exp(-9 * t) * Math.cos(7 * t);
+  const N = 28;
+  const lensFrames = [];
+  const rowFrames = [];
+  let prev = a;
+  for (let k = 0; k <= N; k++) {
+    const t = k / N;
+    // 0–0.12 aufblähen, 0.12–0.62 gleiten (wie iOS etwa 260 ms), danach zur Markierung schrumpfen
+    const grow = Math.min(1, t / 0.12);
+    const move = t < 0.12 ? 0 : spring(Math.min(1, (t - 0.12) / 0.5));
+    // Beim Überschwingen nicht über die Kapsel hinaus
+    const x = Math.min(W - w / 2 + 4, Math.max(w / 2 - 4, a + (b - a) * move));
+    const v = Math.abs(x - prev) / Math.max(1, Math.abs(b - a)) * N; // relative Geschwindigkeit
+    prev = x;
+    const shrink = t > 0.64 ? (t - 0.64) / 0.36 : 0;
+    const base = (0.86 + 0.14 * grow) * (1 - 0.14 * shrink);
+    const sx = base * (1 + Math.min(0.32, v * 0.11));
+    const sy = base * (1 - Math.min(0.12, v * 0.04));
+    const opacity = Math.min(1, grow * 1.6) * (1 - shrink);
+    lensFrames.push({ offset: t, opacity, transform: `translate3d(${x - w / 2}px, 0, 0) scale(${sx}, ${sy})` });
+    // Kopie der Symbole so legen, dass sie unter der Linsenmitte deckungsgleich ist, um LENS_MAG vergrößert
+    const mx = LENS_MAG / sx;
+    const my = LENS_MAG / sy;
+    rowFrames.push({ offset: t, transform: `translate3d(${w / 2 - mx * x}px, ${h / 2 - my * (H / 2)}px, 0) scale(${mx}, ${my})` });
   }
-  const ar = app.getBoundingClientRect();
-  const cx = cr.width / 2;
-  const cy = cr.height / 2;
-  layers.forEach((l, i) => {
-    const off = i ? GLASS_RINGS[i - 1][1] : 0;
-    const copy = l.firstChild;
-    copy.style.width = `${ar.width}px`;
-    copy.style.transform = `translate(${cx}px, ${cy}px) scale(${1 + off / cx}, ${1 + off / cy}) translate(${ar.left - cr.left - cx}px, ${ar.top - cr.top - cy}px)`;
-  });
+  const opts = { duration: LENS_MS, easing: 'linear', fill: 'both' };
+  lens.getAnimations().forEach((an) => an.cancel());
+  row.getAnimations().forEach((an) => an.cancel());
+  caps.classList.add('lens-moving');
+  const an = lens.animate(lensFrames, opts);
+  row.animate(rowFrames, opts);
+  an.onfinish = () => caps.classList.remove('lens-moving');
+}
+
+/** Kurzer Vibrations-Tick. iOS-Safari kennt navigator.vibrate nicht – dort tickt das Umlegen eines iOS-Schalters
+ *  (input type=checkbox switch, ab iOS 18); muss direkt im Antippen passieren. */
+let hapticLabel = null;
+function haptic() {
+  if (navigator.vibrate) {
+    navigator.vibrate(8);
+    return;
+  }
+  if (!hapticLabel) {
+    hapticLabel = document.createElement('label');
+    hapticLabel.className = 'haptic';
+    hapticLabel.setAttribute('aria-hidden', 'true');
+    hapticLabel.innerHTML = '<input type="checkbox" switch tabindex="-1">';
+    document.body.appendChild(hapticLabel);
+  }
+  hapticLabel.click();
+  hapticLabel.firstChild.blur();
 }
 
 // ───────────────────────── Start ─────────────────────────
@@ -5489,7 +5509,7 @@ applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 route();
-glassBar();
+tabLens();
 fetchReports();
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());
 
