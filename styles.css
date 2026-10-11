@@ -1217,14 +1217,11 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   pointer-events: none;
   overflow: hidden;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--card) 8%, transparent);
-  -webkit-backdrop-filter: blur(2px) saturate(1.5);
-  backdrop-filter: blur(2px) saturate(1.5);
+  background: color-mix(in srgb, var(--card) 4%, transparent);
+  -webkit-backdrop-filter: blur(1px) saturate(1.4);
+  backdrop-filter: blur(1px) saturate(1.4);
 }
-.glass-layer { position: absolute; inset: 0; filter: blur(1px) saturate(1.7) brightness(1.12); }
-/* gespiegelter Inhalt nur nah am Rand, zur Mitte hin auslaufend */
-.glass-layer.top { -webkit-mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.75) 6px, transparent 17px); mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.75) 6px, transparent 17px); }
-.glass-layer.bottom { -webkit-mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.75) 5px, transparent 14px); mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.75) 5px, transparent 14px); }
+.glass-layer { position: absolute; inset: 0; opacity: 0.7; filter: blur(0.6px) saturate(1.4); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 .glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .glass-bounce, .glass-scroll { will-change: transform; }
 /* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
@@ -1250,6 +1247,9 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 }
 .tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 24px; color: var(--text); font-size: 10.5px; font-weight: 500; }
 .tab svg { width: 25px; height: 25px; }
+/* Symbole und Beschriftung ganz leicht durchsichtig, wie Glas */
+.tab-caps > .tab svg, .tab-caps > .tab span { opacity: 0.86; }
+.tab-caps > .tab.on svg, .tab-caps > .tab.on span { opacity: 0.95; }
 .tab.on {
   color: var(--accent);
   font-weight: 600;

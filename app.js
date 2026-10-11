@@ -5420,7 +5420,7 @@ document.addEventListener('contextmenu', (e) => {
 // sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
 const LENS_MAG = 1.28; // Vergrößerung unter der Linse
-const LENS_MS = 1300;
+const LENS_MS = 1100;
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5507,29 +5507,42 @@ function haptic() {
 }
 
 // ───────────────────────── Glas der Leiste: Spiegelung am Rand ─────────────────────────
-// Wie die Glasleiste unter iOS 26: Die Mitte ist leicht milchiges Glas (backdrop-filter), am oberen und unteren Rand
-// spiegelt sich der Inhalt direkt über bzw. unter der Leiste kopfüber hinein, verwischt und zur Mitte hin auslaufend.
-// Safari kann den Hintergrund nicht spiegeln; darum liegen zwei gespiegelte Kopien der Seite in der Kapsel. Mitgescrollt
-// werden sie über eine an die Scrollposition gekoppelte Animation (animation-timeline, ab iOS 26, Grafikkarte), beim
-// Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
+// Wie die Glasleiste unter iOS 26: Die Mitte ist klares Glas (backdrop-filter). Am Rand spiegelt sich, was knapp außerhalb
+// liegt, stark gestaucht hinein: Inhalt weiter weg ergibt nur einen dünnen Strich, Inhalt am Rand trifft dort genau auf
+// sein Spiegelbild und verschmilzt damit. Gespiegelt wird an der Tangente des Randes: oben und unten an der geraden Kante,
+// an den runden Enden in je drei Abschnitten. Safari kann den Hintergrund nicht spiegeln; darum liegen gespiegelte Kopien
+// der Seite in der Kapsel. Mitgescrollt werden sie über eine an die Scrollposition gekoppelte Animation
+// (animation-timeline, ab iOS 26, Grafikkarte), beim Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
 
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
-const GLASS_SQUASH = 0.7; // Spiegelbild gestaucht wie am gebogenen Glasrand
-const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0 };
+const GLASS_K = 0.3; // Stauchung: 1 px im Glas zeigt 1/0,3 px außerhalb
+const GLASS_BAND = 12; // Breite des Spiegelstreifens am Rand (px)
+// Abschnitte: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn) und welches Ende (l/r) bzw. gerade Kante
+const GLASS_PARTS = [
+  { side: 'top', deg: 0 },
+  { side: 'bottom', deg: 180 },
+  { side: 'l', deg: 225 },
+  { side: 'l', deg: 270 },
+  { side: 'l', deg: 315 },
+  { side: 'r', deg: 45 },
+  { side: 'r', deg: 90 },
+  { side: 'r', deg: 135 },
+];
+const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0, dirty: false };
 
 function glassBar() {
   const caps = document.querySelector('#tabbar .tab-caps');
   caps.insertAdjacentHTML(
     'afterbegin',
-    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${['top', 'bottom']
-      .map((e) => `<div class="glass-layer ${e}"><div class="glass-copy"><div class="glass-bounce"><div class="glass-scroll"></div></div></div></div>`)
-      .join('')}</div>`
+    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${GLASS_PARTS.map(
+      () => '<div class="glass-layer"><div class="glass-copy"><div class="glass-bounce"><div class="glass-scroll"></div></div></div></div>'
+    ).join('')}</div>`
   );
   glass.caps = caps;
   glass.clip = caps.querySelector('.glass-clip');
   glass.layers = [...glass.clip.querySelectorAll('.glass-layer')];
   glassClone();
-  // Seite geändert: Kopien erneuern, sobald es kurz ruhig ist
+  // Seite geändert: Kopien erneuern, sobald es kurz ruhig ist (nicht, solange die Leiste beim Tippen fehlt)
   new MutationObserver(() => {
     clearTimeout(glass.timer);
     glass.timer = setTimeout(glassClone, 60);
@@ -5540,10 +5553,17 @@ function glassBar() {
   });
   addEventListener('scroll', glassScroll, { passive: true });
   // Nach dem Tippen kommt die Leiste wieder
-  document.addEventListener('focusout', () => requestAnimationFrame(glassPlace));
+  document.addEventListener('focusout', () =>
+    requestAnimationFrame(() => (glass.dirty ? glassClone() : glassPlace()))
+  );
 }
 
 function glassClone() {
+  if (!glass.caps.offsetWidth) {
+    glass.dirty = true;
+    return;
+  }
+  glass.dirty = false;
   const c = app.cloneNode(true);
   c.removeAttribute('id');
   // Abstände, die an der ID #app hängen, übernehmen
@@ -5556,7 +5576,27 @@ function glassClone() {
   glassPlace();
 }
 
-/** Kopien an der Ober- bzw. Unterkante der Kapsel spiegeln (Lage bei Scrollposition 0) */
+/** Maske eines Abschnitts: Streifen am Rand, zur Mitte auslaufend; an den Enden auf einen Winkelbereich begrenzt */
+function glassMask(part, W, H) {
+  const r = H / 2;
+  const B = GLASS_BAND;
+  const f = 6; // weicher Übergang zwischen Abschnitten
+  if (part.side === 'top' || part.side === 'bottom') {
+    const dir = part.side === 'top' ? '180deg' : '0deg';
+    return {
+      image: `linear-gradient(${dir}, #000, rgba(0,0,0,.45) ${B * 0.4}px, transparent ${B}px), linear-gradient(90deg, transparent ${r - f}px, #000 ${r + f}px, #000 ${W - r - f}px, transparent ${W - r + f}px)`,
+      composite: 'intersect',
+    };
+  }
+  const cx = part.side === 'l' ? r : W - r;
+  const ring = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - B}px, rgba(0,0,0,.45) ${r - B * 0.6}px, #000 ${r}px)`;
+  // Winkelbereich um die Normale (±22,5°), weich auslaufend
+  const a = part.deg;
+  const sector = `conic-gradient(from ${a - 30}deg at ${cx}px ${r}px, transparent 0deg, #000 15deg, #000 45deg, transparent 60deg, transparent 360deg)`;
+  return { image: `${ring}, ${sector}`, composite: 'intersect' };
+}
+
+/** Kopien an der Tangente des jeweiligen Randabschnitts spiegeln und stauchen (Lage bei Scrollposition 0) */
 function glassPlace() {
   const { caps, clip, layers } = glass;
   if (!caps || !caps.offsetWidth) return;
@@ -5569,12 +5609,28 @@ function glassPlace() {
   glass.key = key;
   glass.max = max;
   clip.style.setProperty('--glass-max', `${-max}px`);
+  const W = cr.width;
+  const H = cr.height;
+  const r = H / 2;
   const move = `translate(${ar.left - cr.left}px, ${top - cr.top}px)`;
   layers.forEach((l, i) => {
+    const part = GLASS_PARTS[i];
+    const m = glassMask(part, W, H);
+    l.style.webkitMaskImage = l.style.maskImage = m.image;
+    l.style.webkitMaskComposite = 'source-in';
+    l.style.maskComposite = m.composite;
+    // Randnormale n und Tangentenpunkt T; Spiegelung mit Stauchung: A = I − (1 + k)·n·nᵀ um T
+    const rad = (part.deg * Math.PI) / 180;
+    const n = [Math.sin(rad), -Math.cos(rad)];
+    const T =
+      part.side === 'top' ? [W / 2, 0] : part.side === 'bottom' ? [W / 2, H] : [(part.side === 'l' ? r : W - r) + r * n[0], r + r * n[1]];
+    const q = 1 + GLASS_K;
+    const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
+    const e = T[0] - (A[0] * T[0] + A[2] * T[1]);
+    const g = T[1] - (A[1] * T[0] + A[3] * T[1]);
     const copy = l.firstChild;
     copy.style.width = `${ar.width}px`;
-    // oben an y = 0, unten an y = Höhe der Kapsel spiegeln; wie bei gebogenem Glas gestaucht
-    copy.style.transform = `translate(0, ${i ? cr.height : 0}px) scale(1, ${-GLASS_SQUASH}) translate(0, ${i ? -cr.height : 0}px) ${move}`;
+    copy.style.transform = `matrix(${A.map((v) => v.toFixed(4)).join(',')},${e.toFixed(2)},${g.toFixed(2)}) ${move}`;
   });
   glassScroll();
 }
