@@ -34,30 +34,30 @@
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --bg: #080b0f;
-  --card: #151c25;
+  --bg: #02040b;
+  --card: #0d1222;
   --text: #f6f8fa;
-  --muted: #a9b3bd;
-  --sep: #273141;
-  /* Blau wie im hellen Design; Schrift und Symbole heller, damit sie auf dunklem Grund lesbar sind */
-  --accent: #7d97ff;
-  --accent-fill: #213f99;
+  --muted: #aab3cc;
+  --sep: #1c2440;
+  /* Tiefblau mit leuchtenden Farben: kräftiges Blau für Flächen, helleres für Schrift und Symbole */
+  --accent: #a3b5ff;
+  --accent-fill: #4064ff;
   --on-accent: #ffffff;
-  --accent-soft: rgba(125, 151, 255, 0.16);
+  --accent-soft: rgba(64, 100, 255, 0.3);
   --danger: #ff5a4f;
-  --success: #34e07a;
-  --warning: #ffb547;
-  --fill: #1e2732;
-  --inactive: #0f141c;
+  --success: #3cf58a;
+  --warning: #ffc04d;
+  --fill: #161d36;
+  --inactive: #080b16;
   --backdrop: rgba(0, 0, 0, 0.55);
-  --sheet: #121921;
+  --sheet: #0e1426;
   /* plastisch: feine Lichtkante oben, Schatten nach unten */
-  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px #212a36, 0 6px 18px rgba(0, 0, 0, 0.45);
-  --vac: #ffa733;
+  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 0 0 1px rgba(110, 140, 255, 0.2), 0 6px 22px rgba(20, 40, 140, 0.35);
+  --vac: #ffad2e;
   --vac-ink: #ffbb55;
-  --sick: #ff5f97;
+  --sick: #ff4f8b;
   --sick-ink: #ff7fab;
-  --holiday: #c08bff;
+  --holiday: #b77bff;
   --holiday-ink: #c9a0ff;
   --off: #97a2ac;
   --off-ink: #97a2ac;

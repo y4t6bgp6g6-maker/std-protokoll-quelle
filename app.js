@@ -1544,7 +1544,7 @@ const isDarkTheme = () => {
 function applyTheme() {
   const dark = isDarkTheme();
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0c1015' : '#f2f0e9');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#02040b' : '#f2f0e9');
 }
 
 // ───────────────────────── Icons ─────────────────────────
