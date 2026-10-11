@@ -4891,12 +4891,12 @@ document.addEventListener('click', (e) => {
         location.replace(el.dataset.hash);
         break;
       }
-      // Seite gleich im nächsten Bild wechseln; die Glas-Kopien werden erst nach der Linse erneuert
+      // Seite kurz nach dem Antippen wechseln (TAB_PAGE_DELAY), während die Linse schon gleitet
       animateTabLens(from, el);
       from.classList.remove('on');
       el.classList.add('on');
       const hash = el.dataset.hash;
-      requestAnimationFrame(() => location.replace(hash));
+      setTimeout(() => location.replace(hash), TAB_PAGE_DELAY);
       break;
     }
     case 'new':
@@ -5421,8 +5421,10 @@ document.addEventListener('contextmenu', (e) => {
 // Web Animations API.
 
 const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
+/** Verzögerung (ms) zwischen Antippen einer Taste der Leiste und dem Seitenwechsel */
+const TAB_PAGE_DELAY = 80;
 const LENS_EDGE = 0.3; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
-const LENS_CHROMA = 0.022; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
+const LENS_CHROMA = 0.03; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5552,13 +5554,14 @@ function animateTabLens(from, to) {
   const h1 = H + 8;
   lensSource();
 
-  // Zeiten (ms) wie in den Aufnahmen: aufblähen, gleiten (je weiter, desto länger), kurz halten, schrumpfen und
+  // Zeiten (ms): aufblähen, gleiten (je weiter, desto länger), noch im Gleiten schrumpfen und
   // verblassen, während die Markierung am Ziel erscheint
   const T_GROW = 110;
   const T_MOVE = 195 + 50 * slots;
-  const T_HOLD = 25;
   const T_SETTLE = 205;
-  const total = T_GROW + T_MOVE + T_HOLD + T_SETTLE;
+  // Schrumpfen beginnt schon, wenn die Linse fast am Ziel ist (letztes Viertel des Gleitens)
+  const T_SETTLE_AT = T_GROW + T_MOVE * 0.75;
+  const total = T_SETTLE_AT + T_SETTLE;
   const easeOut = (u) => 1 - Math.pow(1 - u, 3);
   // Gleiten: weich an- und auslaufen, ohne Ruck (easeInOutSine)
   const glide = (u) => 0.5 - 0.5 * Math.cos(Math.PI * u);
@@ -5568,14 +5571,14 @@ function animateTabLens(from, to) {
   caps.classList.add('lens-moving', 'lens-anim');
   clearTimeout(animateTabLens.timer);
   // Die Markierung blendet ein, sobald die Linse am Ziel schrumpft
-  animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), T_GROW + T_MOVE + T_HOLD);
+  animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), T_SETTLE_AT);
   const start = performance.now();
   const frame = (now) => {
     const ms = Math.min(total, now - start);
     const x = at(ms);
     const v = Math.abs(at(ms + 8) - at(ms - 8)) / 16 / w0; // Markierungsbreiten je ms
     const grow = easeOut(Math.min(1, ms / T_GROW));
-    const settle = Math.min(1, Math.max(0, (ms - T_GROW - T_MOVE - T_HOLD) / T_SETTLE));
+    const settle = Math.min(1, Math.max(0, (ms - T_SETTLE_AT) / T_SETTLE));
     const size = grow * (1 - easeOut(settle)); // 0 = Markierung, 1 = aufgebläht
     const stretch = Math.min(0.16, v * 12);
     const lw = (w0 + (w1 - w0) * size) * (1 + stretch);
