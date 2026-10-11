@@ -180,6 +180,7 @@ const DEFAULT_SETTINGS = {
   bav: '',
   theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
   autoBackup: true, // Sicherung automatisch über die Abholadresse (Google-Skript) in Google Drive
+  encryptBackup: false, // Sicherungen mit Passwort verschlüsseln (Schlüssel nur auf diesem iPhone, nie in der Sicherung)
 };
 
 function readJson(key, fallback) {
@@ -1196,6 +1197,120 @@ const reportStatusText = () =>
     reportStore.at ? ` · abgeholt ${fmtDayMonth(new Date(reportStore.at))} ${fmtTime(new Date(reportStore.at).getHours() * 60 + new Date(reportStore.at).getMinutes())}` : ''
   }`;
 
+// ───────────────────────── Verschlüsselte Sicherung ─────────────────────────
+// AES-256-GCM, Schlüssel aus dem Passwort (PBKDF2-SHA256). Der Schlüssel liegt nur auf diesem iPhone
+// (yetizettel.crypt.v1, nicht in der Sicherung), damit die automatische Sicherung ohne Eingabe läuft.
+// Beim Einlesen einer verschlüsselten Datei fragt die App nach dem Passwort.
+
+const CRYPT_KEY = 'yetizettel.crypt.v1';
+const PBKDF2_ITER = 310000;
+let cryptStore = readJson(CRYPT_KEY, null); // { salt, key } als Base64
+
+function toB64(buf) {
+  const u = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function fromB64(str) {
+  const s = atob(str);
+  const u = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  return u;
+}
+async function passwordKey(pw, salt, iter = PBKDF2_ITER) {
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+async function rememberKey(key, salt) {
+  cryptStore = { salt: toB64(salt), key: toB64(await crypto.subtle.exportKey('raw', key)) };
+  try {
+    localStorage.setItem(CRYPT_KEY, JSON.stringify(cryptStore));
+  } catch {}
+}
+
+/** Sicherung zum Speichern/Senden: verschlüsselt, wenn eingeschaltet */
+async function sealBackup(plain) {
+  if (!settings.encryptBackup) return plain;
+  if (!cryptStore) throw new Error('Passwort für die Sicherung fehlt – in den Einstellungen neu festlegen.');
+  const key = await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain));
+  return JSON.stringify({ app: 'yetizettel', enc: 'AES-256-GCM', kdf: 'PBKDF2-SHA256', iter: PBKDF2_ITER, salt: cryptStore.salt, iv: toB64(iv), data: toB64(data) });
+}
+
+/** Verschlüsselte Sicherung öffnen: nach dem Passwort fragen, bis es passt oder abgebrochen wird */
+const openedKeys = new Map(); // salt → Schlüssel, damit mehrere Dateien mit demselben Passwort nur einmal fragen
+async function openSealedBackup(obj, fileName) {
+  const salt = fromB64(obj.salt);
+  const tryKey = async (key) => {
+    try {
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(obj.iv) }, key, fromB64(obj.data));
+      return JSON.parse(new TextDecoder().decode(plain));
+    } catch {
+      return null;
+    }
+  };
+  const known = openedKeys.get(obj.salt) || (cryptStore && cryptStore.salt === obj.salt
+    ? await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', true, ['decrypt']) : null);
+  if (known) {
+    const data = await tryKey(known);
+    if (data) return data;
+  }
+  document.getElementById('toast').classList.remove('show');
+  for (let wrong = false; ; wrong = true) {
+    const pw = await askPassword(wrong ? 'Passwort falsch' : 'Passwort', `${escapeHtml(fileName)} ist verschlüsselt.`);
+    if (pw == null) throw new Error('kein Passwort');
+    const key = await passwordKey(pw, salt, obj.iter || PBKDF2_ITER);
+    const data = await tryKey(key);
+    if (!data) continue;
+    openedKeys.set(obj.salt, key);
+    // Frisches iPhone: Schlüssel übernehmen, damit weitere Sicherungen gleich verschlüsselt werden
+    if (!cryptStore) await rememberKey(key, salt);
+    return data;
+  }
+}
+
+/** Passwortfenster; liefert das Passwort oder null (Abbrechen) */
+function askPassword(title, message, confirm = false) {
+  return new Promise((resolve) => {
+    const modal = openModal(
+      `<div class="alert-body"><b>${title}</b><div class="alert-msg">${message}</div>
+        <input type="password" class="pw-input" data-pw="1" placeholder="Passwort" autocomplete="${confirm ? 'new-password' : 'current-password'}">
+        ${confirm ? '<input type="password" class="pw-input" data-pw="2" placeholder="Wiederholen" autocomplete="new-password">' : ''}
+      </div>
+      <div class="alert-buttons"><button data-c="no">Abbrechen</button><button data-c="yes" class="strong">OK</button></div>`,
+      'alert'
+    );
+    const done = (v) => {
+      closeModal();
+      resolve(v);
+    };
+    modal.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-c]');
+      if (!b) return;
+      if (b.dataset.c === 'no') return done(null);
+      const p1 = modal.querySelector('[data-pw="1"]').value;
+      const p2 = confirm ? modal.querySelector('[data-pw="2"]').value : p1;
+      const msg = modal.querySelector('.alert-msg');
+      if (confirm && p1.length < 6) msg.textContent = 'Mindestens 6 Zeichen.';
+      else if (p1 !== p2) msg.textContent = 'Die beiden Passwörter sind verschieden.';
+      else if (p1) done(p1);
+    });
+    layer.querySelector('.backdrop').addEventListener('click', () => resolve(null));
+  });
+}
+
+/** Neues Passwort festlegen (auch zum Ändern); danach sind neue Sicherungen damit verschlüsselt */
+async function askNewBackupPassword(onDone) {
+  const pw = await askPassword('Passwort für Sicherungen', 'Ohne Passwort lässt sich eine Sicherung nicht öffnen – gut aufbewahren, z. B. in den iPhone-Passwörtern.', true);
+  if (pw == null) return;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  await rememberKey(await passwordKey(pw, salt), salt);
+  toast('Passwort gespeichert');
+  onDone();
+}
+
 // ───────────────────────── Sicherung in Google Drive ─────────────────────────
 // Über dieselbe Abholadresse wie die Arbeitsscheine: das Google-Skript (doPost) legt die Datei im Ordner
 // „Yetizettel-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
@@ -1214,12 +1329,13 @@ function textHash(s) {
 async function driveBackup(manual = false) {
   const url = (settings.reportUrl || '').trim();
   if (!url || driveBusy || (!manual && settings.autoBackup === false)) return;
-  const data = backupJson();
-  const hash = textHash(data.replace(/"exportedAt":"[^"]*",/, ''));
+  const plain = backupJson();
+  const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, '') + (settings.encryptBackup ? '#enc' : ''));
   if (!manual && (hash === driveState.hash || Date.now() - driveState.at < 20 * 3600e3)) return;
   driveBusy = true;
   if (manual) toast('Sichern …');
   try {
+    const data = await sealBackup(plain);
     // text/plain: ohne Vorabanfrage (CORS); das Skript liest den Inhalt selbst
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'backup', name: `Yetizettel-Sicherung ${isoDate(new Date())}.json`, data }) });
     let out;
@@ -3636,6 +3752,11 @@ function renderSettings() {
     <p class="footnote" id="report-status">${reportStatusText()}</p>
 
     <h2 class="section-title">Datensicherung</h2>
+    <div class="card form">
+      <label class="field"><span>Sicherung verschlüsseln</span><input type="checkbox" class="toggle" data-encrypt-switch ${settings.encryptBackup ? 'checked' : ''}></label>
+      ${settings.encryptBackup ? '<button class="list-btn" data-act="backup-pw">Passwort ändern</button>' : ''}
+    </div>
+    ${settings.encryptBackup && !cryptStore ? '<p class="footnote warn">Passwort fehlt – bitte neu festlegen.</p>' : ''}
     <div class="card list">
       <button class="list-btn" data-act="backup-export">Sicherung speichern …</button>
       <label class="list-btn">Sicherung einlesen …<input type="file" multiple accept="${IMPORT_ACCEPT}" data-act-change="backup-import" hidden></label>
@@ -3675,15 +3796,27 @@ function hiddenSuggestionsHTML() {
 const backupJson = (indent) =>
   JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets, trips, settings, payslips, reports: reports() }, null, indent);
 
-function exportBackup() {
-  const data = backupJson(2);
+async function exportBackup() {
+  let data;
+  try {
+    data = await sealBackup(backupJson(2));
+  } catch (e) {
+    infoDialog('Sicherung nicht möglich', escapeHtml(e.message));
+    return;
+  }
   const file = new File([data], `Yetizettel-Sicherung ${isoDate(new Date())}.json`, { type: 'application/json' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return downloadFile(file);
+  const share = () =>
     navigator.share({ files: [file] }).catch((e) => {
       if (!e || e.name !== 'AbortError') downloadFile(file);
     });
-  } else {
-    downloadFile(file);
+  try {
+    await navigator.share({ files: [file] });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return;
+    // Verschlüsseln hat zu lange gedauert, Safari erlaubt Teilen nur direkt nach dem Antippen: noch einmal tippen lassen
+    if (e && e.name === 'NotAllowedError') confirmDialog('Sicherung bereit', 'Zum Speichern auf „Teilen“ tippen.', 'Teilen', share);
+    else downloadFile(file);
   }
 }
 
@@ -3910,7 +4043,9 @@ async function importBackup(input) {
       const head = new Uint8Array(buf.slice(0, 1))[0];
       if (/\.json$/i.test(file.name) || head === 0x7b || head === 0x5b) {
         json = true;
-        const r = mergeBackup(JSON.parse(new TextDecoder().decode(buf)));
+        let parsed = JSON.parse(new TextDecoder().decode(buf));
+        if (parsed && parsed.enc) parsed = await openSealedBackup(parsed, file.name);
+        const r = mergeBackup(parsed);
         total += r.added;
         tripCount += r.tripsAdded;
         r.conflicts.forEach((c) => conflicts.push({ ...c, file: file.name }));
@@ -5196,6 +5331,13 @@ document.addEventListener('click', (e) => {
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
       break;
     }
+    case 'backup-pw':
+      askNewBackupPassword(() => {
+        const y = window.scrollY;
+        renderSettings();
+        window.scrollTo(0, y);
+      });
+      break;
     case 'backup-drive':
       driveBackup(true);
       break;
@@ -5341,6 +5483,25 @@ document.addEventListener('input', (e) => {
   } else if (t.dataset.search != null) {
     searchQuery = t.value;
     refreshListBody();
+  } else if (t.dataset.encryptSwitch != null) {
+    const rerender = () => {
+      const y = window.scrollY;
+      renderSettings();
+      window.scrollTo(0, y);
+    };
+    if (t.checked) {
+      t.checked = false;
+      askNewBackupPassword(() => {
+        settings.encryptBackup = true;
+        saveSettings();
+        rerender();
+        driveBackup(true);
+      });
+    } else {
+      settings.encryptBackup = false;
+      saveSettings();
+      rerender();
+    }
   } else if (t.dataset.themeSwitch != null) {
     settings.theme = t.checked ? 'dark' : 'light';
     saveSettings();

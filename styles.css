@@ -1427,3 +1427,6 @@ ol.guide { list-style: none; margin: 0; padding: 4px 0; }
 .g-btn.blue svg { fill: #fff; }
 .g-btn:not(.blue) svg + span { margin-left: 0; }
 .guide-tip { margin: 4px 0 6px; padding: 12px 16px; font-size: 15px; line-height: 1.45; box-shadow: var(--shadow), inset 3px 0 0 var(--accent-fill); }
+.pw-input { display: block; width: 100%; margin-top: 10px; padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--sep);
+  background: var(--card); color: var(--text); font: inherit; font-size: 16px; -webkit-user-select: text; user-select: text; }
+.footnote.warn { color: var(--warning); }
