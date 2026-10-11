@@ -68,9 +68,8 @@ const emptyRow = () => ({ id: uid(), start: null, end: null, site: '', work: '' 
 const rowIsEmpty = (r) => r.start == null && r.end == null && !r.site && !r.work;
 const rowMinutes = (r) => (r.start == null || r.end == null ? null : r.end >= r.start ? r.end - r.start : r.end + 1440 - r.start);
 const dayWorked = (d) => d.rows.reduce((s, r) => s + (rowMinutes(r) || 0), 0);
-/** Krank, Urlaub und Feiertag zählen 8 Stunden, Frei und ein Feiertag am Sa/So (i = Wochentag 0–6) zählen 0 */
-const statusCredit = (status, i) =>
-  status === 'frei' || (status === 'feiertag' && i >= 5) ? 0 : Math.round(settings.hoursPerDay * 60);
+/** Krank, Urlaub und Feiertag zählen 8 Stunden, Frei und jede Tagesart am Sa/So (i = Wochentag 0–6) zählen 0 */
+const statusCredit = (status, i) => (status === 'frei' || i >= 5 ? 0 : Math.round(settings.hoursPerDay * 60));
 /** An einem Feiertag kann trotzdem gearbeitet werden (z. B. Notdienst): die Stunden kommen zu den 8 gutgeschriebenen dazu */
 const canWork = (d) => !d.status || d.status === 'feiertag';
 const workedNet = (d) => Math.max(0, dayWorked(d) - (d.pause || 0));
@@ -216,7 +215,7 @@ settings.hoursPerDay = 8;
 settings.state = 'NI';
 delete settings.vacationDays;
 // Ebenfalls fest: Stunden in App und PDF dezimal; Überstunden immer, bei Teilwochen anteilig;
-// Krank/Urlaub/Feiertag zählen 8 Stunden, Frei 0
+// Krank/Urlaub/Feiertag zählen 8 Stunden (Sa/So 0), Frei 0
 delete settings.hourFormat;
 delete settings.prorateTarget;
 delete settings.credit;
