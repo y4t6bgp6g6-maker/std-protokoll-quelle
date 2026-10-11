@@ -39,10 +39,11 @@
   --text: #f6f8fa;
   --muted: #a9b3bd;
   --sep: #273141;
-  --accent: #2fe3c8;
-  --accent-fill: #1fcfb3;
-  --on-accent: #03201b;
-  --accent-soft: rgba(47, 227, 200, 0.16);
+  /* Blau wie im hellen Design; Schrift und Symbole heller, damit sie auf dunklem Grund lesbar sind */
+  --accent: #7d97ff;
+  --accent-fill: #213f99;
+  --on-accent: #ffffff;
+  --accent-soft: rgba(125, 151, 255, 0.16);
   --danger: #ff5a4f;
   --success: #34e07a;
   --warning: #ffb547;
