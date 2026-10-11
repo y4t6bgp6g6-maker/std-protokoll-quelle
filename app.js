@@ -3701,6 +3701,7 @@ function renderSettings() {
     <h2 class="section-title">Darstellung</h2>
     <div class="card form">
       <label class="field"><span>Dunkles Design</span><input type="checkbox" class="toggle" data-theme-switch ${isDarkTheme() ? 'checked' : ''}></label>
+      ${lockAvailable() ? `<label class="field"><span>Mit Face ID sperren</span><input type="checkbox" class="toggle" data-lock-switch ${lockOn() ? 'checked' : ''}></label>` : ''}
     </div>
 
     <h2 class="section-title">Stundenzettel</h2>
@@ -5483,6 +5484,12 @@ document.addEventListener('input', (e) => {
   } else if (t.dataset.search != null) {
     searchQuery = t.value;
     refreshListBody();
+  } else if (t.dataset.lockSwitch != null) {
+    toggleLock(t, () => {
+      const y = window.scrollY;
+      renderSettings();
+      window.scrollTo(0, y);
+    });
   } else if (t.dataset.encryptSwitch != null) {
     const rerender = () => {
       const y = window.scrollY;
@@ -5961,6 +5968,7 @@ history.replaceState('root', '', location.hash || '#/');
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
+showLock();
 route();
 tabLens();
 glassBar();

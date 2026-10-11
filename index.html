@@ -15,6 +15,8 @@
   try {
     var t = (JSON.parse(localStorage.getItem('yetizettel.settings.v1') || '{}').theme) || 'auto';
     if (t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.dataset.theme = 'dark';
+    // Face-ID-Sperre: Inhalt gleich verbergen, bis entsperrt ist
+    if (localStorage.getItem('yetizettel.lock.v1')) document.documentElement.classList.add('locked');
   } catch (e) {}
 </script>
 <title>Yetizettel</title>
@@ -35,6 +37,7 @@
 <script src="lohn.js"></script>
 <script src="payslip.js"></script>
 <script src="guide.js"></script>
+<script src="lock.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
