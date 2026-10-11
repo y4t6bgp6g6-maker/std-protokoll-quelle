@@ -52,6 +52,7 @@ function renderGuide() {
     </header>
     <h1 class="large-title">Anleitung</h1>
     <p class="guide-lead">Arbeitsscheine kommen von selbst in die App, und die App sichert sich täglich in dein Google Drive. Einmal einrichten, am besten am Computer.</p>
+    <div class="card guide-tip"><b>App neu installiert?</b> Nicht neu einrichten – erst die neueste Sicherung aus Drive (Ordner „Yetizettel-Sicherungen“) unter Optionen → <b>Sicherung einlesen</b>. Dann läuft alles wieder.</div>
 
     <h2 class="section-title">1 · Google-Skript anlegen</h2>
     <ol class="card guide">
