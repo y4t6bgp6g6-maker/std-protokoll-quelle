@@ -135,6 +135,7 @@ input { font: inherit; color: inherit; }
 /* Knöpfe und Kapseln oben (Zurück, Suche, Titel, Teilen/Menü, Tagesleiste): dasselbe Glas wie die Leiste unten –
    Inhalt dahinter leicht weich und gedämpft, dünne helle Randlinie, weicher Schatten */
 .nav > .nav-btn:not(:empty),
+.title-row .nav-btn,
 .nav-actions,
 .nav-title:not(:empty),
 .search-bar .nav-btn,
@@ -148,7 +149,7 @@ input { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 1px rgba(255, 255, 255, 0.15),
     0 10px 30px rgba(0, 0, 0, 0.2);
 }
-:root[data-theme='dark'] :is(.nav > .nav-btn:not(:empty), .nav-actions, .nav-title:not(:empty), .search-bar .nav-btn, .search-field, .daybar) {
+:root[data-theme='dark'] :is(.nav > .nav-btn:not(:empty), .title-row .nav-btn, .nav-actions, .nav-title:not(:empty), .search-bar .nav-btn, .search-field, .daybar) {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
     color-mix(in srgb, var(--card) 30%, transparent);
   box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(255, 255, 255, 0.08),
@@ -167,7 +168,16 @@ input { font: inherit; color: inherit; }
   .nav-title:not(:empty) { padding: 0 10px; }
 }
 
-.large-title { font-size: 34px; font-weight: 800; margin: 4px 4px 12px; letter-spacing: -0.03em; }
+.large-title { font-size: 34px; font-weight: 800; margin: -6px 4px 12px; letter-spacing: -0.03em; }
+/* Seiten ohne Knöpfe oben (Leiste): Überschrift rückt in den freien Platz der Kopfzeile; die leere Kopfzeile lässt
+   Berührungen durch (sonst fängt sie die Lupe neben der Überschrift ab) */
+.nav:not(:has(> :not(:empty))) { pointer-events: none; }
+.nav:not(:has(> :not(:empty))) ~ .large-title,
+.nav:not(:has(> :not(:empty))) ~ .title-row { margin-top: -78px; }
+/* Zettel-Liste: Überschrift und Lupe in einer Reihe, die Lupe scrollt mit */
+.title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.title-row .large-title { margin: 0 4px; }
+.title-row .nav-btn { flex: none; justify-self: auto; margin-right: 4px; }
 .section-title {
   font-size: 13px;
   font-weight: 400;
@@ -769,13 +779,11 @@ button.nav-title { font-size: 17px; }
   align-items: center;
   gap: 1px;
   padding: 4px 0;
-  /* eigene milchige Kapsel je Tag (wie die Markierung in der Leiste unten), gleich rund wie die Tagesleiste */
   border-radius: 16px;
-  background: color-mix(in srgb, var(--text) 15%, color-mix(in srgb, var(--card) 45%, transparent));
   font-variant-numeric: tabular-nums;
   min-width: 0;
 }
-.db-day:active { background: color-mix(in srgb, var(--text) 24%, color-mix(in srgb, var(--card) 45%, transparent)); }
+.db-day:active { background: color-mix(in srgb, var(--text) 10%, transparent); }
 .db-name { font-size: 12px; font-weight: 600; color: var(--muted); }
 .db-h { font-size: 13px; font-weight: 500; min-height: 17px; white-space: nowrap; }
 .db-day.off { opacity: 0.35; }
@@ -1340,7 +1348,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 /* Oberer und unterer Bildschirmrand blenden weich aus (wie WhatsApp): Inhalt wird zum Rand hin unscharf und geht in den Hintergrund über */
 .edge-fade { position: fixed; left: 0; right: 0; z-index: 9; pointer-events: none; }
 .edge-fade::before, .edge-fade::after { content: ''; position: absolute; inset: 0; }
-.edge-fade.top { top: 0; height: calc(var(--nav-h, calc(env(safe-area-inset-top) + 56px)) + 14px);
+.edge-fade.top { top: 0; height: calc(env(safe-area-inset-top) + 22px);
   background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 52%, transparent) 20%,
     color-mix(in srgb, var(--bg) 33%, transparent) 42%, color-mix(in srgb, var(--bg) 17%, transparent) 64%, color-mix(in srgb, var(--bg) 6%, transparent) 84%, transparent); }
 .edge-fade.bottom { bottom: 0; height: calc(var(--tab-h) + 16px);
@@ -1379,30 +1387,18 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   .db-day:active { transform: scale(0.92); transition-duration: 0.12s; transition-timing-function: ease-out; }
 
   /* Fenster federn von unten herein (Hinweise wachsen federnd auf); Schließen ohne Federn */
-  #modal-layer.show .modal { transition: transform 0.46s cubic-bezier(0.32, 1.22, 0.5, 1); }
-  #modal-layer.show .modal.alert { transition: transform 0.36s cubic-bezier(0.3, 1.5, 0.5, 1), opacity 0.2s; }
+  #modal-layer.show .modal { transition: transform 0.4s cubic-bezier(0.3, 1.08, 0.5, 1); }
+  #modal-layer.show .modal.alert { transition: transform 0.3s cubic-bezier(0.3, 1.2, 0.5, 1), opacity 0.2s; }
   #modal-layer:not(.show) .modal { transition: transform 0.24s cubic-bezier(0.4, 0, 1, 1), opacity 0.2s; }
   .backdrop { transition: opacity 0.3s ease-out; }
 
   /* Übersicht: Monatszeilen bauen sich nacheinander auf (Verzögerung setzt app.js) */
   .stagger { animation: stagger-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   @keyframes stagger-in { from { opacity: 0; transform: translateY(8px); } }
-
-  /* Gesendet: Haken zeichnet sich in der Liste */
-  .status.sent.draw { animation: sent-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1) both; }
-  .status.sent.draw path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: draw-check 0.4s 0.15s ease-out forwards; }
-  @keyframes sent-pop { from { transform: scale(0.4); opacity: 0; } }
-  @keyframes draw-check { to { stroke-dashoffset: 0; } }
 }
 
-/* Gesendet: großer Haken in der Mitte, zeichnet sich und blendet aus */
-.sent-burst { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; pointer-events: none; }
-.sent-burst svg { width: 96px; height: 96px; overflow: visible; }
-.sent-burst circle { fill: var(--success); }
-.sent-burst path { fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 24; stroke-dashoffset: 24; }
-@media (prefers-reduced-motion: no-preference) {
-  .sent-burst svg { animation: burst 1.1s cubic-bezier(0.3, 1.5, 0.5, 1) both; }
-  .sent-burst path { animation: draw-check 0.38s 0.18s ease-out forwards; }
-  @keyframes burst { 0% { transform: scale(0.4); opacity: 0; } 20% { transform: none; opacity: 1; } 75% { transform: none; opacity: 1; } 100% { transform: scale(0.9); opacity: 0; } }
-}
-@media (prefers-reduced-motion: reduce) { .sent-burst path { stroke-dashoffset: 0; } .sent-burst svg { animation: burst-fade 1s both; } @keyframes burst-fade { 80% { opacity: 1; } 100% { opacity: 0; } } }
+/* Tagesleiste: ganze Leiste etwas milchiger als die übrigen Glaskapseln oben */
+.nav .daybar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)),
+  color-mix(in srgb, var(--text) 9%, color-mix(in srgb, var(--card) 68%, transparent)); }
+:root[data-theme='dark'] .nav .daybar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
+  color-mix(in srgb, var(--text) 9%, color-mix(in srgb, var(--card) 68%, transparent)); }

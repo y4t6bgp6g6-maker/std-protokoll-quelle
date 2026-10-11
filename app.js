@@ -1704,22 +1704,6 @@ function pageAnim(from, to) {
       el.classList.add('stagger');
     });
   }
-  if (to === 'list' && justSent) {
-    const st = document.querySelector(`#app a[href="#/zettel/${encodeURIComponent(justSent)}"] .status.sent`);
-    if (st) st.classList.add('draw');
-    justSent = null;
-  }
-}
-
-/** Gesendet: großer Haken in der Mitte; in der Liste zeichnet sich der Haken des Zettels beim nächsten Anzeigen */
-let justSent = null;
-function sentBurst(sheetId) {
-  if (sheetId) justSent = sheetId;
-  const el = document.createElement('div');
-  el.className = 'sent-burst';
-  el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12"/><path d="M17.5 8L10 15.5 6.5 12"/></svg>';
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 1200);
 }
 
 /** Zahlen (Stunden) zählen nach einer Änderung sichtbar zum neuen Wert: vorher Texte merken, danach animieren */
@@ -1755,17 +1739,35 @@ function animateCounts({ selector, m }) {
 }
 
 /** Zeile weich aufklappen bzw. zusammenklappen */
+/** Höhe samt Innen-/Außenabständen und Rändern: alles muss mitlaufen, sonst springt am Ende ein Rest */
+function boxFrame(el) {
+  const cs = getComputedStyle(el);
+  return {
+    height: `${el.offsetHeight}px`,
+    paddingTop: cs.paddingTop,
+    paddingBottom: cs.paddingBottom,
+    marginTop: cs.marginTop,
+    marginBottom: cs.marginBottom,
+    borderTopWidth: cs.borderTopWidth,
+    borderBottomWidth: cs.borderBottomWidth,
+    opacity: 1,
+  };
+}
+const ZERO_BOX = { height: '0px', paddingTop: '0px', paddingBottom: '0px', marginTop: '0px', marginBottom: '0px', borderTopWidth: '0px', borderBottomWidth: '0px', opacity: 0 };
 function expandIn(el) {
   if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const h = el.offsetHeight;
+  el.style.boxSizing = 'border-box';
   el.style.overflow = 'hidden';
-  el.animate([{ height: '0px', opacity: 0 }, { height: `${h}px`, opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }).onfinish = () =>
-    (el.style.overflow = '');
+  el.animate([ZERO_BOX, boxFrame(el)], { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }).onfinish = () => {
+    el.style.boxSizing = '';
+    el.style.overflow = '';
+  };
 }
 function collapseOut(el, done) {
   if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return done();
+  el.style.boxSizing = 'border-box';
   el.style.overflow = 'hidden';
-  el.animate([{ height: `${el.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 240, easing: 'cubic-bezier(0.4, 0, 0.6, 1)', fill: 'forwards' }).onfinish = done;
+  el.animate([boxFrame(el), ZERO_BOX], { duration: 260, easing: 'cubic-bezier(0.4, 0, 0.2, 1)', fill: 'forwards' }).onfinish = done;
 }
 // Zurück auf einen Eintrag mit derselben Adresse (doppelte Seite) löst kein hashchange aus
 window.addEventListener('popstate', () => backTarget && location.hash === routedHash && route());
@@ -1804,11 +1806,16 @@ function renderList() {
             </div>`
           : `<span class="nav-btn"></span>
             <span class="nav-title"></span>
-            ${sheets.length ? `<button class="nav-btn" data-act="search" aria-label="Suchen">${ICON.search}</button>` : '<span class="nav-btn"></span>'}`
+            <span class="nav-btn"></span>`
       }
     </header>
-    
-    ${searching ? '' : '<h1 class="large-title">Stundenzettel</h1>'}
+    ${
+      searching
+        ? ''
+        : `<div class="title-row"><h1 class="large-title">Stundenzettel</h1>${
+            sheets.length ? `<button class="nav-btn" data-act="search" aria-label="Suchen">${ICON.search}</button>` : ''
+          }</div>`
+    }
     <div id="list-body">${listBodyHTML()}</div>
     ${
       searching ? `<button class="to-top floating" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>` : ''
@@ -2537,7 +2544,7 @@ function moreMenu() {
     { label: 'Reisekostenabrechnung', run: () => openTripMenu(s) },
     s.sentAt
       ? { label: 'Als offen markieren', run: () => { s.sentAt = null; saveSheets(s); toast('Als offen markiert'); } }
-      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); sentBurst(s.id); } },
+      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); toast('Als gesendet markiert'); } },
     { label: 'Stundenzettel löschen', destructive: true, run: () => askDelete(s.id, true) },
   ]);
 }
@@ -2878,7 +2885,6 @@ async function sharePdf(s, isSend) {
     confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann wird er in der Liste mit einem Haken markiert.', 'Ja, gesendet', () => {
       s.sentAt = Date.now();
       saveSheets(s);
-      sentBurst(s.id);
     });
   }
 }
@@ -3311,7 +3317,7 @@ function tripMoreMenu() {
     },
     t.sentAt
       ? { label: 'Als offen markieren', run: () => { t.sentAt = null; saveTrips(t); toast('Als offen markiert'); } }
-      : { label: 'Als gesendet markieren', run: () => { t.sentAt = Date.now(); saveTrips(t); sentBurst(); } },
+      : { label: 'Als gesendet markieren', run: () => { t.sentAt = Date.now(); saveTrips(t); toast('Als gesendet markiert'); } },
     {
       label: 'Abrechnung löschen',
       destructive: true,
@@ -3422,7 +3428,6 @@ async function shareTripPdf(t) {
     confirmDialog('Wurde die Abrechnung gesendet?', 'Dann wird sie als gesendet markiert.', 'Ja, gesendet', () => {
       t.sentAt = Date.now();
       saveTrips(t);
-      sentBurst();
     });
   }
 }
@@ -5515,7 +5520,7 @@ document.addEventListener('contextmenu', (e) => {
 
 const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
 /** Verzögerung (ms) zwischen Antippen einer Taste der Leiste und dem Seitenwechsel */
-const TAB_PAGE_DELAY = 60;
+const TAB_PAGE_DELAY = 50;
 const LENS_EDGE = 0.3; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
 const LENS_CHROMA = 0.03; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
 
