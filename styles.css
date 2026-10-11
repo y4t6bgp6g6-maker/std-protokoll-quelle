@@ -1,6 +1,3 @@
-@font-face { font-family: 'Schibsted Grotesk'; src: url(fonts/schibsted-grotesk.woff2) format('woff2'); font-weight: 400 800; font-display: swap; }
-@font-face { font-family: 'IBM Plex Mono'; src: url(fonts/plex-mono-600.woff2) format('woff2'); font-weight: 600; font-display: swap; }
-@font-face { font-family: 'IBM Plex Mono'; src: url(fonts/plex-mono-700.woff2) format('woff2'); font-weight: 700; font-display: swap; }
 
 /* Farben: hell (Vorgabe) und dunkel – Auswahl in den Einstellungen („Wie iPhone“, Hell, Dunkel), gesetzt als data-theme */
 :root {
@@ -29,34 +26,36 @@
   --holiday-ink: #7432ad;
   --off: #8e8e93;
   --off-ink: #5f6862;
-  --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Zahlen in der iPhone-Schrift mit gleich breiten Ziffern (siehe unten) */
+  --mono: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   /* Leiste unten: schwebende Kapsel, Abstand zum unteren Rand; --tab-h = Platz, den sie unten belegt */
   --tab-bottom: max(10px, calc(env(safe-area-inset-bottom) - 14px));
-  --tab-h: calc(var(--tab-bottom) + 64px);
+  --tab-h: calc(var(--tab-bottom) + 56px);
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --bg: #0c1015;
-  --card: #161c24;
-  --text: #eef1f4;
-  --muted: #97a2ac;
-  --sep: #26303e;
-  --accent: #8ea6ff;
-  --accent-fill: #3d5fe0;
-  --on-accent: #ffffff;
-  --accent-soft: rgba(91, 124, 245, 0.18);
-  --danger: #ff6b60;
-  --success: #4ade80;
-  --warning: #f5b65c;
-  --fill: #1f2731;
+  --bg: #080b0f;
+  --card: #151c25;
+  --text: #f6f8fa;
+  --muted: #a9b3bd;
+  --sep: #273141;
+  --accent: #2fe3c8;
+  --accent-fill: #1fcfb3;
+  --on-accent: #03201b;
+  --accent-soft: rgba(47, 227, 200, 0.16);
+  --danger: #ff5a4f;
+  --success: #34e07a;
+  --warning: #ffb547;
+  --fill: #1e2732;
   --inactive: #0f141c;
   --backdrop: rgba(0, 0, 0, 0.55);
   --sheet: #121921;
-  --shadow: inset 0 0 0 1px #222b37;
-  --vac: #f0a63c;
-  --vac-ink: #f5b65c;
-  --sick: #f0679a;
-  --sick-ink: #f57faa;
+  /* plastisch: feine Lichtkante oben, Schatten nach unten */
+  --shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px #212a36, 0 6px 18px rgba(0, 0, 0, 0.45);
+  --vac: #ffa733;
+  --vac-ink: #ffbb55;
+  --sick: #ff5f97;
+  --sick-ink: #ff7fab;
   --holiday: #c08bff;
   --holiday-ink: #c9a0ff;
   --off: #97a2ac;
@@ -71,7 +70,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 17px/1.3 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  font: 17px/1.3 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   overscroll-behavior-y: none;
   /* Wie eine App: kein Markieren, keine Lupe, kein Menü beim langen Drücken – außer in Eingabefeldern */
   -webkit-user-select: none;
@@ -88,7 +87,7 @@ input { font: inherit; color: inherit; }
 #app {
   max-width: 640px;
   margin: 0 auto;
-  padding: var(--nav-h, calc(env(safe-area-inset-top) + 56px)) 16px calc(96px + env(safe-area-inset-bottom));
+  padding: var(--nav-h, calc(env(safe-area-inset-top) + 56px)) 12px calc(96px + env(safe-area-inset-bottom));
 }
 
 /* Navigationsleiste: kein Hintergrund, nur schwebende Glaselemente; hinterlegt ist allein die Statusleiste (Uhrzeit, Akku) */
@@ -1181,17 +1180,17 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ws-work { padding: 4px 16px; }
 .ws-work p { margin: 10px 0; line-height: 1.4; }
 
-/* Zahlen in Schreibmaschinenschrift */
+/* Zahlen: iPhone-Schrift mit gleich breiten Ziffern, damit sie untereinander stehen */
 .list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ov-num, .ws-fact b, .db-h {
   font-family: var(--mono);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 .time { font-weight: 700; }
 
 /* Leiste unten: Glas-Kapsel Übersicht · Zettel · + · Team · Einstellungen (auf allen Seiten, beim Tippen ausgeblendet).
    Hintergrund: Safaris eigener Glasfilter (backdrop-filter, läuft auf der Grafikkarte). Linse beim Umschalten: tabLens in app.js. */
-.tabbar { position: fixed; left: 14px; right: 14px; bottom: var(--tab-bottom); z-index: 20; display: none; height: 64px; }
+.tabbar { position: fixed; left: 20px; right: 20px; bottom: var(--tab-bottom); z-index: 20; display: none; height: 56px; }
 body.tabs .tabbar { display: block; }
 body { min-height: 100vh; }
 body.tabs:has(input:focus:not([switch]), textarea:focus) .tabbar { display: none; }
@@ -1202,9 +1201,11 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   height: 100%;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* feste Zeilenhöhe: das herausstehende „+“ darf die Zeile nicht vergrößern (Markierung bleibt mittig) */
+  grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
-  padding: 5px;
-  border-radius: 32px;
+  padding: 4px;
+  border-radius: 28px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 :root[data-theme='dark'] .tab-caps { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
@@ -1216,14 +1217,14 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   pointer-events: none;
   overflow: hidden;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--card) 12%, transparent);
-  -webkit-backdrop-filter: blur(2.5px) saturate(1.5);
-  backdrop-filter: blur(2.5px) saturate(1.5);
+  background: color-mix(in srgb, var(--card) 8%, transparent);
+  -webkit-backdrop-filter: blur(2px) saturate(1.5);
+  backdrop-filter: blur(2px) saturate(1.5);
 }
-.glass-layer { position: absolute; inset: 0; filter: blur(1.4px) saturate(1.4); }
+.glass-layer { position: absolute; inset: 0; filter: blur(1px) saturate(1.7) brightness(1.12); }
 /* gespiegelter Inhalt nur nah am Rand, zur Mitte hin auslaufend */
-.glass-layer.top { -webkit-mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.6) 7px, transparent 19px); mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.6) 7px, transparent 19px); }
-.glass-layer.bottom { -webkit-mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.6) 6px, transparent 16px); mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.6) 6px, transparent 16px); }
+.glass-layer.top { -webkit-mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.75) 6px, transparent 17px); mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.75) 6px, transparent 17px); }
+.glass-layer.bottom { -webkit-mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.75) 5px, transparent 14px); mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.75) 5px, transparent 14px); }
 .glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .glass-bounce, .glass-scroll { will-change: transform; }
 /* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
@@ -1247,16 +1248,16 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.01) 45%, rgba(255, 255, 255, 0.03));
   box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.1), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
 }
-.tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 27px; color: var(--text); font-size: 11px; font-weight: 600; }
-.tab svg { width: 24px; height: 24px; }
+.tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 24px; color: var(--text); font-size: 10.5px; font-weight: 500; }
+.tab svg { width: 25px; height: 25px; }
 .tab.on {
   color: var(--accent);
-  font-weight: 700;
-  background: color-mix(in srgb, var(--text) 13%, transparent);
-  -webkit-backdrop-filter: blur(6px) saturate(1.3);
-  backdrop-filter: blur(6px) saturate(1.3);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  -webkit-backdrop-filter: blur(5px) saturate(1.3);
+  backdrop-filter: blur(5px) saturate(1.3);
 }
-/* „+“ größer, steht oben etwas aus der Kapsel heraus */
+/* „+“ größer, steht oben etwas aus der Kapsel heraus und schwebt über ihr (weicher Schatten nach unten, flache Scheibe) */
 .tab-add {
   position: relative;
   z-index: 4;
@@ -1264,17 +1265,17 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   align-self: start;
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
-  margin-top: -14px;
+  width: 70px;
+  height: 70px;
+  margin-top: -18px;
   border-radius: 50%;
-  background: var(--accent-fill);
+  background: linear-gradient(180deg, color-mix(in srgb, #fff 12%, var(--accent-fill)), var(--accent-fill) 60%);
   color: var(--on-accent);
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent-fill) 45%, transparent), inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 14px 26px -8px rgba(15, 25, 60, 0.35), 0 4px 10px -2px rgba(15, 25, 60, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
-:root[data-theme='dark'] .tab-add { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0.5px rgba(255, 255, 255, 0.35), inset 0 -2px 6px rgba(0, 0, 0, 0.2); }
+:root[data-theme='dark'] .tab-add { box-shadow: 0 14px 28px -6px rgba(0, 0, 0, 0.7), 0 4px 10px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
 .tab-add svg { width: 28px; height: 28px; }
-.tab.on { transition: background-color 0.18s; }
+.tab.on { transition: background-color 0.26s ease-out; }
 .lens-moving .tab.on { background-color: transparent; transition: none; }
 /* Glas-Linse: klar, mit heller Kante und leichten Farbsäumen; darin die Symbole vergrößert und in Akzentfarbe */
 .tab-lens {
@@ -1294,7 +1295,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   box-shadow: inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75), inset -1.5px -1.5px 1px rgba(255, 255, 255, 0.45),
     inset 3px 0 3px -1px rgba(90, 220, 255, 0.35), inset -3px 0 3px -1px rgba(255, 120, 220, 0.3), 0 4px 14px rgba(0, 0, 0, 0.18);
 }
-.tab-lens-row { position: absolute; left: 0; top: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 5px; transform-origin: 0 0; will-change: transform; }
+.tab-lens-row { position: absolute; left: 0; top: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px; transform-origin: 0 0; will-change: transform; }
 .tab-lens-row .tab { color: var(--accent); }
 .tap-haptic { position: absolute; inset: 0; z-index: 5; width: 100%; height: 100%; margin: 0; opacity: 0.011; cursor: pointer; }
 .tab-add:active, .tab:active { transform: scale(0.94); }

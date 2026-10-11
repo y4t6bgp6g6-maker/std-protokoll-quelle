@@ -1550,6 +1550,9 @@ function applyTheme() {
 
 const svg = (path, size = 22) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+/** Gefülltes Symbol; Löcher (Zeilen, Mitte des Zahnrads) über fill-rule evenodd */
+const fillIcon = (d, size = 25) =>
+  `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="${d}"/></svg>`;
 const ICON = {
   gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>', 20),
@@ -1573,10 +1576,11 @@ const ICON = {
   feiertag: svg('<path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 14),
   frei: svg('<path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>', 14),
   doc: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 15),
-  tabZettel: svg('<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M9 8h6M9 12h6M9 16h4"/>', 26),
-  tabStats: svg('<path d="M4 20h16M7 16v-6M12 16V5M17 16v-4"/>', 26),
-  tabTeam: svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 26),
-  tabGear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>', 26),
+  // Leiste: gefüllte Symbole (Übersicht als Kacheln, Zettel als zwei Blätter)
+  tabZettel: fillIcon('M8 2h10.5A2.5 2.5 0 0 1 21 4.5V17h-2V4.5a.5.5 0 0 0-.5-.5H8zM5.5 5.5h9A2 2 0 0 1 16.5 7.5v12.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2zM6.5 10.2h7v1.8h-7zM6.5 14h7v1.8h-7zM6.5 17.8h4.5v1.8H6.5z'),
+  tabStats: fillIcon('M3 5.5A2.5 2.5 0 0 1 5.5 3h3A2.5 2.5 0 0 1 11 5.5v3A2.5 2.5 0 0 1 8.5 11h-3A2.5 2.5 0 0 1 3 8.5zM13 5.5A2.5 2.5 0 0 1 15.5 3h3A2.5 2.5 0 0 1 21 5.5v3a2.5 2.5 0 0 1-2.5 2.5h-3A2.5 2.5 0 0 1 13 8.5zM3 15.5A2.5 2.5 0 0 1 5.5 13h3a2.5 2.5 0 0 1 2.5 2.5v3A2.5 2.5 0 0 1 8.5 21h-3A2.5 2.5 0 0 1 3 18.5zM17 13a4 4 0 1 1 0 8 4 4 0 0 1 0-8z'),
+  tabTeam: fillIcon('M9 3.5a3.8 3.8 0 1 1 0 7.6 3.8 3.8 0 0 1 0-7.6zM2 20.2c0-3.9 3.1-6.7 7-6.7s7 2.8 7 6.7v.8H2zM17 5.2a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM17.6 13.6c2.6.3 4.4 2.5 4.4 5.4V21h-4.2v-.8c0-2.6-.8-4.8-2.2-6.4.6-.2 1.3-.3 2-.2z'),
+  tabGear: fillIcon('M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1zM15.2 12a3.2 3.2 0 1 1-6.4 0 3.2 3.2 0 0 1 6.4 0z'),
   tabAdd: svg('<path d="M12 5v14M5 12h14"/>', 28),
   tool: svg('<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3.6 17.4a1.4 1.4 0 0 0 2 2l5.7-5.7a4 4 0 0 0 5.4-5.4l-2.4 2.4-2-2z"/>', 15),
 };
@@ -5415,8 +5419,8 @@ document.addEventListener('contextmenu', (e) => {
 // der Symbole; die Bewegung läuft über die Web Animations API mit reinen Transformationen, also auf der Grafikkarte –
 // sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
-const LENS_MAG = 1.22; // Vergrößerung unter der Linse
-const LENS_MS = 990;
+const LENS_MAG = 1.28; // Vergrößerung unter der Linse
+const LENS_MS = 1300;
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5450,26 +5454,36 @@ function animateTabLens(from, to) {
   row.style.width = `${W}px`;
   row.style.height = `${H}px`;
 
-  // Weg mit leichtem Überschwingen (gedämpfte Feder), Dehnung nach Geschwindigkeit
-  const spring = (t) => 1 - Math.exp(-9 * t) * Math.cos(7 * t);
-  const N = 28;
+  // Ablauf wie unter iOS 26: aufspringen (0–12 %), gleiten mit sanftem An- und Auslauf und leichtem Ausholen,
+  // gedehnt nach Geschwindigkeit (12–58 %), beim Ankommen wie ein Tropfen nachwackeln (58–80 %), in die Markierung
+  // übergehen (80–100 %)
+  const pop = (u) => 1 + 2.2 * Math.pow(u - 1, 3) + 1.2 * Math.pow(u - 1, 2); // easeOutBack
+  const glide = (u) => {
+    const c = 0.8 * 1.525; // easeInOutBack, leicht
+    return u < 0.5 ? (Math.pow(2 * u, 2) * ((c + 1) * 2 * u - c)) / 2 : (Math.pow(2 * u - 2, 2) * ((c + 1) * (u * 2 - 2) + c) + 2) / 2;
+  };
+  const N = 60;
   const lensFrames = [];
   const rowFrames = [];
   let prev = a;
   for (let k = 0; k <= N; k++) {
     const t = k / N;
-    // 0–0.12 aufblähen, 0.12–0.62 gleiten (wie iOS etwa 260 ms), danach zur Markierung schrumpfen
-    const grow = Math.min(1, t / 0.12);
-    const move = t < 0.12 ? 0 : spring(Math.min(1, (t - 0.12) / 0.5));
-    // Beim Überschwingen nicht über die Kapsel hinaus
+    const move = t < 0.12 ? 0 : t < 0.58 ? glide((t - 0.12) / 0.46) : 1;
+    // Beim Ausholen nicht über die Kapsel hinaus
     const x = Math.min(W - w / 2 + 4, Math.max(w / 2 - 4, a + (b - a) * move));
-    const v = Math.abs(x - prev) / Math.max(1, Math.abs(b - a)) * N; // relative Geschwindigkeit
+    const v = (Math.abs(x - prev) / Math.max(1, Math.abs(b - a))) * N * 0.46; // relative Geschwindigkeit
     prev = x;
-    const shrink = t > 0.64 ? (t - 0.64) / 0.36 : 0;
-    const base = (0.86 + 0.14 * grow) * (1 - 0.14 * shrink);
-    const sx = base * (1 + Math.min(0.32, v * 0.11));
-    const sy = base * (1 - Math.min(0.12, v * 0.04));
-    const opacity = Math.min(1, grow * 1.6) * (1 - shrink);
+    let base = t < 0.12 ? 0.82 + 0.26 * pop(t / 0.12) : 1.08;
+    let wob = 0;
+    if (t >= 0.58 && t < 0.8) {
+      const u = (t - 0.58) / 0.22;
+      wob = 0.07 * Math.exp(-3.5 * u) * Math.sin(u * Math.PI * 3);
+    }
+    const shrink = t > 0.8 ? (t - 0.8) / 0.2 : 0;
+    base *= 1 - 0.18 * shrink * shrink;
+    const sx = base * (1 + Math.min(0.38, v * 0.16) + wob);
+    const sy = base * (1 - Math.min(0.14, v * 0.06) - wob * 0.8);
+    const opacity = Math.min(1, t / 0.06) * (1 - shrink * shrink);
     lensFrames.push({ offset: t, opacity, transform: `translate3d(${x - w / 2}px, 0, 0) scale(${sx}, ${sy})` });
     // Kopie der Symbole so legen, dass sie unter der Linsenmitte deckungsgleich ist, um LENS_MAG vergrößert
     const mx = LENS_MAG / sx;
@@ -5480,9 +5494,11 @@ function animateTabLens(from, to) {
   lens.getAnimations().forEach((an) => an.cancel());
   row.getAnimations().forEach((an) => an.cancel());
   caps.classList.add('lens-moving');
-  const an = lens.animate(lensFrames, opts);
+  lens.animate(lensFrames, opts);
   row.animate(rowFrames, opts);
-  an.onfinish = () => caps.classList.remove('lens-moving');
+  // Die Markierung blendet ein, während die Linse in sie übergeht
+  clearTimeout(animateTabLens.timer);
+  animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), LENS_MS * 0.8);
 }
 
 /** Kurzer Vibrations-Tick, wo es navigator.vibrate gibt (Android); auf dem iPhone tickt HAPTIC_SWITCH */
@@ -5498,6 +5514,7 @@ function haptic() {
 // Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
 
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
+const GLASS_SQUASH = 0.7; // Spiegelbild gestaucht wie am gebogenen Glasrand
 const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0 };
 
 function glassBar() {
@@ -5556,8 +5573,8 @@ function glassPlace() {
   layers.forEach((l, i) => {
     const copy = l.firstChild;
     copy.style.width = `${ar.width}px`;
-    // oben: an y = 0 spiegeln, unten: an y = Höhe der Kapsel
-    copy.style.transform = `translate(0, ${i ? 2 * cr.height : 0}px) scale(1, -1) ${move}`;
+    // oben an y = 0, unten an y = Höhe der Kapsel spiegeln; wie bei gebogenem Glas gestaucht
+    copy.style.transform = `translate(0, ${i ? cr.height : 0}px) scale(1, ${-GLASS_SQUASH}) translate(0, ${i ? -cr.height : 0}px) ${move}`;
   });
   glassScroll();
 }
