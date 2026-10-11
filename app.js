@@ -3693,7 +3693,7 @@ function signaturePad() {
 
 /** Symbole der Einstellungen: weiße Zeichen auf farbigem Quadrat (wie in den iPhone-Einstellungen) */
 const SET_ICON = {
-  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  contrast: '<circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z"/>',
   face: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
   euro: '<path d="M17 6.5A6.5 6.5 0 0 0 7.2 10M17 17.5A6.5 6.5 0 0 1 7.2 14M4.5 10.5h9M4.5 13.5h8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
   case: '<path d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 0h2V5h-2z"/>',
@@ -3711,14 +3711,16 @@ const setToggle = (icon, color, label, attrs) =>
 
 /** Unterseiten der Einstellungen: #/einstellungen/<name> */
 const SETTINGS_PAGES = {
-  profil: 'Name',
   lohn: 'Lohn',
   reisekosten: 'Reisekosten',
   vorschlaege: 'Vorschläge',
   scheine: 'Arbeitsscheine',
   sicherung: 'Datensicherung',
 };
-const settingsSub = () => (location.hash.match(/^#\/einstellungen\/([a-z]+)$/) || [])[1] || '';
+const settingsSub = () => {
+  const s = (location.hash.match(/^#\/einstellungen\/([a-z]+)$/) || [])[1] || '';
+  return SETTINGS_PAGES[s] ? s : '';
+};
 
 /** Kurze Zusammenfassung rechts in der Übersicht */
 function settingsSummary() {
@@ -3747,13 +3749,19 @@ function renderSettings() {
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">Einstellungen</h1>
-    <a draggable="false" class="card s-profile" href="#/einstellungen/profil">
+    <div class="card s-profile">
       <span class="s-avatar">${escapeHtml(initials)}</span>
-      <span class="s-pname"><b>${name ? escapeHtml(name) : 'Name eintragen'}</b><span>${sheets.length} Stundenzettel</span></span>
-      <span class="s-chev">${ICON.chevronRight}</span>
-    </a>
+      <label class="s-pname s-namefield">
+        <input data-s="name" placeholder="Name eintragen" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done">
+        <span>Steht auf jedem neuen Stundenzettel</span>
+      </label>
+      ${pdfHintHTML(settings.name)}
+    </div>
     <div class="card s-group">
-      ${setToggle('moon', 'indigo', 'Dunkles Design', `data-theme-switch ${isDarkTheme() ? 'checked' : ''}`)}
+      <div class="s-row">${setIcon('contrast', 'indigo')}<span class="s-label">Design</span>
+        <span class="s-seg">${[['light', 'Hell'], ['dark', 'Dunkel']]
+          .map(([v, l]) => `<button data-act="theme-set" data-v="${v}" class="${(isDarkTheme() ? 'dark' : 'light') === v ? 'on' : ''}">${l}</button>`)
+          .join('')}</span></div>
       ${lockAvailable() ? setToggle('face', 'green', 'Mit Face ID sperren', `data-lock-switch ${lockOn() ? 'checked' : ''}`) : ''}
     </div>
     <div class="card s-group">
@@ -3771,14 +3779,6 @@ function renderSettings() {
 
 function renderSettingsPage(sub) {
   const body = {
-    profil: `
-    <div class="card form">
-      <label class="field"><span>Name</span><input data-s="name" placeholder="Vor- und Nachname" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done"></label>
-      ${pdfHintHTML(settings.name)}
-    </div>
-    <p class="footnote">Steht auf jedem neuen Stundenzettel.</p>
-
-    <p class="footnote">Steht auf jedem neuen Stundenzettel.</p>`,
     lohn: `
     <div class="card form">
       <label class="field"><span>Stundenlohn</span><input data-s="wage" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.wage)}" enterkeyhint="done"><span class="unit">€</span></label>
@@ -3851,7 +3851,7 @@ function renderSettingsPage(sub) {
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">${SETTINGS_PAGES[sub]}</h1>
-    ${body}`;
+    <div class="s-page">${body}</div>`;
 }
 
 function hiddenSuggestionsHTML() {
@@ -4887,7 +4887,7 @@ const pdfHintHTML = (text) => {
 };
 /** Hinweis unter Feldern außerhalb der Zettel-Zeilen (Reisekosten, Name) nach dem Verlassen neu setzen */
 function refreshPdfHint(input) {
-  const box = input.closest('.trip-field, .field');
+  const box = input.closest('.trip-field, .field, .s-namefield');
   if (!box) return;
   const old = box.nextElementSibling;
   if (old && old.classList.contains('pdf-hint')) old.remove();
@@ -5409,6 +5409,15 @@ document.addEventListener('click', (e) => {
         });
       if (rowIsEmpty(row)) remove();
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
+      break;
+    }
+    case 'theme-set': {
+      settings.theme = el.dataset.v;
+      saveSettings();
+      applyTheme();
+      const y = window.scrollY;
+      renderSettings();
+      window.scrollTo(0, y);
       break;
     }
     case 'backup-pw':

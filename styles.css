@@ -174,7 +174,7 @@ input { font: inherit; color: inherit; }
    Berührungen durch (sonst fängt sie die Lupe neben der Überschrift ab) */
 .nav:not(:has(> :not(:empty))) { pointer-events: none; }
 .nav:not(:has(> :not(:empty))) ~ .large-title,
-.nav:not(:has(> :not(:empty))) ~ .title-row { margin-top: 32px; }
+.nav:not(:has(> :not(:empty))) ~ .title-row { margin-top: -30px; }
 /* Zettel-Liste: Überschrift und Lupe in einer Reihe, die Lupe scrollt mit */
 .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .title-row .large-title { margin: 0 4px; }
@@ -1452,11 +1452,13 @@ html.locked, html.locked body { background: #0b1d4a; }
 .lock-renew { color: #a3b5ff; font-size: 15px; }
 
 /* Einstellungen: Übersicht wie in den iPhone-Einstellungen (Namenskarte, Gruppen mit farbigen Symbolen, Unterseiten) */
-.s-profile { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 22px; color: inherit; text-decoration: none; }
+.s-profile { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 22px; }
+.s-profile .pdf-hint { flex-basis: 100%; margin: 0; }
 .s-avatar { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 21px; font-weight: 700;
   color: #fff; background: linear-gradient(150deg, var(--accent-fill), color-mix(in srgb, var(--accent-fill) 55%, #000)); }
 .s-pname { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.s-pname b { font-size: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.s-pname input { width: 100%; padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 20px; font-weight: 700; }
+.s-pname input::placeholder { color: var(--muted); font-weight: 600; }
 .s-pname span { font-size: 13px; color: var(--muted); }
 .s-group { padding: 0; overflow: hidden; margin-bottom: 22px; }
 .s-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 50px; padding: 0 16px; color: inherit; text-decoration: none; font-size: 17px; }
@@ -1467,4 +1469,11 @@ html.locked, html.locked body { background: #0b1d4a; }
 .s-val { color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48%; }
 .s-chev { display: flex; color: var(--sep); flex: none; }
 .s-chev svg { width: 16px; height: 16px; }
-a.s-row:active, .s-profile:active { background: var(--fill); }
+a.s-row:active { background: var(--fill); }
+/* Hell/Dunkel als Umschalter mit zwei Feldern */
+.s-seg { display: inline-flex; padding: 2px; border-radius: 9px; background: var(--fill); }
+.s-seg button { padding: 5px 12px; border-radius: 7px; font-size: 14px; font-weight: 500; color: var(--muted); }
+.s-seg button.on { background: var(--card); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15); }
+/* Unterseiten der Einstellungen: Karten mit Abstand */
+.s-page > .card + .card, .s-page > .footnote + .card, .s-page > .typo-hint + .card { margin-top: 18px; }
+.s-page > .card + .footnote { margin-bottom: 4px; }
