@@ -5420,7 +5420,7 @@ document.addEventListener('contextmenu', (e) => {
 // sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
 const LENS_MAG = 1.28; // Vergrößerung unter der Linse
-const LENS_MS = 1100;
+const LENS_MS = 700;
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5507,16 +5507,18 @@ function haptic() {
 }
 
 // ───────────────────────── Glas der Leiste: Spiegelung am Rand ─────────────────────────
-// Wie die Glasleiste unter iOS 26: Die Mitte ist klares Glas (backdrop-filter). Am Rand spiegelt sich, was knapp außerhalb
-// liegt, stark gestaucht hinein: Inhalt weiter weg ergibt nur einen dünnen Strich, Inhalt am Rand trifft dort genau auf
-// sein Spiegelbild und verschmilzt damit. Gespiegelt wird an der Tangente des Randes: oben und unten an der geraden Kante,
-// an den runden Enden in je drei Abschnitten. Safari kann den Hintergrund nicht spiegeln; darum liegen gespiegelte Kopien
+// Wie die Glasleiste unter iOS 26: Die Mitte ist klares Glas (backdrop-filter). Im Streifen am Rand erscheint der Inhalt
+// hinter der Leiste kopfüber und gestaucht: Inhalt hinter der Mitte als dünner Strich ganz außen, Inhalt, der zum Rand
+// wandert, rückt im Spiegelbild nach innen und verschmilzt an der Innenkante des Streifens mit sich selbst. Gespiegelt wird
+// an einer Linie parallel zur Tangente des Randes (Innenkante des Streifens): oben und unten gerade, an den runden Enden in
+// je drei Abschnitten. Safari kann den Hintergrund nicht spiegeln; darum liegen gespiegelte Kopien
 // der Seite in der Kapsel. Mitgescrollt werden sie über eine an die Scrollposition gekoppelte Animation
 // (animation-timeline, ab iOS 26, Grafikkarte), beim Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
 
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
-const GLASS_K = 0.3; // Stauchung: 1 px im Glas zeigt 1/0,3 px außerhalb
 const GLASS_BAND = 12; // Breite des Spiegelstreifens am Rand (px)
+// Stauchung: der Streifen zeigt den Inhalt von seiner Innenkante bis zur Mitte der Kapsel (bei 56 px Höhe: 0,75)
+const glassK = (H) => GLASS_BAND / (H / 2 - GLASS_BAND);
 // Abschnitte: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn) und welches Ende (l/r) bzw. gerade Kante
 const GLASS_PARTS = [
   { side: 'top', deg: 0 },
@@ -5552,6 +5554,7 @@ function glassBar() {
     glassPlace();
   });
   addEventListener('scroll', glassScroll, { passive: true });
+  addEventListener('touchend', () => requestAnimationFrame(glassScroll), { passive: true });
   // Nach dem Tippen kommt die Leiste wieder
   document.addEventListener('focusout', () =>
     requestAnimationFrame(() => (glass.dirty ? glassClone() : glassPlace()))
@@ -5608,6 +5611,7 @@ function glassPlace() {
   if (key === glass.key) return;
   glass.key = key;
   glass.max = max;
+  glass.top = top;
   clip.style.setProperty('--glass-max', `${-max}px`);
   const W = cr.width;
   const H = cr.height;
@@ -5619,12 +5623,18 @@ function glassPlace() {
     l.style.webkitMaskImage = l.style.maskImage = m.image;
     l.style.webkitMaskComposite = 'source-in';
     l.style.maskComposite = m.composite;
-    // Randnormale n und Tangentenpunkt T; Spiegelung mit Stauchung: A = I − (1 + k)·n·nᵀ um T
+    // Randnormale n (nach außen) und Punkt T auf der Innenkante des Streifens; Spiegelung mit Stauchung um T:
+    // A = I − (1 + k)·n·nᵀ – Inhalt weiter innen erscheint gestaucht weiter außen
     const rad = (part.deg * Math.PI) / 180;
     const n = [Math.sin(rad), -Math.cos(rad)];
+    const B = GLASS_BAND;
     const T =
-      part.side === 'top' ? [W / 2, 0] : part.side === 'bottom' ? [W / 2, H] : [(part.side === 'l' ? r : W - r) + r * n[0], r + r * n[1]];
-    const q = 1 + GLASS_K;
+      part.side === 'top'
+        ? [W / 2, B]
+        : part.side === 'bottom'
+          ? [W / 2, H - B]
+          : [(part.side === 'l' ? r : W - r) + (r - B) * n[0], r + (r - B) * n[1]];
+    const q = 1 + glassK(H);
     const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
     const e = T[0] - (A[0] * T[0] + A[2] * T[1]);
     const g = T[1] - (A[1] * T[0] + A[3] * T[1]);
@@ -5634,14 +5644,25 @@ function glassPlace() {
   });
   glassScroll();
 }
-/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur das Nachfedern (scrollY unter 0 bzw. über dem Ende) */
+/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur das Nachfedern am Seitenanfang/-ende. Gemessen wird die
+ *  tatsächliche Lage der Seite (nicht scrollY, das Safari beim Federn nicht immer bis zuletzt meldet); solange die Seite
+ *  federt, wird in jedem Bild nachgeprüft, bis sie wieder ruht. */
 function glassScroll() {
-  const y = scrollY;
+  if (!glass.caps) return;
+  const y = glass.top - app.getBoundingClientRect().top; // wie weit die Seite verschoben ist
   const off = GLASS_TIMELINE ? (y < 0 ? y : y > glass.max ? y - glass.max : 0) : Math.max(0, y);
-  if (off === glass.bounce) return;
-  glass.bounce = off;
-  const t = `translate3d(0, ${-off}px, 0)`;
-  glass.layers.forEach((l) => (l.querySelector('.glass-bounce').style.transform = t));
+  if (off !== glass.bounce) {
+    glass.bounce = off;
+    const t = `translate3d(0, ${-off}px, 0)`;
+    glass.layers.forEach((l) => (l.querySelector('.glass-bounce').style.transform = t));
+  }
+  if (off && !glass.polling) {
+    glass.polling = true;
+    requestAnimationFrame(() => {
+      glass.polling = false;
+      glassScroll();
+    });
+  }
 }
 
 // ───────────────────────── Start ─────────────────────────
