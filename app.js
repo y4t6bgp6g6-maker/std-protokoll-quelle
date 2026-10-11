@@ -1497,12 +1497,13 @@ function enterReport(rep, s, dayIndex, draft) {
 
 // ───────────────────────── Leiste unten, Team, Darstellung ─────────────────────────
 
+// Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
-  ['#/', 'Zettel', 'tabZettel', ['list']],
-  ['#/uebersicht', 'Übersicht', 'tabStats', ['stats']],
+  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
+  ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
-  ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings']],
+  ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings', 'reports', 'report']],
 ];
 function tabbarHTML() {
   return `<nav class="tabbar" id="tabbar">${TABS.map((t) =>
@@ -1511,10 +1512,10 @@ function tabbarHTML() {
       : `<button class="tab-add" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}</button>`
   ).join('')}</nav>`;
 }
-/** Leiste nur auf den Hauptseiten; die aktuelle Seite hervorheben */
+/** Leiste auf allen Seiten; die aktuelle (Haupt-)Seite hervorheben */
 function updateTabbar() {
   const tab = TABS.find((t) => t && t[3].includes(currentView));
-  document.body.classList.toggle('tabs', !!tab && searchQuery == null);
+  document.body.classList.add('tabs');
   document.querySelectorAll('#tabbar .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
 }
 
@@ -1541,11 +1542,15 @@ function fitBottomGap() {
 }
 
 /** Darstellung: „Wie iPhone“ folgt dem Hell-/Dunkelmodus des iPhones */
-function applyTheme() {
+// Schalter in den Einstellungen; ohne Wahl (auto) wie das iPhone
+const isDarkTheme = () => {
   const mode = settings.theme || 'auto';
-  const dark = mode === 'dark' || (mode === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  return mode === 'dark' || (mode === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+};
+function applyTheme() {
+  const dark = isDarkTheme();
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0c1114' : '#f3f0e8');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0c1015' : '#f2f0e9');
 }
 
 // ───────────────────────── Icons ─────────────────────────
@@ -3427,13 +3432,7 @@ function renderSettings() {
     <h1 class="large-title">Einstellungen</h1>
     <h2 class="section-title">Darstellung</h2>
     <div class="card form">
-      <label class="field"><span>Design</span><select data-s="theme">${[
-        ['auto', 'Wie iPhone'],
-        ['light', 'Hell'],
-        ['dark', 'Dunkel'],
-      ]
-        .map(([v, l]) => `<option value="${v}" ${(settings.theme || 'auto') === v ? 'selected' : ''}>${l}</option>`)
-        .join('')}</select></label>
+      <label class="field"><span>Dunkles Design</span><input type="checkbox" class="toggle" data-theme-switch ${isDarkTheme() ? 'checked' : ''}></label>
     </div>
 
     <h2 class="section-title">Stundenzettel</h2>
@@ -5119,6 +5118,10 @@ document.addEventListener('input', (e) => {
   } else if (t.dataset.search != null) {
     searchQuery = t.value;
     refreshListBody();
+  } else if (t.dataset.themeSwitch != null) {
+    settings.theme = t.checked ? 'dark' : 'light';
+    saveSettings();
+    applyTheme();
   } else if (t.dataset.s) {
     settings[t.dataset.s] = t.type === 'checkbox' ? t.checked : t.value;
     saveSettings();

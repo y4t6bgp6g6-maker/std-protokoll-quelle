@@ -4,11 +4,11 @@
 
 /* Farben: hell (Vorgabe) und dunkel – Auswahl in den Einstellungen („Wie iPhone“, Hell, Dunkel), gesetzt als data-theme */
 :root {
-  --bg: #f3f0e8;
-  --card: #fffefb;
-  --text: #181f19;
-  --muted: #62645c;
-  --sep: #e8e4d9;
+  --bg: #f2f0e9;
+  --card: #fffefc;
+  --text: #171f19;
+  --muted: #61655e;
+  --sep: #e7e5db;
   --accent: #213f99;
   --accent-fill: #213f99;
   --on-accent: #ffffff;
@@ -16,10 +16,10 @@
   --danger: #c9302a;
   --success: #1e8a4a;
   --warning: #b86200;
-  --fill: #efece2;
-  --inactive: #eae6dc;
+  --fill: #efede4;
+  --inactive: #e9e7de;
   --backdrop: rgba(30, 26, 18, 0.32);
-  --sheet: #f8f6f0;
+  --sheet: #f8f6f1;
   --shadow: 0 1px 2px rgba(21, 32, 26, 0.05), 0 4px 16px rgba(21, 32, 26, 0.06);
   --vac: #f0a23a;
   --vac-ink: #9a5800;
@@ -36,11 +36,11 @@
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --bg: #0c1114;
-  --card: #171d22;
-  --text: #eef1f2;
-  --muted: #98a2a9;
-  --sep: #27303a;
+  --bg: #0c1015;
+  --card: #161c24;
+  --text: #eef1f4;
+  --muted: #97a2ac;
+  --sep: #26303e;
   --accent: #8ea6ff;
   --accent-fill: #3d5fe0;
   --on-accent: #ffffff;
@@ -48,19 +48,19 @@
   --danger: #ff6b60;
   --success: #4ade80;
   --warning: #f5b65c;
-  --fill: #20282f;
-  --inactive: #10151a;
+  --fill: #1f2731;
+  --inactive: #0f141c;
   --backdrop: rgba(0, 0, 0, 0.55);
-  --sheet: #13191f;
-  --shadow: inset 0 0 0 1px #232b34;
+  --sheet: #121921;
+  --shadow: inset 0 0 0 1px #222b37;
   --vac: #f0a63c;
   --vac-ink: #f5b65c;
   --sick: #f0679a;
   --sick-ink: #f57faa;
   --holiday: #c08bff;
   --holiday-ink: #c9a0ff;
-  --off: #98a2a9;
-  --off-ink: #98a2a9;
+  --off: #97a2ac;
+  --off-ink: #97a2ac;
   color-scheme: dark;
 }
 
@@ -809,6 +809,7 @@ button.nav-title { font-size: 17px; }
 }
 .to-top.show { opacity: 1; transform: none; pointer-events: auto; }
 .to-top.floating { position: fixed; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 11; }
+body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 
 /* Teilen und Menü oben rechts im Zettel */
 .nav-actions { display: inline-flex; align-items: center; padding: 0 4px; }
@@ -1187,7 +1188,7 @@ button.nav-title { font-size: 17px; }
 }
 .time { font-weight: 700; }
 
-/* Leiste unten: Zettel · Übersicht · + · Team · Einstellungen (nur auf diesen Seiten) */
+/* Leiste unten: Zettel · Übersicht · + · Team · Einstellungen (auf allen Seiten, beim Tippen ausgeblendet) */
 .tabbar {
   position: fixed;
   left: 0;
