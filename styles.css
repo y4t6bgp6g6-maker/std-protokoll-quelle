@@ -30,10 +30,9 @@
   --off: #8e8e93;
   --off-ink: #5f6862;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
-  /* Abstand unter der Leiste: Home-Balken; fällt weg, soweit iOS unten einen ungenutzten Streifen lässt (fitBottomGap),
-     mindestens 16 px, damit die Beschriftungen nicht in die runden Ecken des Displays geraten */
-  --tab-pad: max(16px, calc(env(safe-area-inset-bottom) - var(--vp-gap, 0px)));
-  --tab-h: calc(60px + var(--tab-pad));
+  /* Leiste unten: schwebende Kapsel, Abstand zum unteren Rand; --tab-h = Platz, den sie unten belegt */
+  --tab-bottom: max(12px, calc(env(safe-area-inset-bottom) - 12px));
+  --tab-h: calc(var(--tab-bottom) + 64px);
   color-scheme: light;
 }
 :root[data-theme='dark'] {
@@ -1190,45 +1189,69 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 }
 .time { font-weight: 700; }
 
-/* Leiste unten: Übersicht · Zettel · + · Team · Einstellungen (auf allen Seiten, beim Tippen ausgeblendet) */
-.tabbar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 20;
-  display: none;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  align-items: start;
-  height: var(--tab-h);
-  padding: 2px 4px var(--tab-pad);
-  background: var(--card);
-  border-top: 0.5px solid var(--sep);
-}
-body.tabs .tabbar { display: grid; }
-/* Den Streifen unter der Seite (siehe fitBottomGap) in der Farbe der Leiste */
-html:has(body.tabs) { background: var(--card); }
+/* Leiste unten: Glas-Kapsel Übersicht · Zettel · + · Team · Einstellungen (auf allen Seiten, beim Tippen ausgeblendet).
+   Die Lichtbrechung zeichnen Kopien der Seite in .glass-clip (siehe glassBar in app.js). */
+.tabbar { position: fixed; left: 14px; right: 14px; bottom: var(--tab-bottom); z-index: 20; display: none; height: 64px; }
+body.tabs .tabbar { display: block; }
 body { min-height: 100vh; }
 body.tabs:has(input:focus, textarea:focus) .tabbar { display: none; }
 body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
-.tab { display: flex; flex-direction: column; align-items: center; gap: 3px; padding-top: 0; color: var(--muted); font-size: 11.5px; font-weight: 600; }
-.tab svg { width: 26px; height: 26px; }
-.tab.on { color: var(--accent); font-weight: 700; }
+.tab-caps {
+  position: relative;
+  isolation: isolate;
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: stretch;
+  padding: 5px;
+  border-radius: 32px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+:root[data-theme='dark'] .tab-caps { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
+.glass-clip { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: var(--bg); }
+.glass-layer { position: absolute; inset: 0; }
+/* Äußere Ringe leicht weich, der äußerste etwas heller und kräftiger */
+.glass-layer:nth-child(n + 5) { filter: blur(0.5px); }
+.glass-layer:last-child { filter: blur(0.6px) saturate(1.3) brightness(1.06); }
+/* Eigene Grafikebene, sonst zeichnet Safari die Kopie beim Scrollen nicht neu */
+.glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+/* Lichtkante und leichter Schimmer über dem Glas */
+.tab-caps::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 45%, rgba(255, 255, 255, 0.06));
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.6), inset 0 -1px 0.5px rgba(255, 255, 255, 0.2), inset 0 0 0 0.5px rgba(255, 255, 255, 0.25);
+}
+:root[data-theme='dark'] .tab-caps::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.01) 45%, rgba(255, 255, 255, 0.03));
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.1), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
+}
+.tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 27px; color: var(--text); font-size: 11px; font-weight: 600; }
+.tab svg { width: 24px; height: 24px; }
+.tab.on { color: var(--accent); font-weight: 700; background: color-mix(in srgb, var(--text) 9%, transparent); }
+/* „+“ größer, steht oben etwas aus der Kapsel heraus */
 .tab-add {
+  position: relative;
+  z-index: 2;
   justify-self: center;
+  align-self: start;
   display: grid;
   place-items: center;
-  width: 60px;
-  height: 60px;
-  margin-top: -20px;
+  width: 72px;
+  height: 72px;
+  margin-top: -14px;
   border-radius: 50%;
   background: var(--accent-fill);
   color: var(--on-accent);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent-fill) 38%, transparent);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent-fill) 45%, transparent), inset 0 1px 0.5px rgba(255, 255, 255, 0.45), inset 0 -2px 6px rgba(0, 0, 0, 0.15);
 }
+:root[data-theme='dark'] .tab-add { box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4), inset 0 1px 0.5px rgba(255, 255, 255, 0.35), inset 0 -2px 6px rgba(0, 0, 0, 0.2); }
 .tab-add svg { width: 28px; height: 28px; }
 .tab-add:active, .tab:active { transform: scale(0.94); }
-:root[data-theme='dark'] .tab-add { box-shadow: none; }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
 .team-empty svg { color: var(--accent); }
 .team-empty b { display: block; margin: 12px 0 4px; color: var(--text); font-size: 19px; }

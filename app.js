@@ -1506,11 +1506,11 @@ const TABS = [
   ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings', 'reports', 'report']],
 ];
 function tabbarHTML() {
-  return `<nav class="tabbar" id="tabbar">${TABS.map((t) =>
+  return `<nav class="tabbar" id="tabbar"><div class="tab-caps">${TABS.map((t) =>
     t
       ? `<button class="tab" data-act="tab" data-hash="${t[0]}">${ICON[t[2]]}<span>${t[1]}</span></button>`
       : `<button class="tab-add" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}</button>`
-  ).join('')}</nav>`;
+  ).join('')}</div></nav>`;
 }
 /** Leiste auf allen Seiten; die aktuelle (Haupt-)Seite hervorheben */
 function updateTabbar() {
@@ -1530,16 +1530,6 @@ function renderTeam() {
     <div class="team-empty">${svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48)}<b>Kommt bald</b></div>`;
 }
 
-/**
- * Als Web-App auf dem Home-Bildschirm ist die Seite unter iOS 26 unten kürzer als der Bildschirm (innerHeight 812 statt 874);
- * im Streifen darunter zeichnet iOS nur den Seitenhintergrund. Die Leiste lässt dann ihren Abstand zum Home-Balken weg
- * (der liegt im Streifen), der Streifen bekommt ihre Farbe (CSS).
- */
-function fitBottomGap() {
-  const portrait = innerHeight > innerWidth;
-  const gap = navigator.standalone && portrait ? Math.max(0, Math.min(120, screen.height - innerHeight)) : 0;
-  document.documentElement.style.setProperty('--vp-gap', `${gap}px`);
-}
 
 /** Darstellung: „Wie iPhone“ folgt dem Hell-/Dunkelmodus des iPhones */
 // Schalter in den Einstellungen; ohne Wahl (auto) wie das iPhone
@@ -5400,16 +5390,106 @@ document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.day .row') && !e.target.closest('input, textarea')) e.preventDefault();
 });
 
+// ───────────────────────── Glas der Leiste (Lichtbrechung) ─────────────────────────
+// Safari kann den Hintergrund hinter einem Element nicht verzerren, SVG-Verschiebungskarten bleiben dort leer oder
+// unvollständig. Darum liegen Kopien der Seite in der Kapsel: die Mitte unverändert, zum Rand hin Ringe, deren Kopie
+// immer stärker gestreckt ist (wie gebogenes Glas, das Inhalt von außen hereinholt). Die Ringe gehen weich ineinander über.
+
+// Ringe von innen nach außen: Abstand zum Rand (px), ab dem der Ring beginnt, und Verschiebung am Ring (px)
+const GLASS_RINGS = [
+  [20, 0.8],
+  [16, 2],
+  [12.5, 3.6],
+  [9.5, 5.6],
+  [7, 8],
+  [4.5, 10.8],
+  [2, 14],
+];
+const glass = { caps: null, clip: null, layers: [], size: '', timer: 0 };
+
+function glassBar() {
+  const caps = document.querySelector('#tabbar .tab-caps');
+  caps.insertAdjacentHTML(
+    'afterbegin',
+    `<div class="glass-clip" aria-hidden="true">${'<div class="glass-layer"><div class="glass-copy"></div></div>'.repeat(GLASS_RINGS.length + 1)}</div>`
+  );
+  glass.caps = caps;
+  glass.clip = caps.querySelector('.glass-clip');
+  glass.layers = [...glass.clip.querySelectorAll('.glass-layer')];
+  glassClone();
+  // Seite geändert: Kopien erneuern, wenn es kurz ruhig ist
+  new MutationObserver(() => {
+    clearTimeout(glass.timer);
+    glass.timer = setTimeout(glassClone, 150);
+  }).observe(app, { subtree: true, childList: true, characterData: true, attributes: true });
+  addEventListener('scroll', glassPlace, { passive: true });
+  addEventListener('resize', () => {
+    glass.size = '';
+    glassPlace();
+  });
+  // Nach dem Tippen kommt die Leiste wieder
+  document.addEventListener('focusout', () => requestAnimationFrame(glassPlace));
+}
+
+/** Maske „innerhalb von d px vom Kapselrand“ aus CSS-Verläufen (SVG-Masken zeigt Safari hier nicht):
+ *  oben/unten ein Streifen über die ganze Breite, an den runden Enden je ein Kreisring */
+function glassRingMask(h, d) {
+  const r = h / 2;
+  const s = 2;
+  const band = `linear-gradient(180deg, #000 ${d - s}px, transparent ${d + s}px, transparent ${h - d - s}px, #000 ${h - d + s}px)`;
+  const ring = (x) => `radial-gradient(circle at ${x}px 50%, transparent ${r - d - s}px, #000 ${r - d + s}px)`;
+  return { image: `${band}, ${ring(r)}, ${ring(0)}`, size: `100% 100%, ${r}px 100%, ${r}px 100%`, position: '0 0, 0 0, 100% 0' };
+}
+
+function glassClone() {
+  const c = app.cloneNode(true);
+  c.removeAttribute('id');
+  // Abstände, die an der ID #app hängen, übernehmen
+  const cs = getComputedStyle(app);
+  for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'maxWidth', 'marginLeft', 'marginRight', 'boxSizing']) c.style[k] = cs[k];
+  c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+  c.setAttribute('inert', '');
+  glass.layers.forEach((l, i) => l.firstChild.replaceChildren(i ? c.cloneNode(true) : c));
+  glassPlace();
+}
+
+/** Kopien deckungsgleich unter die Kapsel legen; die Ringe um die Kapselmitte strecken (am Rand genau ihre Verschiebung) */
+function glassPlace() {
+  const { caps, clip, layers } = glass;
+  if (!caps || !caps.offsetWidth) return;
+  const cr = caps.getBoundingClientRect();
+  const key = `${cr.width}x${cr.height}`;
+  if (key !== glass.size) {
+    glass.size = key;
+    clip.style.clipPath = `inset(0 round ${cr.height / 2}px)`;
+    layers.slice(1).forEach((l, i) => {
+      const m = glassRingMask(cr.height, GLASS_RINGS[i][0]);
+      l.style.webkitMaskImage = l.style.maskImage = m.image;
+      l.style.webkitMaskSize = l.style.maskSize = m.size;
+      l.style.webkitMaskPosition = l.style.maskPosition = m.position;
+      l.style.webkitMaskRepeat = l.style.maskRepeat = 'no-repeat';
+    });
+  }
+  const ar = app.getBoundingClientRect();
+  const cx = cr.width / 2;
+  const cy = cr.height / 2;
+  layers.forEach((l, i) => {
+    const off = i ? GLASS_RINGS[i - 1][1] : 0;
+    const copy = l.firstChild;
+    copy.style.width = `${ar.width}px`;
+    copy.style.transform = `translate(${cx}px, ${cy}px) scale(${1 + off / cx}, ${1 + off / cy}) translate(${ar.left - cr.left - cx}px, ${ar.top - cr.top - cy}px)`;
+  });
+}
+
 // ───────────────────────── Start ─────────────────────────
 
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 history.replaceState('root', '', location.hash || '#/');
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
-fitBottomGap();
-window.addEventListener('resize', fitBottomGap);
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 route();
+glassBar();
 fetchReports();
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());
 
