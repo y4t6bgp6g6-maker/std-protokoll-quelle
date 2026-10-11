@@ -1199,12 +1199,6 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   position: relative;
   isolation: isolate;
   height: 100%;
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  /* feste Zeilenhöhe: das herausstehende „+“ darf die Zeile nicht vergrößern (Markierung bleibt mittig) */
-  grid-template-rows: minmax(0, 1fr);
-  align-items: stretch;
-  padding: 4px;
   border-radius: 28px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
@@ -1217,15 +1211,16 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   pointer-events: none;
   overflow: hidden;
   border-radius: inherit;
-  background: color-mix(in srgb, var(--card) 4%, transparent);
-  -webkit-backdrop-filter: blur(1px) saturate(1.4);
-  backdrop-filter: blur(1px) saturate(1.4);
+  /* wie das Glas unter iOS 26: Inhalt dahinter leicht weich und gedämpft */
+  background: color-mix(in srgb, var(--card) 48%, transparent);
+  -webkit-backdrop-filter: blur(1.2px) saturate(1.4);
+  backdrop-filter: blur(1.2px) saturate(1.4);
 }
-.glass-layer { position: absolute; inset: 0; opacity: 0.7; filter: blur(0.6px) saturate(1.4); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
+.glass-layer { position: absolute; inset: 0; opacity: 0.5; filter: blur(0.8px) saturate(1.3); -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; }
 .glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.glass-bounce, .glass-scroll { will-change: transform; }
+.glass-scroll { will-change: transform; }
 /* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
-.glass-clip.timeline .glass-scroll { animation: glass-scroll linear both; animation-timeline: scroll(root block); }
+.glass-clip.timeline:not(.manual) .glass-scroll { animation: glass-scroll linear both; animation-timeline: scroll(root block); }
 @keyframes glass-scroll {
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(0, var(--glass-max, 0px), 0); }
@@ -1245,29 +1240,49 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.01) 45%, rgba(255, 255, 255, 0.03));
   box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.32), inset 0 -1px 0.5px rgba(255, 255, 255, 0.1), inset 0 0 0 0.5px rgba(255, 255, 255, 0.14);
 }
+.tab-row {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
+  padding: 4px;
+  --lens-x: -500px;
+  --lens-rx: 0px;
+  --lens-ry: 0px;
+  /* Loch, wo die Linse gerade ist (Werte setzt animateTabLens) */
+  -webkit-mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
+  mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
+}
 .tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 24px; color: var(--text); font-size: 10.5px; font-weight: 500; }
 .tab svg { width: 25px; height: 25px; }
 /* Symbole und Beschriftung ganz leicht durchsichtig, wie Glas */
-.tab-caps > .tab svg, .tab-caps > .tab span { opacity: 0.86; }
-.tab-caps > .tab.on svg, .tab-caps > .tab.on span { opacity: 0.95; }
-.tab.on {
-  color: var(--accent);
-  font-weight: 600;
+.tab-row > .tab svg, .tab-row > .tab span { opacity: 0.86; }
+.tab-row > .tab.on svg, .tab-row > .tab.on span { opacity: 0.95; }
+.tab.on { color: var(--accent); font-weight: 600; }
+/* Markierung: milchiges Glas als eigene Ebene, damit sie beim Umschalten erst mit der Linse erscheint */
+.tab.on::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
   background: color-mix(in srgb, var(--text) 10%, transparent);
   -webkit-backdrop-filter: blur(5px) saturate(1.3);
   backdrop-filter: blur(5px) saturate(1.3);
+  transition: opacity 0.2s ease-out;
 }
 /* „+“ größer, steht oben etwas aus der Kapsel heraus und schwebt über ihr (weicher Schatten nach unten, flache Scheibe) */
 .tab-add {
-  position: relative;
+  position: absolute;
   z-index: 4;
-  justify-self: center;
-  align-self: start;
+  left: calc(50% - 35px);
+  top: -18px;
   display: grid;
   place-items: center;
   width: 70px;
   height: 70px;
-  margin-top: -18px;
   border-radius: 50%;
   background: linear-gradient(180deg, color-mix(in srgb, #fff 12%, var(--accent-fill)), var(--accent-fill) 60%);
   color: var(--on-accent);
@@ -1275,9 +1290,8 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 }
 :root[data-theme='dark'] .tab-add { box-shadow: 0 14px 28px -6px rgba(0, 0, 0, 0.7), 0 4px 10px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35); }
 .tab-add svg { width: 28px; height: 28px; }
-.tab.on { transition: background-color 0.26s ease-out; }
-.lens-moving .tab.on { background-color: transparent; transition: none; }
-/* Glas-Linse: klar, mit heller Kante und leichten Farbsäumen; darin die Symbole vergrößert und in Akzentfarbe */
+.lens-moving .tab.on::before { opacity: 0; transition: none; }
+/* Glas-Linse: klar; darin die Symbole vergrößert und in Akzentfarbe, zum Rand hin stärker (Zonen); helle Kante mit Farbsäumen */
 .tab-lens {
   position: absolute;
   left: 0;
@@ -1286,17 +1300,20 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   border-radius: 999px;
   overflow: hidden;
   pointer-events: none;
-  transform-origin: 50% 50%;
-  will-change: transform, opacity;
-  background: color-mix(in srgb, var(--card) 62%, transparent);
-  /* verdeckt die Symbole darunter, damit am Rand keine Dopplungen entstehen – zu sehen sind nur die vergrößerten */
-  -webkit-backdrop-filter: blur(14px) saturate(1.4);
-  backdrop-filter: blur(14px) saturate(1.4);
-  box-shadow: inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75), inset -1.5px -1.5px 1px rgba(255, 255, 255, 0.45),
-    inset 3px 0 3px -1px rgba(90, 220, 255, 0.35), inset -3px 0 3px -1px rgba(255, 120, 220, 0.3), 0 4px 14px rgba(0, 0, 0, 0.18);
+  background: color-mix(in srgb, var(--bg) 18%, transparent);
+  -webkit-backdrop-filter: saturate(1.4) brightness(1.06);
+  backdrop-filter: saturate(1.4) brightness(1.06);
 }
-.tab-lens-row { position: absolute; left: 0; top: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); padding: 4px; transform-origin: 0 0; will-change: transform; }
-.tab-lens-row .tab { color: var(--accent); }
+.tab-lens-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tab-lens-rim {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.55), inset 1.5px 2px 1.5px -0.5px rgba(255, 255, 255, 0.7),
+    inset -1.5px -2px 1.5px -0.5px rgba(255, 255, 255, 0.45), inset 3px 0 4px -1px rgba(80, 220, 255, 0.55),
+    inset -3px 0 4px -1px rgba(255, 90, 200, 0.5), inset 0 3px 4px -1px rgba(255, 230, 90, 0.35), inset 0 -3px 4px -1px rgba(120, 255, 170, 0.3),
+    0 3px 10px rgba(0, 0, 0, 0.18);
+}
 .tap-haptic { position: absolute; inset: 0; z-index: 5; width: 100%; height: 100%; margin: 0; opacity: 0.011; cursor: pointer; }
 .tab-add:active, .tab:active { transform: scale(0.94); }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }

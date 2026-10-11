@@ -1509,17 +1509,18 @@ const TABS = [
  *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
 const HAPTIC_SWITCH = '<input type="checkbox" switch class="tap-haptic" tabindex="-1" aria-hidden="true">';
 function tabbarHTML() {
-  return `<nav class="tabbar" id="tabbar"><div class="tab-caps">${TABS.map((t) =>
+  // Symbole in einer eigenen Reihe (die Linse blendet sie per Maske aus); das „+“ liegt darüber in der Mitte
+  return `<nav class="tabbar" id="tabbar"><div class="tab-caps"><div class="tab-row">${TABS.map((t) =>
     t
       ? `<div class="tab" role="button" data-act="tab" data-hash="${t[0]}">${ICON[t[2]]}<span>${t[1]}</span>${HAPTIC_SWITCH}</div>`
-      : `<div class="tab-add" role="button" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}${HAPTIC_SWITCH}</div>`
-  ).join('')}</div></nav>`;
+      : '<span></span>'
+  ).join('')}</div><div class="tab-add" role="button" data-act="new" aria-label="Neuer Stundenzettel">${ICON.tabAdd}${HAPTIC_SWITCH}</div></div></nav>`;
 }
 /** Leiste auf allen Seiten; die aktuelle (Haupt-)Seite hervorheben */
 function updateTabbar() {
   const tab = TABS.find((t) => t && t[3].includes(currentView));
   document.body.classList.add('tabs');
-  document.querySelectorAll('#tabbar .tab-caps > .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
+  document.querySelectorAll('#tabbar .tab-row > .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
 }
 
 function renderTeam() {
@@ -4885,18 +4886,18 @@ document.addEventListener('click', (e) => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
         break;
       }
-      const from = document.querySelector('#tabbar .tab-caps > .tab.on');
+      const from = document.querySelector('#tabbar .tab-row > .tab.on');
       if (!from || from === el) {
         location.replace(el.dataset.hash);
         break;
       }
-      // Erst die Linse starten, die Seite zwei Bilder später wechseln: dann läuft die Animation schon auf der
-      // Grafikkarte und wird vom Aufbau der neuen Seite nicht mehr aufgehalten
-      animateTabLens(from, el);
+      // Die Seite erst wechseln, wenn die Linse am Ziel ankommt: der Aufbau der neuen Seite hält sonst die Fahrt auf
+      const arrive = animateTabLens(from, el);
       from.classList.remove('on');
       el.classList.add('on');
       const hash = el.dataset.hash;
-      requestAnimationFrame(() => requestAnimationFrame(() => location.replace(hash)));
+      clearTimeout(animateTabLens.nav);
+      animateTabLens.nav = setTimeout(() => location.replace(hash), arrive);
       break;
     }
     case 'new':
@@ -5414,91 +5415,186 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 // ───────────────────────── Leiste: Glas-Linse beim Umschalten, Vibration ─────────────────────────
-// Wie die Leiste unter iOS 26: Beim Antippen wächst aus der Markierung eine klare Glas-Linse, gleitet gedehnt zum neuen
-// Symbol (darunter vergrößert und eingefärbt) und wird dort wieder zur Markierung. Die Linse enthält nur eine Kopie
-// der Symbole; die Bewegung läuft über die Web Animations API mit reinen Transformationen, also auf der Grafikkarte –
-// sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
+// Wie die Leiste unter iOS 26: Beim Antippen wird die Markierung zur klaren Glas-Linse, bläht sich über die Leiste hinaus
+// auf, gleitet in Bewegungsrichtung gedehnt zum neuen Symbol und schrumpft dort wieder zur Markierung. Unter der Linse
+// sind die Symbole vergrößert, zum Rand der Linse hin immer stärker (gebogenes Glas); am Rand helle Kante mit Farbsäumen.
+// Die echten Symbole unter der Linse blendet eine mitlaufende Maske aus (keine Dopplungen). Bewegt wird alles über die
+// Web Animations API.
 
-const LENS_MAG = 1.28; // Vergrößerung unter der Linse
-const LENS_MS = 700;
+const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
+const LENS_EDGE = 0.45; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
+const LENS_CHROMA = 0.05; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
+let lensBusyUntil = 0; // solange die Linse läuft, warten die Glas-Kopien mit dem Erneuern
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
-  caps.insertAdjacentHTML(
-    'beforeend',
-    `<div class="tab-lens" aria-hidden="true"><div class="tab-lens-row">${TABS.map((t) =>
-      t ? `<span class="tab lens-tab">${ICON[t[2]]}<span>${t[1]}</span></span>` : '<span></span>'
-    ).join('')}</div></div>`
-  );
+  caps.insertAdjacentHTML('beforeend', '<div class="tab-lens" aria-hidden="true"><canvas class="tab-lens-canvas"></canvas><div class="tab-lens-rim"></div></div>');
 }
 
-/** Linse von einem Eintrag zum anderen gleiten lassen */
+/** Symbole und Beschriftungen der Leiste in Akzentfarbe einmal scharf in ein Bild zeichnen (Vorlage für die Linse) */
+function lensSource() {
+  const caps = document.querySelector('#tabbar .tab-caps');
+  const cr = caps.getBoundingClientRect();
+  // zweifache Auflösung reicht für die kurze Bewegung und hält jedes Bild schnell
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const key = `${cr.width}x${cr.height}x${dpr}x${document.documentElement.dataset.theme}`;
+  if (lensSource.key === key) return lensSource.data;
+  const c = document.createElement('canvas');
+  c.width = Math.round(cr.width * dpr);
+  c.height = Math.round(cr.height * dpr);
+  const ctx = c.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  ctx.fillStyle = accent;
+  for (const tab of caps.querySelectorAll('.tab-row > .tab')) {
+    const svgEl = tab.querySelector('svg');
+    const sr = svgEl.getBoundingClientRect();
+    ctx.save();
+    ctx.translate(sr.left - cr.left, sr.top - cr.top);
+    ctx.scale(sr.width / 24, sr.height / 24);
+    for (const path of svgEl.querySelectorAll('path')) ctx.fill(new Path2D(path.getAttribute('d')), 'evenodd');
+    ctx.restore();
+    const label = tab.querySelector('span');
+    const lr = label.getBoundingClientRect();
+    const cs = getComputedStyle(label);
+    ctx.font = `600 ${cs.fontSize} ${cs.fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label.textContent, lr.left - cr.left + lr.width / 2, lr.top - cr.top + lr.height / 2 + 0.5);
+  }
+  lensSource.key = key;
+  lensSource.data = { px: ctx.getImageData(0, 0, c.width, c.height), dpr, w: c.width, h: c.height };
+  return lensSource.data;
+}
+
+/** Ein Bild der Linse zeichnen: Inhalt unter der Linse vergrößert, zum Rand hin stärker verbogen, mit Farbsäumen.
+ *  cx = Mitte der Linse (in der Leiste), lw/lh = Größe, H = Höhe der Leiste */
+function lensPaint(canvas, cx, lw, lh, H) {
+  const src = lensSource();
+  const dpr = src.dpr;
+  const cw = Math.max(1, Math.round(lw * dpr));
+  const ch = Math.max(1, Math.round(lh * dpr));
+  if (canvas.width !== cw || canvas.height !== ch) {
+    canvas.width = cw;
+    canvas.height = ch;
+  }
+  const ctx = canvas.getContext('2d');
+  const out = ctx.createImageData(cw, ch);
+  const o = out.data;
+  const o32 = new Uint32Array(o.buffer);
+  const s = src.px.data;
+  const s32 = src.u32 || (src.u32 = new Uint32Array(s.buffer));
+  const sw = src.w;
+  const sh = src.h;
+  const r = lh / 2;
+  const half = lw / 2;
+  const flat = half - r;
+  const inv = 1 / LENS_MAG;
+  const scx = cx * dpr;
+  const scy = (H / 2) * dpr;
+  for (let y = 0; y < ch; y++) {
+    const ly = (y + 0.5) / dpr - r; // zur Mitte der Linse
+    const ly2 = ly * ly;
+    let i = y * cw;
+    for (let x = 0; x < cw; x++, i++) {
+      const lx = (x + 0.5) / dpr - half;
+      // Abstand zum Rand der Kapsel: 0 = Mitte, 1 = Rand
+      const ax = lx > flat ? lx - flat : lx < -flat ? -lx - flat : 0;
+      let q = (ax * ax + ly2) / (r * r);
+      if (q > 1) q = 1;
+      const q2 = q * q;
+      // zum Rand hin Inhalt von weiter innen holen: dort stärker vergrößert und verbogen
+      const f = (1 - LENS_EDGE * q2) * inv;
+      if (q < 0.45) {
+        // Mitte: ohne Farbsäume, ein Lesezugriff
+        const sx = (scx + lx * f * dpr) | 0;
+        const sy = (scy + ly * f * dpr) | 0;
+        if (sx >= 0 && sy >= 0 && sx < sw && sy < sh) o32[i] = s32[sy * sw + sx];
+        continue;
+      }
+      const d = LENS_CHROMA * q;
+      let a = 0;
+      for (let k = 0; k < 3; k++) {
+        const fk = f * (1 + (k - 1) * d) * dpr;
+        const sx = (scx + lx * fk) | 0;
+        const sy = (scy + ly * fk) | 0;
+        if (sx < 0 || sy < 0 || sx >= sw || sy >= sh) continue;
+        const j = (sy * sw + sx) * 4;
+        o[i * 4 + k] = s[j + k];
+        if (s[j + 3] > a) a = s[j + 3];
+      }
+      o[i * 4 + 3] = a;
+    }
+  }
+  ctx.putImageData(out, 0, 0);
+}
+
+/** Linse von einem Eintrag zum anderen gleiten lassen; Ablauf und Tempo wie in den Aufnahmen von iOS 26.
+ *  Jedes Bild setzt Lage und Größe der Linse, zeichnet ihren Inhalt und spart die echten Symbole darunter aus –
+ *  alles im selben Schritt, daher immer deckungsgleich. */
 function animateTabLens(from, to) {
   const caps = document.querySelector('#tabbar .tab-caps');
+  const tabRow = caps.querySelector('.tab-row');
   const lens = caps.querySelector('.tab-lens');
-  const row = lens.firstChild;
+  const canvas = lens.firstChild;
   const cr = caps.getBoundingClientRect();
-  const W = cr.width;
   const H = cr.height;
+  const fr = from.getBoundingClientRect();
   const center = (el) => {
     const r = el.getBoundingClientRect();
     return r.left - cr.left + r.width / 2;
   };
   const a = center(from);
   const b = center(to);
-  const w = from.getBoundingClientRect().width + 14; // Linse etwas breiter und höher als die Markierung
-  const h = H + 12;
-  lens.style.width = `${w}px`;
-  lens.style.height = `${h}px`;
-  lens.style.top = `${(H - h) / 2}px`;
-  row.style.width = `${W}px`;
-  row.style.height = `${H}px`;
+  const slots = Math.round(Math.abs(b - a) / fr.width);
+  // Ruhegröße = Markierung, aufgebläht etwas breiter und über die Leiste hinaus
+  const w0 = fr.width;
+  const h0 = fr.height;
+  const w1 = fr.width * 1.18;
+  const h1 = H + 16;
+  lensSource();
 
-  // Ablauf wie unter iOS 26: aufspringen (0–12 %), gleiten mit sanftem An- und Auslauf und leichtem Ausholen,
-  // gedehnt nach Geschwindigkeit (12–58 %), beim Ankommen wie ein Tropfen nachwackeln (58–80 %), in die Markierung
-  // übergehen (80–100 %)
-  const pop = (u) => 1 + 2.2 * Math.pow(u - 1, 3) + 1.2 * Math.pow(u - 1, 2); // easeOutBack
-  const glide = (u) => {
-    const c = 0.8 * 1.525; // easeInOutBack, leicht
-    return u < 0.5 ? (Math.pow(2 * u, 2) * ((c + 1) * 2 * u - c)) / 2 : (Math.pow(2 * u - 2, 2) * ((c + 1) * (u * 2 - 2) + c) + 2) / 2;
-  };
-  const N = 60;
-  const lensFrames = [];
-  const rowFrames = [];
-  let prev = a;
-  for (let k = 0; k <= N; k++) {
-    const t = k / N;
-    const move = t < 0.12 ? 0 : t < 0.58 ? glide((t - 0.12) / 0.46) : 1;
-    // Beim Ausholen nicht über die Kapsel hinaus
-    const x = Math.min(W - w / 2 + 4, Math.max(w / 2 - 4, a + (b - a) * move));
-    const v = (Math.abs(x - prev) / Math.max(1, Math.abs(b - a))) * N * 0.46; // relative Geschwindigkeit
-    prev = x;
-    let base = t < 0.12 ? 0.82 + 0.26 * pop(t / 0.12) : 1.08;
-    let wob = 0;
-    if (t >= 0.58 && t < 0.8) {
-      const u = (t - 0.58) / 0.22;
-      wob = 0.07 * Math.exp(-3.5 * u) * Math.sin(u * Math.PI * 3);
-    }
-    const shrink = t > 0.8 ? (t - 0.8) / 0.2 : 0;
-    base *= 1 - 0.18 * shrink * shrink;
-    const sx = base * (1 + Math.min(0.38, v * 0.16) + wob);
-    const sy = base * (1 - Math.min(0.14, v * 0.06) - wob * 0.8);
-    const opacity = Math.min(1, t / 0.06) * (1 - shrink * shrink);
-    lensFrames.push({ offset: t, opacity, transform: `translate3d(${x - w / 2}px, 0, 0) scale(${sx}, ${sy})` });
-    // Kopie der Symbole so legen, dass sie unter der Linsenmitte deckungsgleich ist, um LENS_MAG vergrößert
-    const mx = LENS_MAG / sx;
-    const my = LENS_MAG / sy;
-    rowFrames.push({ offset: t, transform: `translate3d(${w / 2 - mx * x}px, ${h / 2 - my * (H / 2)}px, 0) scale(${mx}, ${my})` });
-  }
-  const opts = { duration: LENS_MS, easing: 'linear', fill: 'both' };
-  lens.getAnimations().forEach((an) => an.cancel());
-  row.getAnimations().forEach((an) => an.cancel());
+  // Zeiten (ms) wie in den Aufnahmen: aufblähen, gleiten (je weiter, desto länger), kurz halten, schrumpfen und
+  // verblassen, während die Markierung am Ziel erscheint
+  const T_GROW = 80;
+  const T_MOVE = 150 + 50 * slots;
+  const T_HOLD = 40;
+  const T_SETTLE = 170;
+  const total = T_GROW + T_MOVE + T_HOLD + T_SETTLE;
+  const easeOut = (u) => 1 - Math.pow(1 - u, 3);
+  // Gleiten: zügig los, sanft ankommen, kaum Überschwingen (easeOutBack, schwach)
+  const glide = (u) => 1 + 1.8 * Math.pow(u - 1, 3) + 0.8 * Math.pow(u - 1, 2);
+  const at = (ms) => a + (b - a) * glide(Math.min(1, Math.max(0, (ms - T_GROW * 0.5) / T_MOVE)));
+
+  cancelAnimationFrame(animateTabLens.raf);
   caps.classList.add('lens-moving');
-  lens.animate(lensFrames, opts);
-  row.animate(rowFrames, opts);
-  // Die Markierung blendet ein, während die Linse in sie übergeht
+  lensBusyUntil = performance.now() + total;
   clearTimeout(animateTabLens.timer);
-  animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), LENS_MS * 0.8);
+  // Die Markierung blendet ein, sobald die Linse am Ziel schrumpft
+  animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), T_GROW + T_MOVE + T_HOLD);
+  const start = performance.now();
+  const frame = (now) => {
+    const ms = Math.min(total, now - start);
+    const x = at(ms);
+    const v = Math.abs(at(ms + 8) - at(ms - 8)) / 16 / w0; // Markierungsbreiten je ms
+    const grow = easeOut(Math.min(1, ms / T_GROW));
+    const settle = Math.min(1, Math.max(0, (ms - T_GROW - T_MOVE - T_HOLD) / T_SETTLE));
+    const size = grow * (1 - easeOut(settle)); // 0 = Markierung, 1 = aufgebläht
+    const stretch = Math.min(0.3, v * 22);
+    const lw = (w0 + (w1 - w0) * size) * (1 + stretch);
+    const lh = (h0 + (h1 - h0) * size) * (1 - stretch * 0.35);
+    lens.style.cssText = `opacity:${Math.min(1, ms / 30) * (1 - easeOut(settle))};left:${x - lw / 2}px;top:${(H - lh) / 2}px;width:${lw}px;height:${lh}px`;
+    lensPaint(canvas, x, lw, lh, H);
+    // Loch in den echten Symbolen, so groß wie die Linse; beim Verblassen schrumpft es mit
+    const hole = 1 - settle;
+    tabRow.style.setProperty('--lens-x', `${x}px`);
+    tabRow.style.setProperty('--lens-rx', `${(lw / 2 + 1) * hole}px`);
+    tabRow.style.setProperty('--lens-ry', `${(lh / 2 + 1) * hole}px`);
+    if (ms < total) animateTabLens.raf = requestAnimationFrame(frame);
+    else tabRow.style.setProperty('--lens-x', '-500px');
+  };
+  frame(start);
+  return T_GROW + T_MOVE;
 }
 
 /** Kurzer Vibrations-Tick, wo es navigator.vibrate gibt (Android); auf dem iPhone tickt HAPTIC_SWITCH */
@@ -5508,27 +5604,27 @@ function haptic() {
 
 // ───────────────────────── Glas der Leiste: Spiegelung am Rand ─────────────────────────
 // Wie die Glasleiste unter iOS 26: Die Mitte ist klares Glas (backdrop-filter). Im Streifen am Rand erscheint der Inhalt
-// hinter der Leiste kopfüber und gestaucht: Inhalt hinter der Mitte als dünner Strich ganz außen, Inhalt, der zum Rand
-// wandert, rückt im Spiegelbild nach innen und verschmilzt an der Innenkante des Streifens mit sich selbst. Gespiegelt wird
-// an einer Linie parallel zur Tangente des Randes (Innenkante des Streifens): oben und unten gerade, an den runden Enden in
-// je drei Abschnitten. Safari kann den Hintergrund nicht spiegeln; darum liegen gespiegelte Kopien
-// der Seite in der Kapsel. Mitgescrollt werden sie über eine an die Scrollposition gekoppelte Animation
-// (animation-timeline, ab iOS 26, Grafikkarte), beim Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
+// hinter der Leiste kopfüber: an der Innenkante des Streifens wenig gestaucht (dort verschmilzt er mit sich selbst), zum
+// Rand hin immer stärker, bis Inhalt hinter der Mitte der Leiste nur noch ein Strich am Rand ist. Umgesetzt mit zwei
+// Teilstreifen je Randabschnitt, jeder eine an der Tangente gespiegelte und gestauchte Kopie der Seite; die Stauchungen
+// schließen nahtlos aneinander an. Oben und unten gerade, an den runden Enden je eine Ebene. Mitgescrollt
+// werden die Kopien über eine an die Scrollposition gekoppelte Animation (animation-timeline, ab iOS 26, Grafikkarte);
+// beim Nachfedern am Seitenanfang/-ende per Skript.
 
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
-const GLASS_BAND = 12; // Breite des Spiegelstreifens am Rand (px)
-// Stauchung: der Streifen zeigt den Inhalt von seiner Innenkante bis zur Mitte der Kapsel (bei 56 px Höhe: 0,75)
-const glassK = (H) => GLASS_BAND / (H / 2 - GLASS_BAND);
-// Abschnitte: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn) und welches Ende (l/r) bzw. gerade Kante
-const GLASS_PARTS = [
-  { side: 'top', deg: 0 },
-  { side: 'bottom', deg: 180 },
-  { side: 'l', deg: 225 },
-  { side: 'l', deg: 270 },
-  { side: 'l', deg: 315 },
-  { side: 'r', deg: 45 },
-  { side: 'r', deg: 90 },
-  { side: 'r', deg: 135 },
+const GLASS_BAND = 11; // Breite des Spiegelstreifens am Rand (px)
+const GLASS_SPLIT = 4.5; // Grenze zwischen innerem (wenig gestaucht) und äußerem Teilstreifen (stark gestaucht)
+const GLASS_K1 = 0.55; // Stauchung innen
+const GLASS_K_END = 0.55; // Stauchung an den runden Enden
+// Ebenen: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn), Kante (oben/unten gerade, l/r rundes Ende) und
+// Teilstreifen (0 innen, 1 außen; −1 = ganzer Streifen). Wenige Ebenen – jede ist eine ganze Kopie der Seite.
+const GLASS_LAYERS = [
+  { side: 'top', deg: 0, sub: 0 },
+  { side: 'top', deg: 0, sub: 1 },
+  { side: 'bottom', deg: 180, sub: 0 },
+  { side: 'bottom', deg: 180, sub: 1 },
+  { side: 'l', deg: 270, sub: -1 },
+  { side: 'r', deg: 90, sub: -1 },
 ];
 const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0, dirty: false };
 
@@ -5536,8 +5632,8 @@ function glassBar() {
   const caps = document.querySelector('#tabbar .tab-caps');
   caps.insertAdjacentHTML(
     'afterbegin',
-    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${GLASS_PARTS.map(
-      () => '<div class="glass-layer"><div class="glass-copy"><div class="glass-bounce"><div class="glass-scroll"></div></div></div></div>'
+    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${GLASS_LAYERS.map(
+      () => '<div class="glass-layer"><div class="glass-copy"><div class="glass-scroll"></div></div></div>'
     ).join('')}</div>`
   );
   glass.caps = caps;
@@ -5547,7 +5643,8 @@ function glassBar() {
   // Seite geändert: Kopien erneuern, sobald es kurz ruhig ist (nicht, solange die Leiste beim Tippen fehlt)
   new MutationObserver(() => {
     clearTimeout(glass.timer);
-    glass.timer = setTimeout(glassClone, 60);
+    // nicht während die Linse läuft (sonst stockt sie)
+    glass.timer = setTimeout(glassClone, Math.max(60, lensBusyUntil - performance.now() + 40));
   }).observe(app, { subtree: true, childList: true, characterData: true, attributes: true });
   addEventListener('resize', () => {
     glass.key = '';
@@ -5574,29 +5671,36 @@ function glassClone() {
   for (const k of ['paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'maxWidth', 'marginLeft', 'marginRight', 'boxSizing']) c.style[k] = cs[k];
   c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
   c.setAttribute('inert', '');
+  // Teile der Kopie fern der Leiste zeichnet Safari nicht (content-visibility); die gemessene Größe hält die Lage gleich
+  const orig = [...app.children];
+  [...c.children].forEach((el, i) => {
+    const o = orig[i];
+    if (!o || getComputedStyle(o).position === 'fixed') return;
+    el.style.contentVisibility = 'auto';
+    el.style.containIntrinsicSize = `${o.offsetWidth}px ${o.offsetHeight}px`;
+  });
   glass.layers.forEach((l, i) => l.querySelector('.glass-scroll').replaceChildren(i ? c.cloneNode(true) : c));
   glass.key = '';
   glassPlace();
 }
 
-/** Maske eines Abschnitts: Streifen am Rand, zur Mitte auslaufend; an den Enden auf einen Winkelbereich begrenzt */
-function glassMask(part, W, H) {
+/** Maske eines Teilstreifens (Abstand u0–u1 vom Rand nach innen gemessen: 0 = Rand); an den Enden auf einen
+ *  Winkelbereich begrenzt. Ganz außen läuft die Spiegelung etwas aus. */
+function glassMask(part, W, H, u0, u1) {
   const r = H / 2;
-  const B = GLASS_BAND;
   const f = 6; // weicher Übergang zwischen Abschnitten
+  const e = 0.6; // weiche Kante zwischen Teilstreifen
+  const fade = (d) => (d < 1.5 ? 0.55 : 1); // am äußersten Rand schwächer
   if (part.side === 'top' || part.side === 'bottom') {
     const dir = part.side === 'top' ? '180deg' : '0deg';
-    return {
-      image: `linear-gradient(${dir}, #000, rgba(0,0,0,.45) ${B * 0.4}px, transparent ${B}px), linear-gradient(90deg, transparent ${r - f}px, #000 ${r + f}px, #000 ${W - r - f}px, transparent ${W - r + f}px)`,
-      composite: 'intersect',
-    };
+    const band = `linear-gradient(${dir}, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${Math.max(0, u0 - e)}px, rgba(0,0,0,${fade(u0)}) ${u0 + e}px, #000 ${u1 - e}px, transparent ${u1 + e}px)`;
+    return `${band}, linear-gradient(90deg, transparent ${r - f}px, #000 ${r + f}px, #000 ${W - r - f}px, transparent ${W - r + f}px)`;
   }
   const cx = part.side === 'l' ? r : W - r;
-  const ring = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - B}px, rgba(0,0,0,.45) ${r - B * 0.6}px, #000 ${r}px)`;
-  // Winkelbereich um die Normale (±22,5°), weich auslaufend
+  const ring = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - u1 - e}px, #000 ${r - u1 + e}px, rgba(0,0,0,${fade(u0)}) ${r - u0 - e}px, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${r - u0 + e}px)`;
   const a = part.deg;
-  const sector = `conic-gradient(from ${a - 30}deg at ${cx}px ${r}px, transparent 0deg, #000 15deg, #000 45deg, transparent 60deg, transparent 360deg)`;
-  return { image: `${ring}, ${sector}`, composite: 'intersect' };
+  const sector = `conic-gradient(from ${a - 95}deg at ${cx}px ${r}px, transparent 0deg, #000 15deg, #000 175deg, transparent 190deg, transparent 360deg)`;
+  return `${ring}, ${sector}`;
 }
 
 /** Kopien an der Tangente des jeweiligen Randabschnitts spiegeln und stauchen (Lage bei Scrollposition 0) */
@@ -5616,47 +5720,61 @@ function glassPlace() {
   const W = cr.width;
   const H = cr.height;
   const r = H / 2;
+  const B = GLASS_BAND;
+  // Innenkante des Streifens = Spiegelachse. Inhalt s px innerhalb davon erscheint im Streifen bei u (von der Innenkante
+  // nach außen): innen u = k1·s bis zur Grenze, danach u = a2 + k2·s – so liegt Inhalt hinter der Mitte der Leiste knapp
+  // am Rand.
+  const s1 = GLASS_SPLIT / GLASS_K1;
+  const k2 = (B - 1.2 - GLASS_SPLIT) / Math.max(4, r - B - s1);
+  const a2 = GLASS_SPLIT - k2 * s1;
   const move = `translate(${ar.left - cr.left}px, ${top - cr.top}px)`;
   layers.forEach((l, i) => {
-    const part = GLASS_PARTS[i];
-    const m = glassMask(part, W, H);
-    l.style.webkitMaskImage = l.style.maskImage = m.image;
+    const part = GLASS_LAYERS[i];
+    const inner = part.sub === 0;
+    const whole = part.sub < 0;
+    const img = glassMask(part, W, H, whole ? 0 : inner ? B - GLASS_SPLIT : 0, whole || inner ? B : B - GLASS_SPLIT);
+    l.style.webkitMaskImage = l.style.maskImage = img;
     l.style.webkitMaskComposite = 'source-in';
-    l.style.maskComposite = m.composite;
-    // Randnormale n (nach außen) und Punkt T auf der Innenkante des Streifens; Spiegelung mit Stauchung um T:
-    // A = I − (1 + k)·n·nᵀ – Inhalt weiter innen erscheint gestaucht weiter außen
+    l.style.maskComposite = 'intersect';
+    // Randnormale n (nach außen) und Punkt T auf der Innenkante des Streifens
     const rad = (part.deg * Math.PI) / 180;
     const n = [Math.sin(rad), -Math.cos(rad)];
-    const B = GLASS_BAND;
     const T =
       part.side === 'top'
         ? [W / 2, B]
         : part.side === 'bottom'
           ? [W / 2, H - B]
           : [(part.side === 'l' ? r : W - r) + (r - B) * n[0], r + (r - B) * n[1]];
-    const q = 1 + glassK(H);
+    // p ↦ T + (a + k·s)·n mit s = (T − p)·n  ⇒  A = I − (1 + k)·n·nᵀ, Verschiebung (1 + k)(T·n)·n + a·n
+    const k = whole ? GLASS_K_END : inner ? GLASS_K1 : k2;
+    const off = whole || inner ? 0 : a2;
+    const q = 1 + k;
     const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
-    const e = T[0] - (A[0] * T[0] + A[2] * T[1]);
-    const g = T[1] - (A[1] * T[0] + A[3] * T[1]);
+    const tn = T[0] * n[0] + T[1] * n[1];
+    const ex = (q * tn + off) * n[0];
+    const ey = (q * tn + off) * n[1];
     const copy = l.firstChild;
     copy.style.width = `${ar.width}px`;
-    copy.style.transform = `matrix(${A.map((v) => v.toFixed(4)).join(',')},${e.toFixed(2)},${g.toFixed(2)}) ${move}`;
+    copy.style.transform = `matrix(${A.map((v) => v.toFixed(5)).join(',')},${ex.toFixed(2)},${ey.toFixed(2)}) ${move}`;
   });
   glassScroll();
 }
-/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur das Nachfedern am Seitenanfang/-ende. Gemessen wird die
- *  tatsächliche Lage der Seite (nicht scrollY, das Safari beim Federn nicht immer bis zuletzt meldet); solange die Seite
- *  federt, wird in jedem Bild nachgeprüft, bis sie wieder ruht. */
+/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur beim Nachfedern am Seitenanfang/-ende: dann ist die an
+ *  die Scrollposition gekoppelte Animation abgeschaltet und das Skript führt die Kopien. Gemessen wird die tatsächliche
+ *  Lage der Seite (nicht scrollY); solange die Seite federt, wird in jedem Bild nachgeprüft, bis sie wieder ruht. */
 function glassScroll() {
   if (!glass.caps) return;
   const y = glass.top - app.getBoundingClientRect().top; // wie weit die Seite verschoben ist
-  const off = GLASS_TIMELINE ? (y < 0 ? y : y > glass.max ? y - glass.max : 0) : Math.max(0, y);
-  if (off !== glass.bounce) {
-    glass.bounce = off;
-    const t = `translate3d(0, ${-off}px, 0)`;
-    glass.layers.forEach((l) => (l.querySelector('.glass-bounce').style.transform = t));
+  const bouncing = y < -0.5 || y > glass.max + 0.5;
+  const manual = !GLASS_TIMELINE || bouncing;
+  const pos = manual ? Math.round(y * 2) / 2 : null;
+  if (pos !== glass.bounce) {
+    glass.bounce = pos;
+    glass.clip.classList.toggle('manual', GLASS_TIMELINE && bouncing);
+    const t = manual ? `translate3d(0, ${-pos}px, 0)` : '';
+    glass.layers.forEach((l) => (l.querySelector('.glass-scroll').style.transform = t));
   }
-  if (off && !glass.polling) {
+  if (bouncing && !glass.polling) {
     glass.polling = true;
     requestAnimationFrame(() => {
       glass.polling = false;
@@ -5675,6 +5793,9 @@ document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 route();
 tabLens();
 glassBar();
+// Vorlage der Linse vorab zeichnen, damit das erste Umschalten nicht stockt
+setTimeout(() => document.querySelector('#tabbar .tab-caps').offsetWidth && lensSource(), 800);
+
 fetchReports();
 document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && fetchReports());
 
