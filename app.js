@@ -5416,7 +5416,7 @@ document.addEventListener('contextmenu', (e) => {
 // sie bleibt flüssig, auch während die neue Seite aufgebaut wird.
 
 const LENS_MAG = 1.22; // Vergrößerung unter der Linse
-const LENS_MS = 760;
+const LENS_MS = 990;
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5490,27 +5490,23 @@ function haptic() {
   if (navigator.vibrate) navigator.vibrate(8);
 }
 
-// ───────────────────────── Glas der Leiste: durchsichtig mit Lichtbrechung ─────────────────────────
-// Safari kann den Hintergrund hinter einem Element nicht verzerren. Darum liegen Kopien der Seite in der Kapsel: die
-// Mitte unverändert, zum Rand hin Ringe, deren Kopie immer stärker gestreckt ist (gebogenes Glas holt Inhalt von außen
-// herein). Mitgescrollt werden die Kopien über eine an die Scrollposition gekoppelte Animation (animation-timeline,
-// ab iOS 26) – das rechnet die Grafikkarte im selben Takt wie die Seite, ohne Skript. Ältere Geräte: Scroll-Ereignis.
+// ───────────────────────── Glas der Leiste: Spiegelung am Rand ─────────────────────────
+// Wie die Glasleiste unter iOS 26: Die Mitte ist leicht milchiges Glas (backdrop-filter), am oberen und unteren Rand
+// spiegelt sich der Inhalt direkt über bzw. unter der Leiste kopfüber hinein, verwischt und zur Mitte hin auslaufend.
+// Safari kann den Hintergrund nicht spiegeln; darum liegen zwei gespiegelte Kopien der Seite in der Kapsel. Mitgescrollt
+// werden sie über eine an die Scrollposition gekoppelte Animation (animation-timeline, ab iOS 26, Grafikkarte), beim
+// Nachfedern am Seitenanfang/-ende zusätzlich per Scroll-Ereignis.
 
-// Ringe von innen nach außen: Abstand zum Rand (px), ab dem der Ring beginnt, und Verschiebung am Ring (px)
-const GLASS_RINGS = [
-  [17, 1.5],
-  [11.5, 4],
-  [6.5, 7.5],
-  [2.5, 12],
-];
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
-const glass = { caps: null, clip: null, layers: [], key: '', timer: 0 };
+const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0 };
 
 function glassBar() {
   const caps = document.querySelector('#tabbar .tab-caps');
   caps.insertAdjacentHTML(
     'afterbegin',
-    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${'<div class="glass-layer"><div class="glass-copy"><div class="glass-scroll"></div></div></div>'.repeat(GLASS_RINGS.length + 1)}</div>`
+    `<div class="glass-clip${GLASS_TIMELINE ? ' timeline' : ''}" aria-hidden="true">${['top', 'bottom']
+      .map((e) => `<div class="glass-layer ${e}"><div class="glass-copy"><div class="glass-bounce"><div class="glass-scroll"></div></div></div></div>`)
+      .join('')}</div>`
   );
   glass.caps = caps;
   glass.clip = caps.querySelector('.glass-clip');
@@ -5525,19 +5521,9 @@ function glassBar() {
     glass.key = '';
     glassPlace();
   });
-  if (!GLASS_TIMELINE) addEventListener('scroll', glassScroll, { passive: true });
+  addEventListener('scroll', glassScroll, { passive: true });
   // Nach dem Tippen kommt die Leiste wieder
   document.addEventListener('focusout', () => requestAnimationFrame(glassPlace));
-}
-
-/** Maske „innerhalb von d px vom Kapselrand“ aus CSS-Verläufen (SVG-Masken zeigt Safari hier nicht):
- *  oben/unten ein Streifen über die ganze Breite, an den runden Enden je ein Kreisring */
-function glassRingMask(h, d) {
-  const r = h / 2;
-  const s = 2.5;
-  const band = `linear-gradient(180deg, #000 ${d - s}px, transparent ${d + s}px, transparent ${h - d - s}px, #000 ${h - d + s}px)`;
-  const ring = (x) => `radial-gradient(circle at ${x}px 50%, transparent ${r - d - s}px, #000 ${r - d + s}px)`;
-  return { image: `${band}, ${ring(r)}, ${ring(0)}`, size: `100% 100%, ${r}px 100%, ${r}px 100%`, position: '0 0, 0 0, 100% 0' };
 }
 
 function glassClone() {
@@ -5553,7 +5539,7 @@ function glassClone() {
   glassPlace();
 }
 
-/** Kopien unter die Kapsel legen (Lage bei Scrollposition 0) und die Ringe um die Kapselmitte strecken */
+/** Kopien an der Ober- bzw. Unterkante der Kapsel spiegeln (Lage bei Scrollposition 0) */
 function glassPlace() {
   const { caps, clip, layers } = glass;
   if (!caps || !caps.offsetWidth) return;
@@ -5564,29 +5550,25 @@ function glassPlace() {
   const key = `${cr.left},${cr.top},${cr.width},${cr.height},${ar.left},${ar.width},${top},${max}`;
   if (key === glass.key) return;
   glass.key = key;
-  clip.style.clipPath = `inset(0 round ${cr.height / 2}px)`;
+  glass.max = max;
   clip.style.setProperty('--glass-max', `${-max}px`);
-  const cx = cr.width / 2;
-  const cy = cr.height / 2;
+  const move = `translate(${ar.left - cr.left}px, ${top - cr.top}px)`;
   layers.forEach((l, i) => {
-    if (i) {
-      const m = glassRingMask(cr.height, GLASS_RINGS[i - 1][0]);
-      l.style.webkitMaskImage = l.style.maskImage = m.image;
-      l.style.webkitMaskSize = l.style.maskSize = m.size;
-      l.style.webkitMaskPosition = l.style.maskPosition = m.position;
-      l.style.webkitMaskRepeat = l.style.maskRepeat = 'no-repeat';
-    }
-    const off = i ? GLASS_RINGS[i - 1][1] : 0;
     const copy = l.firstChild;
     copy.style.width = `${ar.width}px`;
-    copy.style.transform = `translate(${cx}px, ${cy}px) scale(${1 + off / cx}, ${1 + off / cy}) translate(${ar.left - cr.left - cx}px, ${top - cr.top - cy}px)`;
+    // oben: an y = 0 spiegeln, unten: an y = Höhe der Kapsel
+    copy.style.transform = `translate(0, ${i ? 2 * cr.height : 0}px) scale(1, -1) ${move}`;
   });
-  if (!GLASS_TIMELINE) glassScroll();
+  glassScroll();
 }
-/** Nur ohne animation-timeline: Kopien per Skript mitschieben */
+/** Ohne animation-timeline die ganze Scrollbewegung, sonst nur das Nachfedern (scrollY unter 0 bzw. über dem Ende) */
 function glassScroll() {
-  const y = `translate3d(0, ${-Math.max(0, scrollY)}px, 0)`;
-  glass.layers.forEach((l) => (l.firstChild.firstChild.style.transform = y));
+  const y = scrollY;
+  const off = GLASS_TIMELINE ? (y < 0 ? y : y > glass.max ? y - glass.max : 0) : Math.max(0, y);
+  if (off === glass.bounce) return;
+  glass.bounce = off;
+  const t = `translate3d(0, ${-off}px, 0)`;
+  glass.layers.forEach((l) => (l.querySelector('.glass-bounce').style.transform = t));
 }
 
 // ───────────────────────── Start ─────────────────────────

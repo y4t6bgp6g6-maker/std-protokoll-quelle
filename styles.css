@@ -31,7 +31,7 @@
   --off-ink: #5f6862;
   --mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
   /* Leiste unten: schwebende Kapsel, Abstand zum unteren Rand; --tab-h = Platz, den sie unten belegt */
-  --tab-bottom: max(12px, calc(env(safe-area-inset-bottom) - 12px));
+  --tab-bottom: max(10px, calc(env(safe-area-inset-bottom) - 14px));
   --tab-h: calc(var(--tab-bottom) + 64px);
   color-scheme: light;
 }
@@ -1208,21 +1208,30 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
 }
 :root[data-theme='dark'] .tab-caps { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); }
-/* Durchsichtiges Glas: Kopien der Seite (glassBar in app.js) */
-.glass-clip { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; border-radius: inherit; background: var(--bg); }
-.glass-layer { position: absolute; inset: 0; }
-.glass-layer:nth-child(n + 4) { filter: blur(0.4px); }
-.glass-layer:last-child { filter: blur(0.5px) saturate(1.35) brightness(1.08); }
+/* Glas: Mitte leicht milchig (Safaris Glasfilter), am Rand gespiegelte Kopien der Seite (glassBar in app.js) */
+.glass-clip {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--card) 12%, transparent);
+  -webkit-backdrop-filter: blur(2.5px) saturate(1.5);
+  backdrop-filter: blur(2.5px) saturate(1.5);
+}
+.glass-layer { position: absolute; inset: 0; filter: blur(1.4px) saturate(1.4); }
+/* gespiegelter Inhalt nur nah am Rand, zur Mitte hin auslaufend */
+.glass-layer.top { -webkit-mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.6) 7px, transparent 19px); mask-image: linear-gradient(180deg, #000 0, rgba(0, 0, 0, 0.6) 7px, transparent 19px); }
+.glass-layer.bottom { -webkit-mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.6) 6px, transparent 16px); mask-image: linear-gradient(0deg, #000 0, rgba(0, 0, 0, 0.6) 6px, transparent 16px); }
 .glass-copy { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
-.glass-scroll { will-change: transform; }
+.glass-bounce, .glass-scroll { will-change: transform; }
 /* An die Scrollposition gekoppelt: von 0 bis ganz unten um die Seitenhöhe nach oben */
 .glass-clip.timeline .glass-scroll { animation: glass-scroll linear both; animation-timeline: scroll(root block); }
 @keyframes glass-scroll {
   from { transform: translate3d(0, 0, 0); }
   to { transform: translate3d(0, var(--glass-max, 0px), 0); }
 }
-/* Kein Nachfedern am Seitenanfang/-ende: das Glas könnte der federnden Seite nicht folgen */
-html:has(body.tabs) { overscroll-behavior-y: none; }
 /* Lichtkante und leichter Schimmer über dem Glas */
 .tab-caps::after {
   content: '';
@@ -1240,7 +1249,13 @@ html:has(body.tabs) { overscroll-behavior-y: none; }
 }
 .tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 27px; color: var(--text); font-size: 11px; font-weight: 600; }
 .tab svg { width: 24px; height: 24px; }
-.tab.on { color: var(--accent); font-weight: 700; background: color-mix(in srgb, var(--text) 9%, transparent); }
+.tab.on {
+  color: var(--accent);
+  font-weight: 700;
+  background: color-mix(in srgb, var(--text) 13%, transparent);
+  -webkit-backdrop-filter: blur(6px) saturate(1.3);
+  backdrop-filter: blur(6px) saturate(1.3);
+}
 /* „+“ größer, steht oben etwas aus der Kapsel heraus */
 .tab-add {
   position: relative;
@@ -1272,10 +1287,10 @@ html:has(body.tabs) { overscroll-behavior-y: none; }
   pointer-events: none;
   transform-origin: 50% 50%;
   will-change: transform, opacity;
-  background: color-mix(in srgb, var(--card) 30%, transparent);
-  /* verwischt die Symbole darunter, damit nur die vergrößerten zu sehen sind */
-  -webkit-backdrop-filter: blur(5px);
-  backdrop-filter: blur(5px);
+  background: color-mix(in srgb, var(--card) 62%, transparent);
+  /* verdeckt die Symbole darunter, damit am Rand keine Dopplungen entstehen – zu sehen sind nur die vergrößerten */
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  backdrop-filter: blur(14px) saturate(1.4);
   box-shadow: inset 1.5px 1.5px 1px rgba(255, 255, 255, 0.75), inset -1.5px -1.5px 1px rgba(255, 255, 255, 0.45),
     inset 3px 0 3px -1px rgba(90, 220, 255, 0.35), inset -3px 0 3px -1px rgba(255, 120, 220, 0.3), 0 4px 14px rgba(0, 0, 0, 0.18);
 }
