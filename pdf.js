@@ -232,8 +232,9 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
     const tops = hs.map((_, k) => y + hs.slice(0, k).reduce((a, b) => a + b, 0));
     const h = hs.reduce((a, b) => a + b, 0);
     const active = sheetIsActive(sheet, i);
-    const status = active ? day.status : null;
-    const hw = active && holidayWork(day);
+    // Sa/So: Feiertag erscheint nicht im PDF, der Tag steht dort wie ein normaler Arbeitstag
+    const status = active && i < 5 ? day.status : null;
+    const hw = active && i < 5 && holidayWork(day);
     dayTops.push(y);
 
     doc.fill(xs[0], y, xs[1] - xs[0], h, 0.87);

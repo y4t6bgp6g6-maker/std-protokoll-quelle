@@ -897,7 +897,10 @@ function parsedToSheets(parsed, fileName) {
   }
   let result = parts.filter((x) => sheetActiveDays(x).some((k) => filled.has(k)));
   if (!result.length) result = parts.filter((x) => x.year === s.year && x.month === s.month);
-  result.forEach(markHolidays);
+  result.forEach((x) => {
+    markHolidays(x);
+    fixWeekend(x);
+  });
   return result;
 }
 

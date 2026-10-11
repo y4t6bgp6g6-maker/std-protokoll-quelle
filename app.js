@@ -114,13 +114,12 @@ const dayHasWarning = (d) =>
 const emptySentWorkday = (s, i) =>
   !!s.sentAt && i < 5 && !s.days[i].status && !dayStarted(s.days[i]) && !holidayName(sheetDate(s, i));
 /** Warnzeichen für einen Tag des Zettels: unvollständige Angaben oder leerer Werktag im gesendeten Zettel */
-/** Tagesart passt nicht zum Kalender: Feiertag an einem Tag ohne Feiertag, Sa/So mit anderer Tagesart, erkannter Feiertag (Mo–Fr) mit anderer Tagesart */
+/** Tagesart passt nicht zum Kalender (Mo–Fr): Feiertag an einem Tag ohne Feiertag, erkannter Feiertag mit anderer Tagesart */
 const statusWarning = (s, i) => {
   const d = s.days[i];
-  if (!sheetIsActive(s, i)) return '';
+  if (!sheetIsActive(s, i) || i >= 5) return '';
   const holiday = holidayName(sheetDate(s, i));
   if (d.status === 'feiertag') return holiday ? '' : 'kein gesetzlicher Feiertag';
-  if (i >= 5) return d.status ? `${DAY_STATUS_SHORT[d.status]} am Wochenende` : '';
   return holiday ? `${holiday} nicht als Feiertag eingetragen` : '';
 };
 const statusWarnHTML = (s, i) => (statusWarning(s, i) ? ` <span class="day-warn" aria-label="Tagesart prüfen">⚠️</span>` : '');
@@ -221,6 +220,8 @@ delete settings.prorateTarget;
 delete settings.credit;
 delete settings.overtime;
 settings.minuteStep = 30; // Zeitauswahl immer in 30-Minuten-Schritten
+// Sa/So: keine wählbare Tagesart mehr (nur automatisch eingetragene Feiertage)
+if (sheets.map(fixWeekend).some(Boolean)) saveSheets();
 
 /** Urlaubs- und Krankheitstage je Jahr (nach Datum des Tages) */
 function absenceStats() {
@@ -905,10 +906,26 @@ function askPayslipMonth(month, done, year = null, chosen = false) {
 /** „+3,50 h“ / „−2,00 h“ */
 const fmtSigned = (min) => (min > 0 ? '+' : min < 0 ? '−' : '') + fmtH(Math.abs(min));
 
+/** Sa/So: Tagesart lässt sich nicht wählen – nur ein Feiertag, den die App selbst einträgt (zählt 0 Stunden, im PDF wie Arbeit).
+ *  Andere Tagesarten (aus älteren Fassungen oder eingelesenen Dateien) werden entfernt. true = geändert */
+function fixWeekend(s) {
+  let changed = false;
+  for (const i of [5, 6]) {
+    const d = s.days[i];
+    if (d.status && !(d.status === 'feiertag' && holidayName(sheetDate(s, i)))) {
+      delete d.status;
+      changed = true;
+    }
+  }
+  const before = s.days.slice(5).map((d) => d.status).join();
+  markHolidays(s, true);
+  return changed || before !== s.days.slice(5).map((d) => d.status).join();
+}
+
 /** Feiertage eines Zettels als „Feiertag“ markieren, nur an Tagen ohne Einträge (Sa/So zählen dann 0 Stunden) */
-function markHolidays(s) {
+function markHolidays(s, weekendOnly) {
   s.days.forEach((d, i) => {
-    if (!sheetIsActive(s, i) || d.status || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
+    if ((weekendOnly && i < 5) || !sheetIsActive(s, i) || d.status || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
     if (holidayName(sheetDate(s, i))) d.status = 'feiertag';
   });
 }
@@ -2525,9 +2542,9 @@ function dayHTML(s, i) {
   const date = sheetDate(s, i);
   const head = `<div class="day-head">
       <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}</div>
-      <div class="day-actions">
+      ${i < 5 ? `<div class="day-actions">
         <button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>
-      </div>
+      </div>` : ''}
     </div>`;
   if (dayCollapsed(s, i)) {
     return `<section class="day collapsed wd-${i}" data-day="${i}">
@@ -2555,7 +2572,9 @@ function dayHTML(s, i) {
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
         <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
-        <button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))} ▾</button>
+        ${i < 5
+          ? `<button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))} ▾</button>`
+          : `<span class="chip-btn status-btn set status-tag">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))}</span>`}
       </div>
       ${extra}
     </section>`;
@@ -2568,6 +2587,7 @@ function dayHTML(s, i) {
 
 function chooseStatus(btn) {
   const { s, dayIndex, day } = rowContext(btn);
+  if (dayIndex >= 5) return;
   const set = (status) => {
     if (status) day.status = status;
     else delete day.status;
@@ -4032,6 +4052,7 @@ function mergeBackup(data) {
   const myName = settings.name.trim();
   let renamed = 0;
   for (const s of incoming) {
+    fixWeekend(s);
     // Eigener Name aus den Einstellungen statt des Namens in der Sicherung
     if (myName && s.name !== myName) {
       s.name = myName;
