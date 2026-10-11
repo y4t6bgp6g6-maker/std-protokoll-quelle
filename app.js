@@ -5421,8 +5421,8 @@ document.addEventListener('contextmenu', (e) => {
 // Web Animations API.
 
 const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
-const LENS_EDGE = 0.45; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
-const LENS_CHROMA = 0.05; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
+const LENS_EDGE = 0.3; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
+const LENS_CHROMA = 0.022; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
 
 function tabLens() {
   const caps = document.querySelector('#tabbar .tab-caps');
@@ -5548,20 +5548,20 @@ function animateTabLens(from, to) {
   // Ruhegröße = Markierung, aufgebläht etwas breiter und über die Leiste hinaus
   const w0 = fr.width;
   const h0 = fr.height;
-  const w1 = fr.width * 1.18;
-  const h1 = H + 16;
+  const w1 = fr.width * 1.06;
+  const h1 = H + 8;
   lensSource();
 
   // Zeiten (ms) wie in den Aufnahmen: aufblähen, gleiten (je weiter, desto länger), kurz halten, schrumpfen und
   // verblassen, während die Markierung am Ziel erscheint
-  const T_GROW = 80;
-  const T_MOVE = 150 + 50 * slots;
-  const T_HOLD = 40;
-  const T_SETTLE = 170;
+  const T_GROW = 130;
+  const T_MOVE = 230 + 60 * slots;
+  const T_HOLD = 30;
+  const T_SETTLE = 240;
   const total = T_GROW + T_MOVE + T_HOLD + T_SETTLE;
   const easeOut = (u) => 1 - Math.pow(1 - u, 3);
-  // Gleiten: zügig los, sanft ankommen, kaum Überschwingen (easeOutBack, schwach)
-  const glide = (u) => 1 + 1.8 * Math.pow(u - 1, 3) + 0.8 * Math.pow(u - 1, 2);
+  // Gleiten: weich an- und auslaufen, ohne Ruck (easeInOutSine)
+  const glide = (u) => 0.5 - 0.5 * Math.cos(Math.PI * u);
   const at = (ms) => a + (b - a) * glide(Math.min(1, Math.max(0, (ms - T_GROW * 0.5) / T_MOVE)));
 
   cancelAnimationFrame(animateTabLens.raf);
@@ -5577,7 +5577,7 @@ function animateTabLens(from, to) {
     const grow = easeOut(Math.min(1, ms / T_GROW));
     const settle = Math.min(1, Math.max(0, (ms - T_GROW - T_MOVE - T_HOLD) / T_SETTLE));
     const size = grow * (1 - easeOut(settle)); // 0 = Markierung, 1 = aufgebläht
-    const stretch = Math.min(0.3, v * 22);
+    const stretch = Math.min(0.16, v * 12);
     const lw = (w0 + (w1 - w0) * size) * (1 + stretch);
     const lh = (h0 + (h1 - h0) * size) * (1 - stretch * 0.35);
     lens.style.cssText = `opacity:${Math.min(1, ms / 30) * (1 - easeOut(settle))};left:${x - lw / 2}px;top:${(H - lh) / 2}px;width:${lw}px;height:${lh}px`;
