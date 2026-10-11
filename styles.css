@@ -1253,12 +1253,12 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   -webkit-mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
   mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
 }
-.tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 24px; color: var(--text); font-size: 10.5px; font-weight: 500; }
+.tab { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 24px; color: var(--text); font-size: 10px; font-weight: 500; }
 .tab svg { width: 25px; height: 25px; }
 /* Symbole und Beschriftung ganz leicht durchsichtig, wie Glas */
 .tab-row > .tab svg, .tab-row > .tab span { opacity: 0.86; }
 .tab-row > .tab.on svg, .tab-row > .tab.on span { opacity: 0.95; }
-.tab.on { color: var(--accent); font-weight: 600; }
+.tab.on { color: var(--accent); }
 /* Markierung: milchiges Glas als eigene Ebene, damit sie beim Umschalten erst mit der Linse erscheint */
 .tab.on::before {
   content: '';
@@ -1318,3 +1318,20 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
 .team-empty svg { color: var(--accent); }
 .team-empty b { display: block; margin: 12px 0 4px; color: var(--text); font-size: 19px; }
+
+/* Oberer und unterer Bildschirmrand blenden weich aus (wie WhatsApp): Inhalt wird zum Rand hin unscharf und geht in den Hintergrund über */
+.edge-fade { position: fixed; left: 0; right: 0; z-index: 9; pointer-events: none; }
+.edge-fade::before, .edge-fade::after { content: ''; position: absolute; inset: 0; }
+.edge-fade.top { top: 0; height: calc(var(--nav-h, calc(env(safe-area-inset-top) + 56px)) + 14px);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 52%, transparent) 20%,
+    color-mix(in srgb, var(--bg) 33%, transparent) 42%, color-mix(in srgb, var(--bg) 17%, transparent) 64%, color-mix(in srgb, var(--bg) 6%, transparent) 84%, transparent); }
+.edge-fade.bottom { bottom: 0; height: calc(var(--tab-h) + 16px);
+  background: linear-gradient(0deg, color-mix(in srgb, var(--bg) 70%, transparent), color-mix(in srgb, var(--bg) 52%, transparent) 20%,
+    color-mix(in srgb, var(--bg) 33%, transparent) 42%, color-mix(in srgb, var(--bg) 17%, transparent) 64%, color-mix(in srgb, var(--bg) 6%, transparent) 84%, transparent); }
+/* Unschärfe in zwei Stufen: leicht über die ganze Höhe, stärker zum Rand hin */
+.edge-fade::before { -webkit-backdrop-filter: blur(1.5px); backdrop-filter: blur(1.5px); }
+.edge-fade::after { -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px); }
+.edge-fade.top::before { -webkit-mask-image: linear-gradient(180deg, #000 15%, transparent); mask-image: linear-gradient(180deg, #000 15%, transparent); }
+.edge-fade.top::after { -webkit-mask-image: linear-gradient(180deg, #000, transparent 60%); mask-image: linear-gradient(180deg, #000, transparent 60%); }
+.edge-fade.bottom::before { -webkit-mask-image: linear-gradient(0deg, #000 15%, transparent); mask-image: linear-gradient(0deg, #000 15%, transparent); }
+.edge-fade.bottom::after { -webkit-mask-image: linear-gradient(0deg, #000, transparent 60%); mask-image: linear-gradient(0deg, #000, transparent 60%); }

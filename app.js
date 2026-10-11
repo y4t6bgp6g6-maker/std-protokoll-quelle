@@ -1503,7 +1503,7 @@ const TABS = [
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
-  ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings', 'reports', 'report']],
+  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'reports', 'report']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
  *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
