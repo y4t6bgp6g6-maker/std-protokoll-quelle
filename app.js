@@ -1499,8 +1499,8 @@ function enterReport(rep, s, dayIndex, draft) {
 
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
-  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
+  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
   ['#/einstellungen', 'Einstellungen', 'tabGear', ['settings', 'reports', 'report']],
@@ -4493,7 +4493,7 @@ const typoHintHTML = (field, row) => {
   if (pdf) return pdf.replace('class="typo-hint pdf-hint"', `class="typo-hint pdf-hint" data-typo="${field}"`);
   const t = typoFor(field, row);
   return t
-    ? `<div class="typo-hint" data-typo="${field}">⚠️ Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?<button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
+    ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">⚠️ Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
     : '';
 };
 /** Hinweis eines Feldes neu setzen (nach dem Verlassen des Feldes); beim Tippen ausblenden */
@@ -5089,7 +5089,8 @@ document.addEventListener('input', (e) => {
       if (document.activeElement === t) refreshTypoHint(t, false);
       else refreshTypoHint(t);
     }
-    showChips(t);
+    // Nur am aktiven Feld (übernommener Korrekturvorschlag öffnet keine Vorschläge ohne Tastatur)
+    if (document.activeElement === t) showChips(t);
     saveSheets(s);
   } else if (t.dataset.t) {
     const trip = currentTrip();
