@@ -1596,6 +1596,7 @@ let searchQuery = null;
 
 let routedHash = null;
 function route() {
+  const prevView = currentView;
   routedHash = location.hash;
   if (backTarget) {
     const here = location.hash || '#/';
@@ -1681,8 +1682,91 @@ function route() {
   }
   updateTopButton();
   updateTabbar();
+  pageAnim(prevView, currentView);
 }
 window.addEventListener('hashchange', route);
+
+/** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, trips: 1, reports: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
+function pageAnim(from, to) {
+  if (!from) return;
+  const app = document.getElementById('app');
+  const d = (VIEW_DEPTH[to] ?? 1) - (VIEW_DEPTH[from] ?? 1);
+  app.classList.remove('pg-push', 'pg-pop', 'pg-fade');
+  void app.offsetWidth; // Animation neu starten
+  app.classList.add(d > 0 ? 'pg-push' : d < 0 ? 'pg-pop' : 'pg-fade');
+  clearTimeout(pageAnim.timer);
+  // Klasse wieder entfernen, sonst laufen neu gezeichnete Teile (z. B. nach einer Änderung) die Animation erneut
+  pageAnim.timer = setTimeout(() => app.classList.remove('pg-push', 'pg-pop', 'pg-fade'), 400);
+  if (to === 'stats') {
+    document.querySelectorAll('#app .ov-tile, #app .ov-month, #app .ov-totallink').forEach((el, i) => {
+      el.style.animationDelay = `${60 + i * 28}ms`;
+      el.classList.add('stagger');
+    });
+  }
+  if (to === 'list' && justSent) {
+    const st = document.querySelector(`#app a[href="#/zettel/${encodeURIComponent(justSent)}"] .status.sent`);
+    if (st) st.classList.add('draw');
+    justSent = null;
+  }
+}
+
+/** Gesendet: großer Haken in der Mitte; in der Liste zeichnet sich der Haken des Zettels beim nächsten Anzeigen */
+let justSent = null;
+function sentBurst(sheetId) {
+  if (sheetId) justSent = sheetId;
+  const el = document.createElement('div');
+  el.className = 'sent-burst';
+  el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="12"/><path d="M17.5 8L10 15.5 6.5 12"/></svg>';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1200);
+}
+
+/** Zahlen (Stunden) zählen nach einer Änderung sichtbar zum neuen Wert: vorher Texte merken, danach animieren */
+function countSnapshot(selector) {
+  const m = new Map();
+  document.querySelectorAll(selector).forEach((el, i) => m.set(countKey(el, i), el.textContent));
+  return { selector, m };
+}
+const countKey = (el, i) => {
+  const d = el.closest('[data-day]');
+  return d ? `d${d.dataset.day}` : `i${i}`;
+};
+function animateCounts({ selector, m }) {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const num = (t) => t.match(/^(\D*?)(-?\d+(?:,\d+)?)(.*)$/s);
+  document.querySelectorAll(selector).forEach((el, i) => {
+    const before = m.get(countKey(el, i));
+    const a = before && num(before);
+    const b = num(el.textContent);
+    if (!a || !b || a[2] === b[2]) return;
+    const from = parseFloat(a[2].replace(',', '.'));
+    const to = parseFloat(b[2].replace(',', '.'));
+    const dec = (b[2].split(',')[1] || '').length;
+    const start = performance.now();
+    const step = (now) => {
+      const u = Math.min(1, (now - start) / 420);
+      const v = from + (to - from) * (1 - Math.pow(1 - u, 3));
+      el.textContent = b[1] + v.toFixed(dec).replace('.', ',') + b[3];
+      if (u < 1 && el.isConnected) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
+/** Zeile weich aufklappen bzw. zusammenklappen */
+function expandIn(el) {
+  if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const h = el.offsetHeight;
+  el.style.overflow = 'hidden';
+  el.animate([{ height: '0px', opacity: 0 }, { height: `${h}px`, opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }).onfinish = () =>
+    (el.style.overflow = '');
+}
+function collapseOut(el, done) {
+  if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) return done();
+  el.style.overflow = 'hidden';
+  el.animate([{ height: `${el.offsetHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 240, easing: 'cubic-bezier(0.4, 0, 0.6, 1)', fill: 'forwards' }).onfinish = done;
+}
 // Zurück auf einen Eintrag mit derselben Adresse (doppelte Seite) löst kein hashchange aus
 window.addEventListener('popstate', () => backTarget && location.hash === routedHash && route());
 
@@ -2338,7 +2422,9 @@ const currentSheet = () => findSheet(editorId);
 function refreshDay(i) {
   const s = currentSheet();
   const el = document.querySelector(`.day[data-day="${i}"]`);
+  const snap = countSnapshot('.day-total b');
   if (el) el.outerHTML = dayHTML(s, i);
+  animateCounts(snap);
   fitRowTexts();
   refreshSummary();
 }
@@ -2346,9 +2432,11 @@ function refreshSummary() {
   updatePdfThumb();
   const s = currentSheet();
   const el = document.getElementById('summary');
+  const snap = countSnapshot('#summary b, #daybar .db-h');
   if (el) el.innerHTML = summaryHTML(s);
   const bar = document.getElementById('daybar');
   if (bar) bar.innerHTML = dayBarHTML(s);
+  animateCounts(snap);
 }
 
 /** Warnzeichen eines Tages neu setzen, ohne die Eingabefelder neu zu zeichnen (Fokus bleibt) */
@@ -2449,7 +2537,7 @@ function moreMenu() {
     { label: 'Reisekostenabrechnung', run: () => openTripMenu(s) },
     s.sentAt
       ? { label: 'Als offen markieren', run: () => { s.sentAt = null; saveSheets(s); toast('Als offen markiert'); } }
-      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); toast('Als gesendet markiert'); } },
+      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); sentBurst(s.id); } },
     { label: 'Stundenzettel löschen', destructive: true, run: () => askDelete(s.id, true) },
   ]);
 }
@@ -2790,6 +2878,7 @@ async function sharePdf(s, isSend) {
     confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann wird er in der Liste mit einem Haken markiert.', 'Ja, gesendet', () => {
       s.sentAt = Date.now();
       saveSheets(s);
+      sentBurst(s.id);
     });
   }
 }
@@ -3222,7 +3311,7 @@ function tripMoreMenu() {
     },
     t.sentAt
       ? { label: 'Als offen markieren', run: () => { t.sentAt = null; saveTrips(t); toast('Als offen markiert'); } }
-      : { label: 'Als gesendet markieren', run: () => { t.sentAt = Date.now(); saveTrips(t); toast('Als gesendet markiert'); } },
+      : { label: 'Als gesendet markieren', run: () => { t.sentAt = Date.now(); saveTrips(t); sentBurst(); } },
     {
       label: 'Abrechnung löschen',
       destructive: true,
@@ -3333,6 +3422,7 @@ async function shareTripPdf(t) {
     confirmDialog('Wurde die Abrechnung gesendet?', 'Dann wird sie als gesendet markiert.', 'Ja, gesendet', () => {
       t.sentAt = Date.now();
       saveTrips(t);
+      sentBurst();
     });
   }
 }
@@ -4981,6 +5071,7 @@ document.addEventListener('click', (e) => {
       day.rows.push(row);
       saveSheets(s);
       refreshDay(dayIndex);
+      expandIn(document.querySelector(`.row[data-row="${row.id}"]`));
       break;
     }
     case 'typo-fix': {
@@ -5010,11 +5101,13 @@ document.addEventListener('click', (e) => {
       break;
     case 'delrow': {
       const { s, dayIndex, day, rowIndex, row } = rowContext(el);
-      const remove = () => {
-        day.rows.splice(rowIndex, 1);
-        saveSheets(s);
-        refreshDay(dayIndex);
-      };
+      const rowEl = el.closest('.row');
+      const remove = () =>
+        collapseOut(rowEl, () => {
+          day.rows.splice(rowIndex, 1);
+          saveSheets(s);
+          refreshDay(dayIndex);
+        });
       if (rowIsEmpty(row)) remove();
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
       break;
@@ -5422,7 +5515,7 @@ document.addEventListener('contextmenu', (e) => {
 
 const LENS_MAG = 1.22; // Vergrößerung in der Mitte der Linse
 /** Verzögerung (ms) zwischen Antippen einer Taste der Leiste und dem Seitenwechsel */
-const TAB_PAGE_DELAY = 80;
+const TAB_PAGE_DELAY = 60;
 const LENS_EDGE = 0.3; // wie stark der Rand der Linse den Inhalt zusätzlich verbiegt (0 = gar nicht)
 const LENS_CHROMA = 0.03; // Farbsäume am Rand (Unterschied der Brechung von Rot und Blau)
 
