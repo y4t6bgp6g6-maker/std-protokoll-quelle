@@ -4891,13 +4891,12 @@ document.addEventListener('click', (e) => {
         location.replace(el.dataset.hash);
         break;
       }
-      // Die Seite erst wechseln, wenn die Linse am Ziel ankommt: der Aufbau der neuen Seite hält sonst die Fahrt auf
-      const arrive = animateTabLens(from, el);
+      // Seite gleich im nächsten Bild wechseln; die Glas-Kopien werden erst nach der Linse erneuert
+      animateTabLens(from, el);
       from.classList.remove('on');
       el.classList.add('on');
       const hash = el.dataset.hash;
-      clearTimeout(animateTabLens.nav);
-      animateTabLens.nav = setTimeout(() => location.replace(hash), arrive);
+      requestAnimationFrame(() => location.replace(hash));
       break;
     }
     case 'new':
@@ -5613,15 +5612,20 @@ function haptic() {
 
 const GLASS_TIMELINE = CSS.supports('animation-timeline: scroll()');
 const GLASS_BAND = 11; // Breite des Spiegelstreifens am Rand (px)
-const GLASS_SPLIT = 4.5; // Grenze zwischen innerem (wenig gestaucht) und äußerem Teilstreifen (stark gestaucht)
-const GLASS_K1 = 0.55; // Stauchung innen
+const GLASS_SPLIT = 5; // Grenze zwischen innerem (wenig gestaucht) und äußerem Teilstreifen (stark gestaucht)
+const GLASS_K1 = 0.85; // Stauchung innen (fast 1: Spiegelbild und Text laufen an der Innenkante ineinander)
 const GLASS_K_END = 0.55; // Stauchung an den runden Enden
 // Ebenen: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn), Kante (oben/unten gerade, l/r rundes Ende) und
 // Teilstreifen (0 innen, 1 außen; −1 = ganzer Streifen). Wenige Ebenen – jede ist eine ganze Kopie der Seite.
-// Nur oben und unten je eine Kopie (mehr Kopien ließen die Leiste beim Scrollen zittern); die runden Enden ohne Spiegelung
+// Oben und unten je zwei Teilstreifen (innen kaum gestaucht: Spiegelbild und Text laufen ineinander; außen stark
+// gestaucht: zum Rand hin dünn), an den runden Enden je eine Kopie
 const GLASS_LAYERS = [
-  { side: 'top', deg: 0, sub: -1 },
-  { side: 'bottom', deg: 180, sub: -1 },
+  { side: 'top', deg: 0, sub: 0 },
+  { side: 'top', deg: 0, sub: 1 },
+  { side: 'bottom', deg: 180, sub: 0 },
+  { side: 'bottom', deg: 180, sub: 1 },
+  { side: 'l', deg: 270, sub: -1 },
+  { side: 'r', deg: 90, sub: -1 },
 ];
 const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0, dirty: false };
 
@@ -5649,6 +5653,18 @@ function glassBar() {
   });
   addEventListener('scroll', glassScroll, { passive: true });
   addEventListener('touchend', () => requestAnimationFrame(glassScroll), { passive: true });
+  // Beim Ziehen über den Seitenanfang meldet iOS keine Scroll-Ereignisse: solange der Finger liegt, jedes Bild prüfen
+  addEventListener('touchstart', () => {
+    if (glass.touching) return;
+    glass.touching = true;
+    const tick = () => {
+      glassScroll();
+      if (glass.touching) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  }, { passive: true });
+  addEventListener('touchend', () => (glass.touching = false), { passive: true });
+  addEventListener('touchcancel', () => (glass.touching = false), { passive: true });
   // Nach dem Tippen kommt die Leiste wieder
   document.addEventListener('focusout', () =>
     requestAnimationFrame(() => (glass.dirty ? glassClone() : glassPlace()))
@@ -5692,15 +5708,23 @@ function glassMask(part, W, H, u0, u1) {
   if ((part.side === 'top' || part.side === 'bottom') && part.sub < 0) {
     // ganzer Streifen: am Rand voll, zur Mitte sanft auslaufend (keine sichtbare Kante)
     const dir = part.side === 'top' ? '180deg' : '0deg';
-    const band = `linear-gradient(${dir}, rgba(0,0,0,.6), #000 1.5px, rgba(0,0,0,.75) ${u1 * 0.35}px, rgba(0,0,0,.4) ${u1 * 0.65}px, rgba(0,0,0,.12) ${u1 * 0.9}px, transparent ${u1 * 1.15}px)`;
+    const band = `linear-gradient(${dir}, rgba(0,0,0,.6), #000 1.5px, rgba(0,0,0,.85) ${u1 * 0.5}px, rgba(0,0,0,.45) ${u1 * 0.9}px, transparent ${u1 * 1.2}px)`;
     return `${band}, linear-gradient(90deg, transparent ${r * 0.55}px, #000 ${r * 1.1}px, #000 ${W - r * 1.1}px, transparent ${W - r * 0.55}px)`;
   }
   if (part.side === 'top' || part.side === 'bottom') {
     const dir = part.side === 'top' ? '180deg' : '0deg';
-    const band = `linear-gradient(${dir}, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${Math.max(0, u0 - e)}px, rgba(0,0,0,${fade(u0)}) ${u0 + e}px, #000 ${u1 - e}px, transparent ${u1 + e}px)`;
-    return `${band}, linear-gradient(90deg, transparent ${r - f}px, #000 ${r + f}px, #000 ${W - r - f}px, transparent ${W - r + f}px)`;
+    // innerer Teilstreifen läuft zur Mitte weich aus (keine Kante)
+    const end = u1 >= GLASS_BAND ? `#000 ${u1 - 3}px, rgba(0,0,0,.45) ${u1}px, transparent ${u1 + 3}px` : `#000 ${u1 - e}px, transparent ${u1 + e}px`;
+    const band = `linear-gradient(${dir}, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${Math.max(0, u0 - e)}px, rgba(0,0,0,${fade(u0)}) ${u0 + e}px, ${end})`;
+    return `${band}, linear-gradient(90deg, transparent ${r * 0.55}px, #000 ${r * 1.1}px, #000 ${W - r * 1.1}px, transparent ${W - r * 0.55}px)`;
   }
   const cx = part.side === 'l' ? r : W - r;
+  if (part.sub < 0) {
+    // ganzes rundes Ende: zur Mitte sanft auslaufend, oben und unten in die geraden Streifen übergehend
+    const ringW = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - u1 * 1.2}px, rgba(0,0,0,.45) ${r - u1 * 0.9}px, rgba(0,0,0,.85) ${r - u1 * 0.5}px, #000 ${r - 1.5}px, rgba(0,0,0,.6) ${r}px)`;
+    const half = part.side === 'l' ? `linear-gradient(90deg, #000 ${r * 0.55}px, transparent ${r * 1.1}px)` : `linear-gradient(270deg, #000 ${r * 0.55}px, transparent ${r * 1.1}px)`;
+    return `${ringW}, ${half}`;
+  }
   const ring = `radial-gradient(circle at ${cx}px ${r}px, transparent ${r - u1 - e}px, #000 ${r - u1 + e}px, rgba(0,0,0,${fade(u0)}) ${r - u0 - e}px, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${r - u0 + e}px)`;
   const a = part.deg;
   const sector = `conic-gradient(from ${a - 95}deg at ${cx}px ${r}px, transparent 0deg, #000 15deg, #000 175deg, transparent 190deg, transparent 360deg)`;
@@ -5751,7 +5775,7 @@ function glassPlace() {
           ? [W / 2, H - B]
           : [(part.side === 'l' ? r : W - r) + (r - B) * n[0], r + (r - B) * n[1]];
     // p ↦ T + (a + k·s)·n mit s = (T − p)·n  ⇒  A = I − (1 + k)·n·nᵀ, Verschiebung (1 + k)(T·n)·n + a·n
-    const k = whole ? (part.side === 'top' || part.side === 'bottom' ? (B - 1) / Math.max(4, r - B) : GLASS_K_END) : inner ? GLASS_K1 : k2;
+    const k = whole ? GLASS_K_END : inner ? GLASS_K1 : k2;
     const off = whole || inner ? 0 : a2;
     const q = 1 + k;
     const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
@@ -5769,6 +5793,9 @@ function glassPlace() {
  *  Fortschritt der Animation und scrollY ergeben den Weg. */
 function glassCalibrate() {
   if (!GLASS_TIMELINE || scrollY < 80) return;
+  const now = performance.now();
+  if (now - (glass.calAt || 0) < 400) return;
+  glass.calAt = now;
   const an = glass.layers[0]?.querySelector('.glass-scroll').getAnimations()[0];
   const ct = an && an.currentTime;
   const pct = ct && typeof ct === 'object' ? ct.value : null;

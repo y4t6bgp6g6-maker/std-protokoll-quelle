@@ -1190,7 +1190,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 
 /* Leiste unten: Glas-Kapsel Übersicht · Zettel · + · Team · Einstellungen (auf allen Seiten, beim Tippen ausgeblendet).
    Hintergrund: Safaris eigener Glasfilter (backdrop-filter, läuft auf der Grafikkarte). Linse beim Umschalten: tabLens in app.js. */
-.tabbar { position: fixed; left: 20px; right: 20px; bottom: var(--tab-bottom); z-index: 20; display: none; height: 56px; }
+.tabbar { transform: translateZ(0); position: fixed; left: 20px; right: 20px; bottom: var(--tab-bottom); z-index: 20; display: none; height: 56px; }
 body.tabs .tabbar { display: block; }
 body { min-height: 100vh; }
 body.tabs:has(input:focus:not([switch]), textarea:focus) .tabbar { display: none; }
@@ -1252,6 +1252,8 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   --lens-rx: 0px;
   --lens-ry: 0px;
   /* Loch, wo die Linse gerade ist (Werte setzt animateTabLens) */
+  /* eigene Grafikebene: die Symbole werden beim Scrollen nicht neu gezeichnet (sonst zittern sie) */
+  will-change: transform;
   -webkit-mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
   mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
 }
