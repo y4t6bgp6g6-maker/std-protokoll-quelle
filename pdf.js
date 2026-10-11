@@ -250,10 +250,10 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
 
     if (status && !hw) {
       doc.labelBox(DAY_STATUS_SHORT[status], xs[5] + 4, y, xs[6] - xs[5] - 8, h, Math.min(14, Math.max(fs + 3, h * 0.3)));
-      doc.textBox(fmtHours(dayTotal(day)), xs[7] + 3, y, xs[8] - xs[7] - 6, rowH, fs, false, 'right');
+      doc.textBox(fmtHours(dayTotal(day, i)), xs[7] + 3, y, xs[8] - xs[7] - 6, rowH, fs, false, 'right');
     } else if (active) {
       if (hw) {
-        doc.textBox(fmtHours(statusCredit(status)), xs[3] + 3, y, xs[4] - xs[3] - 6, rowH, fs, false, 'right');
+        doc.textBox(fmtHours(statusCredit(status, i)), xs[3] + 3, y, xs[4] - xs[3] - 6, rowH, fs, false, 'right');
         doc.textBox(DAY_STATUS_SHORT[status], xs[5] + 3, y, xs[6] - xs[5] - 6, rowH, fs, true);
       }
       day.rows.forEach((row, r) => {
@@ -272,7 +272,7 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
         // Pause gehört zur Arbeit: am Feiertag in die erste Arbeitszeile
         doc.textBox(fmtHours(day.pause), xs[4] + 3, hw ? tops[1] : y, xs[5] - xs[4] - 6, rowH, fs, false, 'right');
       }
-      first(7, fmtHours(dayTotal(day)));
+      first(7, fmtHours(dayTotal(day, i)));
     }
     y += h;
   });

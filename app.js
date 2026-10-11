@@ -68,12 +68,13 @@ const emptyRow = () => ({ id: uid(), start: null, end: null, site: '', work: '' 
 const rowIsEmpty = (r) => r.start == null && r.end == null && !r.site && !r.work;
 const rowMinutes = (r) => (r.start == null || r.end == null ? null : r.end >= r.start ? r.end - r.start : r.end + 1440 - r.start);
 const dayWorked = (d) => d.rows.reduce((s, r) => s + (rowMinutes(r) || 0), 0);
-/** Krank, Urlaub und Feiertag zählen 8 Stunden, Frei zählt 0 */
-const statusCredit = (status) => (status === 'frei' ? 0 : Math.round(settings.hoursPerDay * 60));
+/** Krank, Urlaub und Feiertag zählen 8 Stunden, Frei und ein Feiertag am Sa/So (i = Wochentag 0–6) zählen 0 */
+const statusCredit = (status, i) =>
+  status === 'frei' || (status === 'feiertag' && i >= 5) ? 0 : Math.round(settings.hoursPerDay * 60);
 /** An einem Feiertag kann trotzdem gearbeitet werden (z. B. Notdienst): die Stunden kommen zu den 8 gutgeschriebenen dazu */
 const canWork = (d) => !d.status || d.status === 'feiertag';
 const workedNet = (d) => Math.max(0, dayWorked(d) - (d.pause || 0));
-const dayTotal = (d) => (d.status ? statusCredit(d.status) + (canWork(d) ? workedNet(d) : 0) : workedNet(d));
+const dayTotal = (d, i) => (d.status ? statusCredit(d.status, i) + (canWork(d) ? workedNet(d) : 0) : workedNet(d));
 const dayHasTimes = (d) => d.rows.some((r) => r.start != null || r.end != null);
 /** Am Tag wurde schon etwas eingetragen, aber noch keine Pause (nur neue Zettel haben pause: null) */
 const pauseMissing = (d) => !d.status && d.pause == null && d.rows.some((r) => !rowIsEmpty(r));
@@ -114,7 +115,17 @@ const dayHasWarning = (d) =>
 const emptySentWorkday = (s, i) =>
   !!s.sentAt && i < 5 && !s.days[i].status && !dayStarted(s.days[i]) && !holidayName(sheetDate(s, i));
 /** Warnzeichen für einen Tag des Zettels: unvollständige Angaben oder leerer Werktag im gesendeten Zettel */
-const sheetDayWarning = (s, i) => dayHasWarning(s.days[i]) || emptySentWorkday(s, i);
+/** Tagesart passt nicht zum Kalender: Feiertag an einem Tag ohne Feiertag, Sa/So mit anderer Tagesart, erkannter Feiertag (Mo–Fr) mit anderer Tagesart */
+const statusWarning = (s, i) => {
+  const d = s.days[i];
+  if (!sheetIsActive(s, i)) return '';
+  const holiday = holidayName(sheetDate(s, i));
+  if (d.status === 'feiertag') return holiday ? '' : 'kein gesetzlicher Feiertag';
+  if (i >= 5) return d.status ? `${DAY_STATUS_SHORT[d.status]} am Wochenende` : '';
+  return holiday ? `${holiday} nicht als Feiertag eingetragen` : '';
+};
+const statusWarnHTML = (s, i) => (statusWarning(s, i) ? ` <span class="day-warn" aria-label="Tagesart prüfen">⚠️</span>` : '');
+const sheetDayWarning = (s, i) => dayHasWarning(s.days[i]) || emptySentWorkday(s, i) || !!statusWarning(s, i);
 const sheetHasWarning = (s) => sheetActiveDays(s).some((i) => sheetDayWarning(s, i));
 const timeWarning = (d, r) =>
   fieldMissing(d, r, 'start') || fieldMissing(d, r, 'end') || endBeforeStart(r) || sameStartEnd(r) || rowsOutOfOrder(d).has(r.id) || rowsGapOrOverlap(d).has(r.id);
@@ -146,7 +157,7 @@ const sheetActiveDays = (s) => [0, 1, 2, 3, 4, 5, 6].filter((i) => sheetIsActive
 const sheetFirstDate = (s) => sheetDate(s, sheetActiveDays(s)[0] ?? 0);
 const sheetLastDate = (s) => sheetDate(s, sheetActiveDays(s).at(-1) ?? 6);
 const sheetTitle = (s) => `Stundenzettel ${fmtShort(sheetFirstDate(s))} - ${fmtShort(sheetLastDate(s))}`;
-const sheetTotal = (s) => sheetActiveDays(s).reduce((t, i) => t + dayTotal(s.days[i]), 0);
+const sheetTotal = (s) => sheetActiveDays(s).reduce((t, i) => t + dayTotal(s.days[i], i), 0);
 const sheetOvertime = (s, targetHours) => Math.max(0, sheetTotal(s) - Math.round(targetHours * 60));
 /** Soll des Zettels in Stunden: anteilig je Werktag Mo–Fr des Monats oder das volle Wochen-Soll */
 const sheetTarget = (s) => (settings.target / 5) * sheetActiveDays(s).filter((i) => i < 5).length;
@@ -248,7 +259,7 @@ function overtimeAccount(worked = false) {
       const m = date.getMonth() + 1;
       if (!result.has(y)) result.set(y, new Map());
       const months = result.get(y);
-      months.set(m, (months.get(m) || 0) + dayTotal(d) - (worked ? 0 : soll));
+      months.set(m, (months.get(m) || 0) + dayTotal(d, i) - (worked ? 0 : soll));
     });
   }
   return result;
@@ -895,10 +906,10 @@ function askPayslipMonth(month, done, year = null, chosen = false) {
 /** „+3,50 h“ / „−2,00 h“ */
 const fmtSigned = (min) => (min > 0 ? '+' : min < 0 ? '−' : '') + fmtH(Math.abs(min));
 
-/** Feiertage (Mo–Fr) eines Zettels als „Feiertag“ markieren, nur an Tagen ohne Einträge */
+/** Feiertage eines Zettels als „Feiertag“ markieren, nur an Tagen ohne Einträge (Sa/So zählen dann 0 Stunden) */
 function markHolidays(s) {
   s.days.forEach((d, i) => {
-    if (i > 4 || !sheetIsActive(s, i) || d.status || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
+    if (!sheetIsActive(s, i) || d.status || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
     if (holidayName(sheetDate(s, i))) d.status = 'feiertag';
   });
 }
@@ -908,6 +919,8 @@ function sheetProblems(s) {
   const problems = [];
   if (pdfCharHint(s.name)) problems.push(`Name: ${pdfCharHint(s.name)}`);
   s.days.forEach((d, i) => {
+    const sw = statusWarning(s, i);
+    if (sw) problems.push(`${WEEKDAYS[i]}: ${sw}`);
     if (!sheetIsActive(s, i) || !canWork(d)) return;
     const day = WEEKDAYS[i];
     const timed = [];
@@ -2474,7 +2487,7 @@ function dayBarHTML(s) {
   return `${s.days
     .map((d, i) => {
       if (!sheetIsActive(s, i)) return `<span class="db-day off"><span class="db-name">${WEEKDAYS_SHORT[i]}</span><span class="db-h"></span></span>`;
-      const total = dayTotal(d);
+      const total = dayTotal(d, i);
       const cls = ['db-day', sameDay(sheetDate(s, i), today) ? 'today' : '', d.status ? `status-${d.status} has-status` : ''].join(' ');
       return `<button class="${cls}" data-act="jump" data-day="${i}">
         <span class="db-name">${WEEKDAYS_SHORT[i]}${sheetDayWarning(s, i) ? `<span class="db-warn">⚠️</span>` : ''}</span>
@@ -2512,7 +2525,7 @@ function dayHTML(s, i) {
   const day = s.days[i];
   const date = sheetDate(s, i);
   const head = `<div class="day-head">
-      <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${reportChipHTML(s, i)}</div>
+      <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}</div>
       <div class="day-actions">
         <button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>
       </div>
@@ -2527,7 +2540,7 @@ function dayHTML(s, i) {
     <div class="day-foot">
       <button class="link-btn" data-act="addrow">${ICON.plus} Zeile</button>
       <button class="pill ${day.pause == null ? 'empty' : ''}" data-act="pause">Pause${day.pause == null ? '' : ` ${fmtH(day.pause)}`}${pauseMissing(day) ? ` ⚠️` : ''}</button>
-      <span class="day-total">Gesamt <b>${fmtH(dayTotal(day))}</b></span>
+      <span class="day-total">Gesamt <b>${fmtH(dayTotal(day, i))}</b></span>
     </div>`;
   if (day.status) {
     // Kompakte Zeile: Wochentag links, rechts farbiges Etikett (zugleich Auswahl der Tagesart)
@@ -2542,8 +2555,8 @@ function dayHTML(s, i) {
           : `<button class="link-btn expand-btn" data-act="expand">${ICON.plus} Arbeit eintragen (z. B. Notdienst)</button>`;
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
-        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span></div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
-        <button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status))} ▾</button>
+        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
+        <button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))} ▾</button>
       </div>
       ${extra}
     </section>`;
@@ -2563,8 +2576,8 @@ function chooseStatus(btn) {
     refreshDay(dayIndex);
   };
   actionSheet([
-    { label: `${day.status ? '' : '✓ '}Arbeitstag`, run: () => set(null) },
-    ...Object.entries(DAY_STATUS).map(([key, label]) => ({
+    { label: `${day.status ? '' : '✓ '}Arbeit`, run: () => set(null) },
+    ...Object.entries(DAY_STATUS_SHORT).map(([key, label]) => ({
       label: `${day.status === key ? '✓ ' : ''}${label}`,
       run: () => set(key),
     })),
@@ -5990,10 +6003,11 @@ function animateTabLens(from, to) {
   const h1 = H + 8;
   lensSource();
 
-  // Zeiten (ms): aufblähen, gleiten (je weiter, desto länger), noch im Gleiten schrumpfen und
-  // verblassen, während die Markierung am Ziel erscheint
+  // Zeiten (ms): aufblähen, gleiten (je weiter, desto länger – lange Wege aber nur wenig länger,
+  // die Linse fährt dort schneller), noch im Gleiten schrumpfen und verblassen, während die
+  // Markierung am Ziel erscheint
   const T_GROW = 110;
-  const T_MOVE = 195 + 50 * slots;
+  const T_MOVE = 245 + 35 * Math.log2(Math.max(1, slots));
   const T_SETTLE = 205;
   // Schrumpfen beginnt schon, wenn die Linse fast am Ziel ist (letztes Viertel des Gleitens)
   const T_SETTLE_AT = T_GROW + T_MOVE * 0.75;
