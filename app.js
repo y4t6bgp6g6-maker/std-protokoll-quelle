@@ -1557,7 +1557,7 @@ const TABS = [
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
-  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'reports', 'report']],
+  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'reports', 'report', 'guide']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
  *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
@@ -1697,6 +1697,11 @@ function route() {
     renderTeam();
     syncNav();
     window.scrollTo(0, 0);
+  } else if (hash === '#/anleitung') {
+    currentView = 'guide';
+    renderGuide();
+    syncNav();
+    window.scrollTo(0, 0);
   } else if (hash === '#/arbeitsscheine') {
     currentView = 'reports';
     renderReportList();
@@ -1741,7 +1746,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, trips: 1, reports: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -1834,7 +1839,7 @@ window.addEventListener('popstate', () => backTarget && location.hash === routed
 const BACK_TARGETS = [
   [/^#\/(lohn|jahr)\//, '#/uebersicht'],
   [/^#\/arbeitsschein\//, '#/arbeitsscheine'],
-  [/^#\/arbeitsscheine$/, '#/einstellungen'],
+  [/^#\/(arbeitsscheine|anleitung)$/, '#/einstellungen'],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+)$/, '#/'],
 ];
 let backTarget = null;
@@ -3626,6 +3631,7 @@ function renderSettings() {
       <label class="field"><span>Abholadresse</span><input data-s="reportUrl" placeholder="Link einfügen" value="${escapeHtml(settings.reportUrl || '')}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"></label>
       <button class="list-btn" data-act="reports-fetch">Jetzt abholen</button>
       <button class="list-btn" data-act="reports-open">Alle Arbeitsscheine</button>
+      <button class="list-btn" data-act="guide-open">Anleitung: Abholen und Sicherung einrichten</button>
     </div>
     <p class="footnote" id="report-status">${reportStatusText()}</p>
 
@@ -5114,6 +5120,14 @@ document.addEventListener('click', (e) => {
       break;
     case 'reports-open':
       location.hash = '#/arbeitsscheine';
+      break;
+    case 'guide-open':
+      location.hash = '#/anleitung';
+      break;
+    case 'guide-copy-code':
+    case 'guide-copy-url':
+    case 'guide-apply':
+      guideAction(act);
       break;
     case 'report-sheet': {
       const rep = reports().find((r) => r.id === el.dataset.id);
