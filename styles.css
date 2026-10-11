@@ -1244,11 +1244,12 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   grid-template-rows: minmax(0, 1fr);
   padding: 4px;
   --lens-x: -500px;
-  --lens-rx: 0px;
-  --lens-ry: 0px;
-  /* Loch, wo die Linse gerade ist (Werte setzt animateTabLens) */
-  /* eigene Grafikebene: die Symbole werden beim Scrollen nicht neu gezeichnet (sonst zittern sie) */
-  will-change: transform;
+  --lens-rx: 1px;
+  --lens-ry: 1px;
+}
+/* Loch, wo die Linse gerade ist (Werte setzt animateTabLens) – nur während der Linse: mit Maske verschwanden die
+   Symbole auf dem iPhone beim Nachfedern der Seite */
+.lens-anim .tab-row {
   -webkit-mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
   mask-image: radial-gradient(var(--lens-rx) var(--lens-ry) at var(--lens-x) 50%, transparent 92%, #000 100%);
 }

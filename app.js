@@ -5554,10 +5554,10 @@ function animateTabLens(from, to) {
 
   // Zeiten (ms) wie in den Aufnahmen: aufblähen, gleiten (je weiter, desto länger), kurz halten, schrumpfen und
   // verblassen, während die Markierung am Ziel erscheint
-  const T_GROW = 130;
-  const T_MOVE = 230 + 60 * slots;
-  const T_HOLD = 30;
-  const T_SETTLE = 240;
+  const T_GROW = 110;
+  const T_MOVE = 195 + 50 * slots;
+  const T_HOLD = 25;
+  const T_SETTLE = 205;
   const total = T_GROW + T_MOVE + T_HOLD + T_SETTLE;
   const easeOut = (u) => 1 - Math.pow(1 - u, 3);
   // Gleiten: weich an- und auslaufen, ohne Ruck (easeInOutSine)
@@ -5565,7 +5565,7 @@ function animateTabLens(from, to) {
   const at = (ms) => a + (b - a) * glide(Math.min(1, Math.max(0, (ms - T_GROW * 0.5) / T_MOVE)));
 
   cancelAnimationFrame(animateTabLens.raf);
-  caps.classList.add('lens-moving');
+  caps.classList.add('lens-moving', 'lens-anim');
   clearTimeout(animateTabLens.timer);
   // Die Markierung blendet ein, sobald die Linse am Ziel schrumpft
   animateTabLens.timer = setTimeout(() => caps.classList.remove('lens-moving'), T_GROW + T_MOVE + T_HOLD);
@@ -5588,7 +5588,10 @@ function animateTabLens(from, to) {
     tabRow.style.setProperty('--lens-rx', `${(lw / 2 + 1) * hole}px`);
     tabRow.style.setProperty('--lens-ry', `${(lh / 2 + 1) * hole}px`);
     if (ms < total) animateTabLens.raf = requestAnimationFrame(frame);
-    else tabRow.style.setProperty('--lens-x', '-500px');
+    else {
+      tabRow.style.setProperty('--lens-x', '-500px');
+      caps.classList.remove('lens-anim');
+    }
   };
   frame(start);
   return T_GROW + T_MOVE;
