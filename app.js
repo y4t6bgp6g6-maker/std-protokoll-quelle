@@ -5618,13 +5618,10 @@ const GLASS_K1 = 0.55; // Stauchung innen
 const GLASS_K_END = 0.55; // Stauchung an den runden Enden
 // Ebenen: Richtung der Randnormale (Grad, 0 = oben, im Uhrzeigersinn), Kante (oben/unten gerade, l/r rundes Ende) und
 // Teilstreifen (0 innen, 1 außen; −1 = ganzer Streifen). Wenige Ebenen – jede ist eine ganze Kopie der Seite.
+// Nur oben und unten je eine Kopie (mehr Kopien ließen die Leiste beim Scrollen zittern); die runden Enden ohne Spiegelung
 const GLASS_LAYERS = [
-  { side: 'top', deg: 0, sub: 0 },
-  { side: 'top', deg: 0, sub: 1 },
-  { side: 'bottom', deg: 180, sub: 0 },
-  { side: 'bottom', deg: 180, sub: 1 },
-  { side: 'l', deg: 270, sub: -1 },
-  { side: 'r', deg: 90, sub: -1 },
+  { side: 'top', deg: 0, sub: -1 },
+  { side: 'bottom', deg: 180, sub: -1 },
 ];
 const glass = { caps: null, clip: null, layers: [], key: '', timer: 0, bounce: 0, dirty: false };
 
@@ -5681,6 +5678,7 @@ function glassClone() {
   });
   glass.layers.forEach((l, i) => l.querySelector('.glass-scroll').replaceChildren(i ? c.cloneNode(true) : c));
   glass.key = '';
+  glass.range = null;
   glassPlace();
 }
 
@@ -5691,6 +5689,12 @@ function glassMask(part, W, H, u0, u1) {
   const f = 6; // weicher Übergang zwischen Abschnitten
   const e = 0.6; // weiche Kante zwischen Teilstreifen
   const fade = (d) => (d < 1.5 ? 0.55 : 1); // am äußersten Rand schwächer
+  if ((part.side === 'top' || part.side === 'bottom') && part.sub < 0) {
+    // ganzer Streifen: am Rand voll, zur Mitte sanft auslaufend (keine sichtbare Kante)
+    const dir = part.side === 'top' ? '180deg' : '0deg';
+    const band = `linear-gradient(${dir}, rgba(0,0,0,.6), #000 1.5px, rgba(0,0,0,.75) ${u1 * 0.35}px, rgba(0,0,0,.4) ${u1 * 0.65}px, rgba(0,0,0,.12) ${u1 * 0.9}px, transparent ${u1 * 1.15}px)`;
+    return `${band}, linear-gradient(90deg, transparent ${r * 0.55}px, #000 ${r * 1.1}px, #000 ${W - r * 1.1}px, transparent ${W - r * 0.55}px)`;
+  }
   if (part.side === 'top' || part.side === 'bottom') {
     const dir = part.side === 'top' ? '180deg' : '0deg';
     const band = `linear-gradient(${dir}, ${u0 ? 'transparent' : `rgba(0,0,0,${fade(0)})`} ${Math.max(0, u0 - e)}px, rgba(0,0,0,${fade(u0)}) ${u0 + e}px, #000 ${u1 - e}px, transparent ${u1 + e}px)`;
@@ -5709,7 +5713,8 @@ function glassPlace() {
   if (!caps || !caps.offsetWidth) return;
   const cr = caps.getBoundingClientRect();
   const ar = app.getBoundingClientRect();
-  const max = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+  const root = document.scrollingElement || document.documentElement;
+  const max = glass.range ?? Math.max(0, root.scrollHeight - root.clientHeight);
   const top = ar.top + scrollY; // Lage der Seite ohne Scrollen
   const key = `${cr.left},${cr.top},${cr.width},${cr.height},${ar.left},${ar.width},${top},${max}`;
   if (key === glass.key) return;
@@ -5746,7 +5751,7 @@ function glassPlace() {
           ? [W / 2, H - B]
           : [(part.side === 'l' ? r : W - r) + (r - B) * n[0], r + (r - B) * n[1]];
     // p ↦ T + (a + k·s)·n mit s = (T − p)·n  ⇒  A = I − (1 + k)·n·nᵀ, Verschiebung (1 + k)(T·n)·n + a·n
-    const k = whole ? GLASS_K_END : inner ? GLASS_K1 : k2;
+    const k = whole ? (part.side === 'top' || part.side === 'bottom' ? (B - 1) / Math.max(4, r - B) : GLASS_K_END) : inner ? GLASS_K1 : k2;
     const off = whole || inner ? 0 : a2;
     const q = 1 + k;
     const A = [1 - q * n[0] * n[0], -q * n[0] * n[1], -q * n[0] * n[1], 1 - q * n[1] * n[1]];
@@ -5759,11 +5764,27 @@ function glassPlace() {
   });
   glassScroll();
 }
+/** Den Scrollweg nachmessen, den Safari der an die Scrollposition gekoppelten Animation tatsächlich zugrunde legt
+ *  (auf dem iPhone weicht er als Home-Bildschirm-App von scrollHeight − Fensterhöhe ab; die Kopien liefen sonst weg):
+ *  Fortschritt der Animation und scrollY ergeben den Weg. */
+function glassCalibrate() {
+  if (!GLASS_TIMELINE || scrollY < 80) return;
+  const an = glass.layers[0]?.querySelector('.glass-scroll').getAnimations()[0];
+  const ct = an && an.currentTime;
+  const pct = ct && typeof ct === 'object' ? ct.value : null;
+  if (!pct || pct <= 0 || pct >= 100) return;
+  const range = Math.round(scrollY / (pct / 100));
+  if (Math.abs(range - (glass.max ?? range)) < 2) return;
+  glass.range = range;
+  glass.key = '';
+  glassPlace();
+}
 /** Ohne animation-timeline die ganze Scrollbewegung, sonst nur beim Nachfedern am Seitenanfang/-ende: dann ist die an
  *  die Scrollposition gekoppelte Animation abgeschaltet und das Skript führt die Kopien. Gemessen wird die tatsächliche
  *  Lage der Seite (nicht scrollY); solange die Seite federt, wird in jedem Bild nachgeprüft, bis sie wieder ruht. */
 function glassScroll() {
   if (!glass.caps) return;
+  glassCalibrate();
   const y = glass.top - app.getBoundingClientRect().top; // wie weit die Seite verschoben ist
   const bouncing = y < -0.5 || y > glass.max + 0.5;
   const manual = !GLASS_TIMELINE || bouncing;
