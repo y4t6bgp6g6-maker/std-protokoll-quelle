@@ -173,7 +173,7 @@ input { font: inherit; color: inherit; }
    Berührungen durch (sonst fängt sie die Lupe neben der Überschrift ab) */
 .nav:not(:has(> :not(:empty))) { pointer-events: none; }
 .nav:not(:has(> :not(:empty))) ~ .large-title,
-.nav:not(:has(> :not(:empty))) ~ .title-row { margin-top: -78px; }
+.nav:not(:has(> :not(:empty))) ~ .title-row { margin-top: -60px; }
 /* Zettel-Liste: Überschrift und Lupe in einer Reihe, die Lupe scrollt mit */
 .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .title-row .large-title { margin: 0 4px; }
