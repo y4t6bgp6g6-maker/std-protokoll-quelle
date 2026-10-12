@@ -53,17 +53,16 @@ const escapeHtml = (s) =>
 
 // ───────────────────────── Datenmodell ─────────────────────────
 // Zettel: { id, weekStart: 'YYYY-MM-DD' (Montag), year, month, name, days[7], sentAt, createdAt, updatedAt }
-// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'schule'|'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }] }
+// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }] }
 //         (start/end: Minuten seit 00:00; bei gesetztem status werden die Zeilen ignoriert, bleiben aber erhalten)
 
 const DAY_STATUS = {
-  schule: 'Berufsschule',
   krank: 'Krankheitstag',
   urlaub: 'Urlaubstag',
   feiertag: 'Gesetzlicher Feiertag',
   frei: 'Frei',
 };
-const DAY_STATUS_SHORT = { schule: 'Schule', krank: 'Krank', urlaub: 'Urlaub', feiertag: 'Feiertag', frei: 'Frei' };
+const DAY_STATUS_SHORT = { krank: 'Krank', urlaub: 'Urlaub', feiertag: 'Feiertag', frei: 'Frei' };
 
 const emptyRow = () => ({ id: uid(), start: null, end: null, site: '', work: '' });
 const rowIsEmpty = (r) => r.start == null && r.end == null && !r.site && !r.work;
@@ -908,9 +907,16 @@ function askPayslipMonth(month, done, year = null, chosen = false) {
 const fmtSigned = (min) => (min > 0 ? '+' : min < 0 ? '−' : '') + fmtH(Math.abs(min));
 
 /** Sa/So: Tagesart lässt sich nicht wählen – nur ein Feiertag, den die App selbst einträgt (zählt 0 Stunden, im PDF wie Arbeit).
- *  Andere Tagesarten (aus älteren Fassungen oder eingelesenen Dateien) werden entfernt. true = geändert */
+ *  Andere Tagesarten (aus älteren Fassungen oder eingelesenen Dateien) werden entfernt, ebenso die frühere Tagesart
+ *  „Schule“ (kurz in v2–v4). true = geändert */
 function fixWeekend(s) {
   let changed = false;
+  for (const d of s.days) {
+    if (d.status === 'schule') {
+      delete d.status;
+      changed = true;
+    }
+  }
   for (const i of [5, 6]) {
     const d = s.days[i];
     if (d.status && !(d.status === 'feiertag' && holidayName(sheetDate(s, i)))) {
@@ -1774,7 +1780,6 @@ const ICON = {
   suitcase: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>', 22),
   urlaub: svg('<path d="M12 4a8 8 0 0 1 8 8H4a8 8 0 0 1 8-8z"/><path d="M12 12v7a2 2 0 0 0 4 0"/>', 14),
   krank: svg('<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/>', 14),
-  schule: svg('<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>', 14),
   feiertag: svg('<path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 14),
   frei: svg('<path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>', 14),
   doc: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 15),
@@ -2594,8 +2599,7 @@ function chooseStatus(btn) {
   };
   actionSheet([
     { label: `${day.status ? '' : '✓ '}Arbeit`, run: () => set(null) },
-    // Berufsschule nur mit eingeschaltetem Berichtsheft (oder wenn der Tag schon so eingetragen ist)
-    ...Object.entries(DAY_STATUS_SHORT).filter(([key]) => key !== 'schule' || bhOn() || day.status === 'schule').map(([key, label]) => ({
+    ...Object.entries(DAY_STATUS_SHORT).map(([key, label]) => ({
       label: `${day.status === key ? '✓ ' : ''}${label}`,
       run: () => set(key),
     })),

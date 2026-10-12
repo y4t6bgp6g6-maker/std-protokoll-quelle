@@ -448,7 +448,6 @@ function bhCurrent(create = true) {
 /** Text eines Stundenzettel-Tages fürs Berichtsheft: jede Arbeit eine Zeile; Tagesarten als Wort */
 function sheetDayReport(d, date) {
   if (!d) return null;
-  if (d.status === 'schule') return { text: 'Berufsschule: ', hours: fmtHours(statusCredit('schule', 0)) };
   if (d.status && !canWork(d)) return { text: DAY_STATUS_SHORT[d.status], hours: '' };
   const parts = [];
   for (const r of d.rows) for (const p of String(r.work || '').split(',')) if (p.trim() && !parts.some((x) => sameKey(x) === sameKey(p))) parts.push(p.trim());
