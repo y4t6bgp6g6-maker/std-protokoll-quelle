@@ -112,6 +112,7 @@ function leaveTeamLocal(message) {
   saveTeam();
   teamData = null;
   if (currentView === 'team') renderTeam();
+  else if (currentView === 'teamPerson' || currentView === 'teamSheet') location.replace('#/team');
   if (message) toast(message);
 }
 
@@ -129,13 +130,17 @@ function leaveTeam() {
   }, true);
 }
 
-// ───────── Team-Seite: ein Tag, darunter alle Kollegen ─────────
+// ───────── Team-Seite: Reiter „Heute“ (Kollegen zum Aufklappen) und „Woche“ (Stunden je Tag) ─────────
 
 /** Zuletzt geladene Einträge der Kollegen (null = noch nichts geladen) */
 let teamData = null;
 let teamLoading = false;
-/** Gewählter Tag (Datum); ohne Wahl heute */
+/** Gewählter Reiter, Tag unter „Heute“ (ohne Wahl heute), Montag unter „Woche“, aufgeklappte Kollegen, Scrollstand */
+let teamTab = 'heute';
 let teamDay = null;
+let teamWeek = null;
+const teamOpen = new Set();
+let teamScroll = 0;
 
 /** Einträge der anderen nur in bekannter Form übernehmen (jeder mit dem Code kann dort schreiben) */
 function teamClean(members) {
@@ -182,7 +187,7 @@ async function teamLoad() {
     teamData = { ...(team.cache || { members: [] }), offline: true };
   }
   teamLoading = false;
-  if (currentView === 'team') renderTeamBody();
+  teamRefreshView();
 }
 
 const teamAgo = (ms) => {
@@ -235,6 +240,121 @@ function renderTeam() {
   }
 }
 
+const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
+const TEAM_STATUS_LETTER = { krank: 'K', urlaub: 'U', feiertag: 'FT', frei: 'F' };
+
+/** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
+const teamMembers = () => ((teamData || (team && team.cache) || {}).members || []).filter((m) => team && m.member !== team.member);
+const teamInMonth = (d) => {
+  const t = new Date();
+  return d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
+};
+const teamDayHasContent = (x) => !!x && (!!x.d.status || (x.d.rows || []).some((r) => !rowIsEmpty(r)));
+
+/** Kreis mit dem Anfangsbuchstaben; Farbe nach der Stelle in der Liste, damit sich keine zwei gleichen */
+function teamAvatar(m, size = 34) {
+  const k = Math.max(0, teamMembers().findIndex((x) => x.member === m.member));
+  return `<span class="tm-av" style="--av:${TEAM_COLORS[k % TEAM_COLORS.length]};--s:${size}px">${escapeHtml(([...(m.name || '?')][0] || '?').toUpperCase())}</span>`;
+}
+
+/** Eine Zeile für den Tag: Baustelle (oder Anzahl), erste bis letzte Uhrzeit, Stunden */
+function teamDaySummary(x) {
+  const none = { sub: '<span class="muted">Kein Eintrag</span>', h: '', detail: false };
+  if (!x) return none;
+  const { d, i } = x;
+  const rows = (d.rows || []).filter((r) => !rowIsEmpty(r));
+  if (d.status && !holidayWork(d))
+    return { sub: `<span class="tm-ink status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>`, h: '', detail: false };
+  if (!rows.length) return none;
+  const sites = [...new Set(rows.map((r) => r.site.trim()).filter(Boolean))];
+  const where = sites.length > 1 ? `${sites.length} Baustellen` : escapeHtml(sites[0] || rows[0].work || '');
+  const from = rows[0].start, to = rows[rows.length - 1].end;
+  const time = from != null && to != null ? `${fmtTime(from)}–${fmtTime(to)}` : '';
+  return { sub: `<span class="muted">${[where, time].filter(Boolean).join(' · ')}</span>`, h: fmtH(dayTotal(d, i)), detail: true };
+}
+
+/** Voriger/nächster Tag im laufenden Monat; Sa/So nur, wenn jemand etwas eingetragen hat */
+function teamStepDay(dir) {
+  const members = teamMembers();
+  for (let d = addDays(teamDay, dir); teamInMonth(d); d = addDays(d, dir)) {
+    const wd = (d.getDay() + 6) % 7;
+    if (wd < 5 || members.some((m) => teamDayHasContent(teamMemberDay(m, d)))) return d;
+  }
+  return null;
+}
+
+function teamTodayHTML(members) {
+  const today = startOfDay(new Date());
+  if (!teamDay || !teamInMonth(teamDay)) teamDay = today;
+  const prev = teamStepDay(-1);
+  const next = teamStepDay(1);
+  const wd = (teamDay.getDay() + 6) % 7;
+  const label = `${sameDay(teamDay, today) ? 'Heute · ' : ''}${WEEKDAYS[wd]}, ${fmtDayMonth(teamDay)}`;
+  const arrow = (d, dir) =>
+    `<button class="tm-arrow" data-team="day" ${d ? `data-date="${isoDate(d)}"` : 'disabled'} aria-label="${dir < 0 ? 'Tag zurück' : 'Tag vor'}">${dir < 0 ? ICON.chevronLeft : ICON.chevronRight}</button>`;
+  const rows = members
+    .map((m) => {
+      const x = teamMemberDay(m, teamDay);
+      const { sub, h, detail } = teamDaySummary(x);
+      const open = teamOpen.has(m.member);
+      return `<div class="tm-acc${open ? ' open' : ''}">
+        <button class="list-row plain tm-person" data-team="toggle" data-member="${escapeHtml(m.member)}">${teamAvatar(m)}<span class="tm-mid"><b>${escapeHtml(m.name || '?')}</b>${sub}</span><span class="tm-h">${h}</span><span class="tm-chev">${ICON.chevronRight}</span></button>
+        ${open ? `<div class="tm-acc-body">${detail ? teamDayHTML(x) : ''}<a class="tm-all" href="#/team/${encodeURIComponent(m.member)}">Alle Zettel von ${escapeHtml(m.name || '?')} ${ICON.chevronRight}</a></div>` : ''}
+      </div>`;
+    })
+    .join('');
+  return `<div class="tm-dayhead">${arrow(prev, -1)}<span>${label}</span>${arrow(next, 1)}</div>
+    <div class="card tm-list">${rows}</div>`;
+}
+
+/** Woche: alle Kollegen (und man selbst) mit Stunden je Tag */
+function teamWeekHTML(members) {
+  const overlaps = (mon) => teamInMonth(mon) || teamInMonth(addDays(mon, 6));
+  if (!teamWeek || !overlaps(teamWeek)) teamWeek = mondayOf(new Date());
+  const iso = isoDate(teamWeek);
+  const now = new Date();
+  const own = sheets.find((s) => s.weekStart === iso && s.year === now.getFullYear() && s.month === now.getMonth() + 1);
+  const people = [
+    { name: 'Du', me: true, sheet: own },
+    ...members.map((m) => ({ m, name: m.name || '?', sheet: (m.sheets || []).find((s) => s.weekStart === iso) })),
+  ];
+  const content = (s, i) => s && sheetIsActive(s, i) && teamDayHasContent({ d: s.days[i], i });
+  // Nur Tage des laufenden Monats; Sa/So nur, wenn jemand etwas eingetragen hat
+  const days = [0, 1, 2, 3, 4, 5, 6].filter((i) => teamInMonth(addDays(teamWeek, i)) && (i < 5 || people.some((p) => content(p.sheet, i))));
+  const head = `<div class="tm-wk tm-wk-h"><span></span>${days
+    .map((i) => `<span>${WEEKDAYS_SHORT[i]}<small>${addDays(teamWeek, i).getDate()}.</small></span>`)
+    .join('')}<span>Σ</span></div>`;
+  const line = (p) => {
+    const s = p.sheet;
+    const link = (inner, cls = '') =>
+      p.me || !s ? `<span class="${cls}">${inner}</span>` : `<a class="${cls}" href="#/team/${encodeURIComponent(p.m.member)}/${iso}">${inner}</a>`;
+    const cells = days
+      .map((i) => {
+        if (!s || !sheetIsActive(s, i)) return `<span class="muted">–</span>`;
+        const d = s.days[i];
+        if (d.status && !holidayWork(d)) return link(TEAM_STATUS_LETTER[d.status] || '?', `tm-st status-${d.status}`);
+        const t = dayTotal(d, i);
+        return t ? link(fmtDec(t)) : `<span class="muted">–</span>`;
+      })
+      .join('');
+    const total = s ? sheetTotal(s) : 0;
+    const name = p.me
+      ? `<span class="tm-wk-n"><span class="tm-av tm-av-me" style="--s:24px">D</span>Du</span>`
+      : `<a class="tm-wk-n" href="#/team/${encodeURIComponent(p.m.member)}">${teamAvatar(p.m, 24)}<span>${escapeHtml(p.name)}</span></a>`;
+    return `<div class="tm-wk${p.me ? ' tm-me' : ''}">${name}${cells}<b>${total ? fmtDec(total) : '–'}</b></div>`;
+  };
+  const first = addDays(teamWeek, days[0] ?? 0);
+  const last = addDays(teamWeek, days.at(-1) ?? 4);
+  const canPrev = overlaps(addDays(teamWeek, -7));
+  const canNext = overlaps(addDays(teamWeek, 7));
+  return `<div class="tm-week">
+      <button class="tm-arrow" data-team="week" data-dir="-1" ${canPrev ? '' : 'disabled'} aria-label="Woche zurück">${ICON.chevronLeft}</button>
+      <span>KW ${isoWeek(teamWeek)} · ${fmtDayMonth(first)} – ${fmtDayMonth(last)}</span>
+      <button class="tm-arrow" data-team="week" data-dir="1" ${canNext ? '' : 'disabled'} aria-label="Woche vor">${ICON.chevronRight}</button>
+    </div>
+    <div class="card tm-table${days.length > 5 ? ' wide' : ''}" style="--cols:${days.length}">${head}${people.map(line).join('')}</div>`;
+}
+
 function renderTeamBody() {
   const body = document.getElementById('team-body');
   if (!body) return;
@@ -248,60 +368,107 @@ function renderTeamBody() {
       <p class="footnote center">Deine Zettel des laufenden Monats sind dann für das Team sichtbar.</p>`;
     return;
   }
-
-  const today = startOfDay(new Date());
-  // Nur Tage des laufenden Monats; Wechsel des Monats setzt die Wahl zurück
-  if (!teamDay || teamDay.getMonth() !== today.getMonth() || teamDay.getFullYear() !== today.getFullYear()) teamDay = today;
-  const inMonth = (d) => d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
-  const mon = mondayOf(teamDay);
-  const members = ((teamData && teamData.members) || []).filter((m) => m.member !== team.member);
-  // Sa/So nur, wenn gewählt oder jemand etwas eingetragen hat
-  const used = (i) =>
-    members.some((m) => {
-      const x = teamMemberDay(m, addDays(mon, i));
-      return x && (x.d.status || (x.d.rows || []).some((r) => !rowIsEmpty(r)));
-    });
-  const days = [0, 1, 2, 3, 4, 5, 6].filter((i) => i < 5 || sameDay(addDays(mon, i), teamDay) || used(i));
-  const bar = days
-    .map((i) => {
-      const d = addDays(mon, i);
-      if (!inMonth(d)) return `<span class="db-day off"><span class="db-name">${WEEKDAYS_SHORT[i]}</span><span class="db-h">${d.getDate()}.</span></span>`;
-      return `<button class="db-day${sameDay(d, teamDay) ? ' on' : ''}${sameDay(d, today) ? ' today' : ''}" data-team="day" data-date="${isoDate(d)}"><span class="db-name">${WEEKDAYS_SHORT[i]}</span><span class="db-h">${d.getDate()}.</span></button>`;
-    })
-    .join('');
-  const canPrev = inMonth(addDays(mon, -1));
-  const canNext = inMonth(addDays(mon, 7));
-  const wd = (teamDay.getDay() + 6) % 7;
-
-  let list;
-  if (!teamData) list = `<p class="tm-msg muted">Wird geladen …</p>`;
-  else if (!members.length) list = `<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>`;
-  else
-    list = members
-      .map(
-        (m) => `<h2 class="section-title tm-name"><span>${escapeHtml(m.name || '?')}</span><span>${teamAgo(m.updated)}</span></h2>
-        <div class="card tm-day">${teamDayHTML(teamMemberDay(m, teamDay))}</div>`
-      )
-      .join('');
-
+  const members = teamMembers();
+  let content;
+  if (!teamData && !team.cache) content = `<p class="tm-msg muted">Wird geladen …</p>`;
+  else if (!members.length) content = `<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>`;
+  else content = teamTab === 'woche' ? teamWeekHTML(members) : teamTodayHTML(members);
   body.innerHTML = `
-    <div class="tm-week">
-      <button class="tm-arrow" data-team="week" data-dir="-1" ${canPrev ? '' : 'disabled'} aria-label="Woche zurück">${ICON.chevronLeft}</button>
-      <span>KW ${isoWeek(teamDay)} · ${WEEKDAYS[wd]}, ${fmtDayMonth(teamDay)}</span>
-      <button class="tm-arrow" data-team="week" data-dir="1" ${canNext ? '' : 'disabled'} aria-label="Woche vor">${ICON.chevronRight}</button>
-    </div>
-    <div class="daybar tm-bar">${bar}</div>
+    <div class="seg tm-seg">${[
+      ['heute', 'Heute'],
+      ['woche', 'Woche'],
+    ]
+      .map(([k, t]) => `<button class="${teamTab === k ? 'on' : ''}" data-team="tab" data-tab="${k}">${t}</button>`)
+      .join('')}</div>
     ${teamData && teamData.offline ? `<p class="tm-msg muted">Offline${teamData.at ? ` – Stand ${teamAgo(teamData.at)}` : ''}</p>` : ''}
-    ${list}
+    ${content}
     <div class="center"><button class="link-btn tm-leave" data-team="leave">Team verlassen</button></div>`;
 }
 
-/** Nächster bzw. vorheriger Wochentag im laufenden Monat (gleicher Wochentag, sonst der erste/letzte des Monats) */
-function teamMoveWeek(dir) {
-  const today = new Date();
-  let d = addDays(teamDay, 7 * dir);
-  if (d.getMonth() !== today.getMonth()) d = dir > 0 ? new Date(today.getFullYear(), today.getMonth() + 1, 0) : new Date(today.getFullYear(), today.getMonth(), 1);
-  teamDay = startOfDay(d);
+// ───────── Zettel eines Kollegen ─────────
+
+const teamNav = () => `
+    <header class="nav">
+      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-title"></span>
+      <span class="nav-btn"></span>
+    </header>`;
+
+/** Kollegen für die Unterseiten; ohne Team zurück zur Team-Seite, ohne geladene Daten nachladen */
+function teamFindMember(id) {
+  if (!team) {
+    location.replace('#/team');
+    return undefined;
+  }
+  if (!teamData) teamLoad();
+  return teamMembers().find((m) => m.member === id) || null;
+}
+
+/** Alle verfügbaren Zettel eines Kollegen (laufender Monat), neueste zuerst */
+function renderTeamPerson(id) {
+  const m = teamFindMember(id);
+  if (m === undefined) return;
+  if (!m) {
+    app.innerHTML = `${teamNav()}<p class="tm-msg muted">Nicht mehr verfügbar</p>`;
+    return;
+  }
+  const list = [...(m.sheets || [])].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
+  const total = list.reduce((t, s) => t + sheetTotal(s), 0);
+  const now = new Date();
+  const rows = list
+    .map((s) => {
+      const dots = [0, 1, 2, 3, 4]
+        .map((i) => {
+          const d = sheetIsActive(s, i) ? s.days[i] : null;
+          const cls = !d || !teamDayHasContent({ d, i }) ? '' : d.status && !holidayWork(d) ? `st-${d.status}` : 'on';
+          return `<i class="${cls}"></i>`;
+        })
+        .join('');
+      return `<a class="list-row plain tm-wrow" href="#/team/${encodeURIComponent(m.member)}/${s.weekStart}">
+        <span class="list-kw">KW ${isoWeek(parseDate(s.weekStart))}</span>
+        <span class="list-main"><span class="list-title">${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}</span><span class="tm-dots">${dots}</span></span>
+        <span class="list-hours">${fmtH(sheetTotal(s))}</span>
+        <span class="tm-chev">${ICON.chevronRight}</span>
+      </a>`;
+    })
+    .join('');
+  app.innerHTML = `${teamNav()}
+    <div class="tm-profile">${teamAvatar(m, 64)}<h1>${escapeHtml(m.name || '?')}</h1>
+      <span class="muted">${MONTHS[now.getMonth()]} ${now.getFullYear()} · ${fmtH(total)} · ${teamAgo(m.updated)}</span></div>
+    ${list.length ? `<div class="card tm-list">${rows}</div>` : `<p class="tm-msg muted">Noch keine Zettel</p>`}`;
+}
+
+/** Ein Zettel (eine Woche) eines Kollegen, nur lesen */
+function renderTeamSheet(id, weekStart) {
+  const m = teamFindMember(id);
+  if (m === undefined) return;
+  const s = m && (m.sheets || []).find((x) => x.weekStart === weekStart);
+  if (!s) {
+    app.innerHTML = `${teamNav()}<p class="tm-msg muted">Nicht mehr verfügbar</p>`;
+    return;
+  }
+  const days = sheetActiveDays(s)
+    .filter((i) => i < 5 || teamDayHasContent({ d: s.days[i], i }))
+    .map((i) => {
+      const t = dayTotal(s.days[i], i);
+      return `<h2 class="section-title tm-name"><span>${WEEKDAYS[i]}, ${fmtDayMonth(sheetDate(s, i))}</span><span>${t ? fmtH(t) : ''}</span></h2>
+        <div class="card tm-day">${teamDayHTML({ d: s.days[i], i })}</div>`;
+    })
+    .join('');
+  app.innerHTML = `${teamNav()}
+    <div class="tm-sheet-head">${teamAvatar(m, 40)}<div><h1>KW ${isoWeek(parseDate(s.weekStart))}</h1>
+      <span class="muted">${escapeHtml(m.name || '?')} · ${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}</span></div>
+      <b>${fmtH(sheetTotal(s))}</b></div>
+    ${days}`;
+}
+
+/** Nach dem Laden die gerade offene Team-Seite neu zeichnen */
+function teamRefreshView() {
+  if (currentView === 'team') renderTeamBody();
+  const pm = location.hash.match(/^#\/team\/([^/]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/);
+  if (!pm) return;
+  if (currentView === 'teamPerson') renderTeamPerson(decodeURIComponent(pm[1]));
+  if (currentView === 'teamSheet') renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
 }
 
 // ───────── Ereignisse ─────────
@@ -314,6 +481,19 @@ document.addEventListener('click', (e) => {
       e.preventDefault();
       joinTeam(app.querySelector('[data-team="code"]').value);
       break;
+    case 'tab':
+      if (teamTab === el.dataset.tab) break;
+      haptic();
+      teamTab = el.dataset.tab;
+      renderTeamBody();
+      break;
+    case 'toggle': {
+      haptic();
+      const id = el.dataset.member;
+      if (!teamOpen.delete(id)) teamOpen.add(id);
+      renderTeamBody();
+      break;
+    }
     case 'day':
       haptic();
       teamDay = parseDate(el.dataset.date);
@@ -321,7 +501,7 @@ document.addEventListener('click', (e) => {
       break;
     case 'week':
       haptic();
-      teamMoveWeek(Number(el.dataset.dir));
+      teamWeek = addDays(teamWeek, 7 * Number(el.dataset.dir));
       renderTeamBody();
       break;
     case 'leave':

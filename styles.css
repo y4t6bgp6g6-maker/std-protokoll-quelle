@@ -1360,11 +1360,6 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-week { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .tm-arrow { width: 40px; height: 36px; display: grid; place-items: center; color: var(--accent); }
 .tm-arrow:disabled { opacity: 0.25; }
-.tm-bar { display: flex; padding: 4px; margin-bottom: 4px; }
-.tm-bar .db-day { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-radius: 16px; }
-.tm-bar .db-day.off { opacity: 0.35; }
-.tm-bar .db-day.on { background: var(--accent-fill); color: var(--on-accent); }
-.tm-bar .db-day.on :is(.db-h, .db-name) { color: inherit; }
 .tm-name { display: flex; justify-content: space-between; gap: 12px; }
 .tm-name span:first-child { color: var(--text); font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tm-name span:last-child { flex: none; }
@@ -1383,6 +1378,70 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-status.status-frei { color: var(--off-ink); }
 .tm-msg { text-align: center; margin: 24px 16px; }
 .tm-leave { margin-top: 8px; color: var(--danger); }
+.tm-seg { margin-bottom: 14px; }
+/* Kreis mit Anfangsbuchstaben (Farbe je Kollege aus team.js) */
+.tm-av { flex: none; display: inline-grid; place-items: center; width: var(--s); height: var(--s); border-radius: 50%; background: var(--av); color: #fff; font-weight: 700; font-size: calc(var(--s) * 0.44); }
+.tm-av-me { background: var(--accent-fill); color: var(--on-accent); }
+/* Heute: Tag wählen, darunter je Kollege eine Zeile zum Aufklappen */
+.tm-dayhead { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 6px; font-weight: 600; }
+.tm-list .list-row { flex: none; width: 100%; text-align: left; }
+.tm-acc, .tm-wrow { border-bottom: 0.5px solid var(--sep); }
+.tm-acc:last-child, .tm-wrow:last-child { border-bottom: 0; }
+.tm-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tm-mid > span { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm-h { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tm-chev { flex: none; display: grid; }
+.tm-chev svg { width: 16px; height: 16px; color: var(--muted); transition: transform 0.2s; }
+.tm-acc.open .tm-chev svg { transform: rotate(90deg); }
+.tm-acc.open > .list-row { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
+.tm-acc-body { background: color-mix(in srgb, var(--accent) 5%, var(--card)); border-top: 0.5px solid var(--sep); }
+.tm-acc-body :is(.tm-row, .tm-foot, .tm-status) { padding-left: 60px; }
+.tm-acc-body .tm-time { width: 100px; font-size: 15px; }
+.tm-acc-body .tm-foot { border-bottom: 0.5px solid var(--sep); }
+.tm-all { display: flex; justify-content: flex-end; align-items: center; gap: 4px; padding: 11px 14px; color: var(--accent); font-weight: 600; text-decoration: none; }
+.tm-all svg { width: 16px; height: 16px; }
+.tm-ink svg { width: 14px; height: 14px; vertical-align: -2px; }
+.tm-ink.status-urlaub { color: var(--vac-ink); }
+.tm-ink.status-krank { color: var(--sick-ink); }
+.tm-ink.status-feiertag { color: var(--holiday-ink); }
+.tm-ink.status-frei { color: var(--off-ink); }
+/* Woche: Tabelle mit Stunden je Tag */
+.tm-table { padding: 4px 0; }
+.tm-wk { display: grid; grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 40px) 50px; align-items: center; padding: 9px 12px; border-bottom: 0.5px solid var(--sep); font-variant-numeric: tabular-nums; text-align: center; font-size: 15px; }
+.tm-wk:last-child { border-bottom: 0; }
+.tm-wk > a { color: inherit; text-decoration: none; }
+.tm-wk-h { color: var(--muted); font-size: 13px; font-weight: 600; }
+.tm-wk-h small { display: block; font-weight: 400; }
+.tm-wk-n { display: flex; align-items: center; gap: 8px; text-align: left; font-weight: 600; min-width: 0; }
+.tm-wk-n > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-wk b { text-align: right; }
+.tm-me { background: var(--accent-soft); }
+/* Mit Sa/So: schmalere Spalten, nur der Kreis statt des Namens */
+.tm-table.wide .tm-wk { grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 37px) 46px; font-size: 14px; }
+.tm-table.wide .tm-wk-n > :not(.tm-av) { display: none; }
+.tm-table.wide .tm-wk-n { font-size: 0; }
+.tm-st { font-weight: 700; font-size: 14px; border-radius: 6px; padding: 1px 0; margin: 0 3px; }
+.tm-st.status-urlaub { color: var(--vac-ink); background: color-mix(in srgb, var(--vac) 18%, transparent); }
+.tm-st.status-krank { color: var(--sick-ink); background: color-mix(in srgb, var(--sick) 18%, transparent); }
+.tm-st.status-feiertag { color: var(--holiday-ink); background: color-mix(in srgb, var(--holiday) 18%, transparent); }
+.tm-st.status-frei { color: var(--off-ink); background: color-mix(in srgb, var(--off) 18%, transparent); }
+/* Zettel eines Kollegen */
+.tm-profile { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 22px; text-align: center; }
+.tm-profile h1 { margin: 4px 0 0; font-size: 30px; }
+.tm-profile .muted { font-size: 14px; }
+.tm-wrow { color: inherit; text-decoration: none; }
+.tm-dots { display: flex; gap: 4px; margin-top: 5px; }
+.tm-dots i { width: 22px; height: 5px; border-radius: 3px; background: var(--sep); }
+.tm-dots i.on { background: var(--accent-fill); }
+.tm-dots i.st-urlaub { background: var(--vac); }
+.tm-dots i.st-krank { background: var(--sick); }
+.tm-dots i.st-feiertag { background: var(--holiday); }
+.tm-dots i.st-frei { background: var(--off); }
+.tm-sheet-head { display: flex; align-items: center; gap: 12px; margin: 4px 4px 10px; }
+.tm-sheet-head > div { flex: 1; min-width: 0; }
+.tm-sheet-head h1 { margin: 0; font-size: 28px; }
+.tm-sheet-head .muted { font-size: 14px; }
+.tm-sheet-head > b { font-size: 22px; font-variant-numeric: tabular-nums; }
 
 /* Oberer und unterer Bildschirmrand blenden weich aus (wie WhatsApp): Inhalt wird zum Rand hin unscharf und geht in den Hintergrund über */
 .edge-fade { position: fixed; left: 0; right: 0; z-index: 9; pointer-events: none; }

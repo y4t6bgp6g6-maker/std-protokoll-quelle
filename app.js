@@ -1710,7 +1710,7 @@ const TABS = [
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
-  ['#/team', 'Team', 'tabTeam', ['team']],
+  ['#/team', 'Team', 'tabTeam', ['team', 'teamPerson', 'teamSheet']],
   ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
@@ -1813,7 +1813,9 @@ function route() {
   const lm = hash.match(/^#\/lohn\/(\d{4}-\d{2})$/);
   const jm = hash.match(/^#\/jahr\/(\d{4})$/);
   const am = hash.match(/^#\/arbeitsschein\/(.+)$/);
+  const pm = hash.match(/^#\/team\/([^/]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/);
   if (currentView === 'list') listScroll = window.scrollY;
+  if (currentView === 'team') teamScroll = window.scrollY;
   if (currentView === 'trip') dropEmptyTrip();
   closeModal(true);
   trimWorkInput(suggestInput);
@@ -1840,6 +1842,13 @@ function route() {
   } else if (hash === '#/team') {
     currentView = 'team';
     renderTeam();
+    syncNav();
+    // Zurück von den Zetteln eines Kollegen: an derselben Stelle weiter
+    window.scrollTo(0, prevView === 'teamPerson' || prevView === 'teamSheet' ? teamScroll : 0);
+  } else if (pm) {
+    currentView = pm[2] ? 'teamSheet' : 'teamPerson';
+    if (pm[2]) renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
+    else renderTeamPerson(decodeURIComponent(pm[1]));
     syncNav();
     window.scrollTo(0, 0);
   } else if (hash === '#/anleitung') {
@@ -1891,7 +1900,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamPerson: 1, teamSheet: 2, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -1987,6 +1996,8 @@ const BACK_TARGETS = [
   [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
   [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
+  [/^#\/team\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/team\/[^/]+)\/.*$/, '$1')],
+  [/^#\/team\/[^/]+$/, '#/team'],
   [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];
