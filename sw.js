@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'yetizettel-v100';
+const CACHE = 'std-protokoll-v1';
 const ASSETS = [
   './',
   'index.html',
@@ -27,7 +27,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
       // Nur eigene alte Versionen löschen: andere Apps unter derselben Adresse (github.io) haben eigene Caches
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('yetizettel-') && k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('std-protokoll-') && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

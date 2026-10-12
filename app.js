@@ -166,8 +166,8 @@ const sheetMatches = (s, anchor) => {
 
 // ───────────────────────── Speicher ─────────────────────────
 
-const STORE_KEY = 'yetizettel.sheets.v1';
-const SETTINGS_KEY = 'yetizettel.settings.v1';
+const STORE_KEY = 'stdprotokoll.sheets.v1';
+const SETTINGS_KEY = 'stdprotokoll.settings.v1';
 const DEFAULT_SETTINGS = {
   name: '',
   target: 40,
@@ -322,7 +322,7 @@ const fmtMoney = (v, cents = false) =>
 // ───────────────────────── Lohnabrechnungen ─────────────────────────
 // Eingelesene Abrechnungen je Monat („2026-08“ → Werte aus parsePayslipText). Nur Zahlen, kein Foto, keine Namen.
 
-const PAYSLIP_KEY = 'yetizettel.payslips.v1';
+const PAYSLIP_KEY = 'stdprotokoll.payslips.v1';
 let payslips = readJson(PAYSLIP_KEY, {});
 function savePayslips() {
   try {
@@ -1061,7 +1061,7 @@ function collectWorkBySite() {
 // (Abholadresse in den Einstellungen) oder per „Sicherung einlesen“. Am Tag erscheint dann eine Kapsel; antippen zeigt
 // den Schein und trägt ihn auf Wunsch als Zeile ein.
 
-const REPORT_KEY = 'yetizettel.reports.v1';
+const REPORT_KEY = 'stdprotokoll.reports.v1';
 // items: Scheine; since: Zeitpunkt der neuesten abgeholten Mail; at: letztes Abholen
 let reportStore = { items: [], since: 0, at: 0, ...readJson(REPORT_KEY, {}) };
 if (reportStore.items.some((r) => !r.v)) reportStore.since = 0;
@@ -1228,10 +1228,10 @@ const reportStatusText = () =>
 
 // ───────────────────────── Verschlüsselte Sicherung ─────────────────────────
 // AES-256-GCM, Schlüssel aus dem Passwort (PBKDF2-SHA256). Der Schlüssel liegt nur auf diesem iPhone
-// (yetizettel.crypt.v1, nicht in der Sicherung), damit die automatische Sicherung ohne Eingabe läuft.
+// (stdprotokoll.crypt.v1, nicht in der Sicherung), damit die automatische Sicherung ohne Eingabe läuft.
 // Beim Einlesen einer verschlüsselten Datei fragt die App nach dem Passwort.
 
-const CRYPT_KEY = 'yetizettel.crypt.v1';
+const CRYPT_KEY = 'stdprotokoll.crypt.v1';
 const PBKDF2_ITER = 310000;
 let cryptStore = readJson(CRYPT_KEY, null); // { salt, key } als Base64
 
@@ -1265,7 +1265,7 @@ async function sealBackup(plain) {
   const key = await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain));
-  return JSON.stringify({ app: 'yetizettel', enc: 'AES-256-GCM', kdf: 'PBKDF2-SHA256', iter: PBKDF2_ITER, salt: cryptStore.salt, iv: toB64(iv), data: toB64(data) });
+  return JSON.stringify({ app: 'std-protokoll', enc: 'AES-256-GCM', kdf: 'PBKDF2-SHA256', iter: PBKDF2_ITER, salt: cryptStore.salt, iv: toB64(iv), data: toB64(data) });
 }
 
 /** Verschlüsselte Sicherung öffnen: nach dem Passwort fragen, bis es passt oder abgebrochen wird */
@@ -1342,9 +1342,9 @@ async function askNewBackupPassword(onDone) {
 
 // ───────────────────────── Sicherung in Google Drive ─────────────────────────
 // Über dieselbe Abholadresse wie die Arbeitsscheine: das Google-Skript (doPost) legt die Datei im Ordner
-// „Yetizettel-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
+// „Std-Protokoll-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
 
-const DRIVE_KEY = 'yetizettel.drive.v1';
+const DRIVE_KEY = 'stdprotokoll.drive.v1';
 const driveState = readJson(DRIVE_KEY, { at: 0, hash: '', error: '' });
 let driveBusy = false;
 
@@ -3091,7 +3091,7 @@ async function sharePdf(s, isSend) {
 // Abrechnung: { id, sheetId, dates: ['YYYY-MM-DD'], over: { Datum: { start, end, places, works, meal } }, from, to (angezeigte Tage),
 //   place, signDate, name, sentAt, createdAt, updatedAt }. Ohne Eintrag in „over“ kommt der Wert aus dem Stundenzettel.
 
-const TRIP_KEY = 'yetizettel.trips.v1';
+const TRIP_KEY = 'stdprotokoll.trips.v1';
 let trips = readJson(TRIP_KEY, []);
 let tripId = null;
 

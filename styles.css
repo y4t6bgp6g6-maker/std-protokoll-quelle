@@ -1442,7 +1442,7 @@ ol.guide { list-style: none; margin: 0; padding: 4px 0; }
 html.locked #app, html.locked #tabbar, html.locked .edge-fade, html.locked #modal-layer { visibility: hidden; }
 /* iOS färbt den Bereich hinter Uhrzeit/Akku nach dem Seitenhintergrund – während der Sperre dunkelblau */
 html.locked, html.locked body { background: #0b1d4a; }
-/* „Yeti-Nacht“: tiefblauer Verlauf mit Leuchten hinter dem Icon, in hell und dunkel gleich */
+/* „Nacht“: tiefblauer Verlauf mit Leuchten hinter dem Icon, in hell und dunkel gleich */
 #lock { position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
   padding: 24px; background: #050a1c; color: #fff; text-align: center; }
 .lock-bg { position: absolute; inset: 0; z-index: -1;

@@ -1,9 +1,9 @@
-// Yetizettel – Sperre mit Face ID (Passkey/WebAuthn)
+// Std-Protokoll – Sperre mit Face ID (Passkey/WebAuthn)
 // Die App zeigt beim Start und nach mehr als LOCK_AFTER im Hintergrund einen Sperrbildschirm; „Entsperren“ startet
 // Face ID (oder den iPhone-Code). Es ist eine Sperre vor der App, keine Verschlüsselung. Einstellung und Passkey-ID
-// liegen nur auf diesem iPhone (yetizettel.lock.v1), nicht in der Sicherung.
+// liegen nur auf diesem iPhone (stdprotokoll.lock.v1), nicht in der Sicherung.
 
-const LOCK_KEY = 'yetizettel.lock.v1';
+const LOCK_KEY = 'stdprotokoll.lock.v1';
 const LOCK_AFTER = 5 * 60e3;
 let lockStore = (() => {
   try {
