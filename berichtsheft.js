@@ -101,11 +101,19 @@ async function bhImportImage(file) {
 // ───────── Zeiträume ─────────
 
 const addYears = (d, n) => new Date(d.getFullYear() + n, d.getMonth(), d.getDate());
-/** Zeitraum des n-ten Ausbildungsjahres ab Ausbildungsbeginn */
+/** Zeitraum des n-ten Ausbildungsjahres ab Ausbildungsbeginn; das letzte endet mit dem Ende der Ausbildung (z. B. nach 3½ Jahren) */
 function bhYearRange(jahr) {
-  const begin = parseDate(bh.profile.beginn);
-  const start = addYears(begin, jahr - 1);
-  return { start: isoDate(start), end: isoDate(addDays(addYears(start, 1), -1)) };
+  const start = addYears(parseDate(bh.profile.beginn), jahr - 1);
+  let end = isoDate(addDays(addYears(start, 1), -1));
+  if (bh.profile.ende && bh.profile.ende >= isoDate(start) && bh.profile.ende < end) end = bh.profile.ende;
+  return { start: isoDate(start), end };
+}
+/** Anzahl der Ausbildungsjahre bis zum Ende der Ausbildung (angefangene zählen); ohne Ende 4 */
+function bhYearCount() {
+  if (!bh.profile.ende || !bh.profile.beginn || bh.profile.ende < bh.profile.beginn) return 4;
+  let n = 1;
+  while (isoDate(addYears(parseDate(bh.profile.beginn), n)) <= bh.profile.ende) n++;
+  return n;
 }
 /** Wochen eines Hefts (Montage) mit mindestens einem Werktag (Mo–Fr) im Ausbildungsjahr; Nr. 1 = erste Woche */
 function heftWeeks(h) {
@@ -237,8 +245,8 @@ function newHeftMenu() {
     return;
   }
   const have = new Set(bh.hefte.map((h) => h.jahr));
-  const years = [1, 2, 3, 4].filter((j) => !have.has(j));
-  if (!years.length) return toast('Alle Ausbildungsjahre sind angelegt');
+  const years = Array.from({ length: bhYearCount() }, (_, i) => i + 1).filter((j) => !have.has(j));
+  if (!years.length) return toast('Alle Ausbildungsjahre sind angelegt – bei Verlängerung das Ende der Ausbildung ändern');
   actionSheet(
     years.map((j) => {
       const r = bhYearRange(j);
@@ -830,7 +838,7 @@ document.addEventListener('input', (e) => {
     t.closest('.bh-part').querySelector('.bh-over').textContent = monthFitHTML(k, mo[k]);
   } else if (t.dataset.bhP != null) {
     bh.profile[t.dataset.bhP] = t.value.trim();
-    if (t.dataset.bhP === 'beginn') bhRecalcYears();
+    if (t.dataset.bhP === 'beginn' || t.dataset.bhP === 'ende') bhRecalcYears();
     saveBh();
   }
 });
