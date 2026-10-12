@@ -2810,7 +2810,8 @@ function updatePdfThumb(now = false) {
     if (currentView === 'trip') {
       const t = currentTrip();
       if (t && t.dates.length) file = tripPdfFile(t);
-    } else if (currentSheet()) file = pdfFileFor(currentSheet());
+    } else if (currentView === 'bhWeek' || currentView === 'bhMonth') file = bhPageFile();
+    else if (currentSheet()) file = pdfFileFor(currentSheet());
     // Abrechnung ohne Reisetage: noch keine Vorschau
     img.closest('.pv-thumb').hidden = !file;
     if (!file) return;

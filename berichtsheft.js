@@ -428,9 +428,11 @@ function renderBhWeek(h, mon) {
     <p class="bh-sub muted">${fmtDayMonth(a)} – ${fmtShort(b)} · KW ${isoWeek(parseDate(mon))}</p>
     ${hasSheet && !locked ? `<button class="bh-add bh-import" data-bh="from-sheets">${ICON.doc}<span>Aus Stundenzettel übernehmen</span></button>` : ''}
     <div class="bh-days">${days.map(dayCard).join('')}</div>
-    ${signCardHTML(w, b)}`;
+    ${signCardHTML(w, b)}
+    ${pdfThumbHTML('Bericht')}`;
   bhEntry = { kind: 'woche', h, key: mon };
   fitRowTexts();
+  updatePdfThumb(true);
 }
 let bhSatOpen = false;
 let bhEntry = null; // { kind, h, key } der geöffneten Seite
@@ -520,9 +522,11 @@ function renderBhMonth(h, ym) {
     <p class="bh-sub muted">Monatsbericht · ${fmtDayMonth(a)} – ${fmtShort(b)}</p>
     ${anyWeeks && !locked ? `<button class="bh-add bh-import" data-bh="from-weeks">${ICON.doc}<span>Aus den Wochen übernehmen</span></button>` : ''}
     ${BH_PARTS.map(part).join('')}
-    ${signCardHTML(mo, b)}`;
+    ${signCardHTML(mo, b)}
+    ${pdfThumbHTML('Bericht')}`;
   bhEntry = { kind: 'monat', h, key: ym };
   fitRowTexts();
+  updatePdfThumb(true);
 }
 
 /** Stichpunkte der Wochen eines Monats als Anfang für den Monatsbericht (Berufsschul-Tage getrennt) */
@@ -577,7 +581,7 @@ function withSignature(role, then) {
     bh.sigs[role] = sig;
     saveBh();
     then();
-  }, `Unterschrift ${BH_ROLES.find((r) => r[0] === role)[1]}`);
+  }, BH_ROLES.find((r) => r[0] === role)[1]);
 }
 
 function signTap(role) {
@@ -658,7 +662,7 @@ function editSignature(role) {
       bh.sigs[role] = sig;
       saveBh();
       renderBhInfo();
-    }, `Unterschrift ${label}`);
+    }, label);
   if (!bh.sigs[role]) return draw();
   actionSheet([
     { label: 'Neu unterschreiben', run: draw },
@@ -736,6 +740,9 @@ function buildHeftPdf(h, kind, page = null) {
   const blob = doc.output({ title: what, author: bhName() });
   return new File([blob], `${what}.pdf`, { type: 'application/pdf' });
 }
+
+/** PDF der geöffneten Wochen- oder Monatsseite (für die Vorschau) */
+const bhPageFile = () => (bhEntry && findHeft(bhEntry.h.id) ? buildHeftPdf(bhEntry.h, bhEntry.kind, bhEntry.key) : null);
 
 async function shareBhPdf(file) {
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -827,15 +834,18 @@ document.addEventListener('input', (e) => {
     bhCurrent().days[i].text = t.value;
     saveBh();
     t.closest('.bh-day').querySelector('.bh-over').textContent = overHTML(dayLines(t.value));
+    updatePdfThumb();
   } else if (t.dataset.bhHours != null) {
     bhCurrent().days[Number(t.dataset.bhHours)].hours = t.value;
     saveBh();
+    updatePdfThumb();
   } else if (t.dataset.bhMtext != null) {
     const mo = bhCurrent();
     const k = t.dataset.bhMtext;
     mo[k] = { ...mo[k], text: t.value };
     saveBh();
     t.closest('.bh-part').querySelector('.bh-over').textContent = monthFitHTML(k, mo[k]);
+    updatePdfThumb();
   } else if (t.dataset.bhP != null) {
     bh.profile[t.dataset.bhP] = t.value.trim();
     if (t.dataset.bhP === 'beginn' || t.dataset.bhP === 'ende') bhRecalcYears();
