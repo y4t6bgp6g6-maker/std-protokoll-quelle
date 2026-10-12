@@ -53,16 +53,17 @@ const escapeHtml = (s) =>
 
 // ───────────────────────── Datenmodell ─────────────────────────
 // Zettel: { id, weekStart: 'YYYY-MM-DD' (Montag), year, month, name, days[7], sentAt, createdAt, updatedAt }
-// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }] }
+// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'schule'|'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }] }
 //         (start/end: Minuten seit 00:00; bei gesetztem status werden die Zeilen ignoriert, bleiben aber erhalten)
 
 const DAY_STATUS = {
+  schule: 'Berufsschule',
   krank: 'Krankheitstag',
   urlaub: 'Urlaubstag',
   feiertag: 'Gesetzlicher Feiertag',
   frei: 'Frei',
 };
-const DAY_STATUS_SHORT = { krank: 'Krank', urlaub: 'Urlaub', feiertag: 'Feiertag', frei: 'Frei' };
+const DAY_STATUS_SHORT = { schule: 'Schule', krank: 'Krank', urlaub: 'Urlaub', feiertag: 'Feiertag', frei: 'Frei' };
 
 const emptyRow = () => ({ id: uid(), start: null, end: null, site: '', work: '' });
 const rowIsEmpty = (r) => r.start == null && r.end == null && !r.site && !r.work;
@@ -1699,7 +1700,7 @@ function enterReport(rep, s, dayIndex, draft) {
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
-  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips']],
+  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team']],
   ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
@@ -1773,6 +1774,7 @@ const ICON = {
   suitcase: svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>', 22),
   urlaub: svg('<path d="M12 4a8 8 0 0 1 8 8H4a8 8 0 0 1 8-8z"/><path d="M12 12v7a2 2 0 0 0 4 0"/>', 14),
   krank: svg('<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/>', 14),
+  schule: svg('<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>', 14),
   feiertag: svg('<path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 14),
   frei: svg('<path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>', 14),
   doc: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 15),
@@ -1837,6 +1839,9 @@ function route() {
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
+  } else if (bhRoute(hash)) {
+    syncNav();
+    window.scrollTo(0, 0);
   } else if (hash === '#/team') {
     currentView = 'team';
     renderTeam();
@@ -1891,7 +1896,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -1986,15 +1991,18 @@ const BACK_TARGETS = [
   [/^#\/arbeitsschein\//, '#/arbeitsscheine'],
   [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
   [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
-  [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+)$/, '#/'],
+  [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
+  [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
+  [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];
 let backTarget = null;
 function goBack() {
   const t = BACK_TARGETS.find(([re]) => re.test(location.hash));
+  const target = t ? (typeof t[1] === 'function' ? t[1]() : t[1]) : null;
   if (history.length > 1 && history.state !== 'root') {
-    backTarget = t ? t[1] : null;
+    backTarget = target;
     history.back();
-  } else location.hash = t ? t[1] : '#/';
+  } else location.hash = target || '#/';
 }
 
 // ───────────────────────── Liste ─────────────────────────
@@ -2017,11 +2025,11 @@ function renderList() {
     ${
       searching
         ? ''
-        : `<div class="title-row"><h1 class="large-title">Stundenzettel</h1>${
-            sheets.length ? `<button class="nav-btn" data-act="search" aria-label="Suchen">${ICON.search}</button>` : ''
-          }</div>`
+        : `<div class="title-row"><h1 class="large-title">${bhMode() === 'heft' ? 'Berichtsheft' : 'Stundenzettel'}</h1>${
+            sheets.length && bhMode() === 'zettel' ? `<button class="nav-btn" data-act="search" aria-label="Suchen">${ICON.search}</button>` : ''
+          }</div>${bhSwitchHTML()}`
     }
-    <div id="list-body">${listBodyHTML()}</div>
+    <div id="list-body">${bhMode() === 'heft' && !searching ? heftListHTML() : listBodyHTML()}</div>
     ${
       searching ? `<button class="to-top floating" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>` : ''
     }`;
@@ -2586,7 +2594,8 @@ function chooseStatus(btn) {
   };
   actionSheet([
     { label: `${day.status ? '' : '✓ '}Arbeit`, run: () => set(null) },
-    ...Object.entries(DAY_STATUS_SHORT).map(([key, label]) => ({
+    // Berufsschule nur mit eingeschaltetem Berichtsheft (oder wenn der Tag schon so eingetragen ist)
+    ...Object.entries(DAY_STATUS_SHORT).filter(([key]) => key !== 'schule' || bhOn() || day.status === 'schule').map(([key, label]) => ({
       label: `${day.status === key ? '✓ ' : ''}${label}`,
       run: () => set(key),
     })),
@@ -3646,9 +3655,10 @@ const isSignature = (sig) =>
   !!sig && typeof sig.ratio === 'number' && Array.isArray(sig.strokes) && sig.strokes.length > 0 &&
   sig.strokes.every((st) => Array.isArray(st) && st.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)));
 
-function signaturePad() {
+/** Unterschreiben; ohne onSave für die Reisekosten (Einstellungen), sonst bekommt onSave die Unterschrift */
+function signaturePad(onSave = null, title = 'Unterschrift') {
   const modal = openModal(
-    `${modalHead('Unterschrift')}
+    `${modalHead(title)}
     <div class="sig-wrap"><canvas class="sig-canvas"></canvas><div class="sig-line"></div><span class="sig-hint muted">Mit dem Finger unterschreiben</span></div>
     <button class="modal-wide" data-m="clear">Neu beginnen</button>`,
     'sheet'
@@ -3703,11 +3713,14 @@ function signaturePad() {
     }
     if (b.dataset.m === 'ok' && strokes.length) {
       const round = (v) => Math.round(v * 1000) / 1000;
-      settings.signature = { ratio: round(h / w), strokes: strokes.map((st) => st.map(([x, y]) => [round(x), round(y)])) };
+      const sig = { ratio: round(h / w), strokes: strokes.map((st) => st.map(([x, y]) => [round(x), round(y)])) };
+      closeModal();
+      if (onSave) return onSave(sig);
+      settings.signature = sig;
       saveSettings();
     }
     closeModal();
-    renderSettings();
+    if (!onSave) renderSettings();
   });
 }
 
@@ -3790,6 +3803,7 @@ function renderSettings() {
       ${setLink('#/einstellungen/lohn', 'euro', 'blue', 'Lohn', sum.lohn)}
       ${setLink('#/einstellungen/reisekosten', 'case', 'orange', 'Reisekosten', sum.reisekosten)}
       ${setLink('#/einstellungen/vorschlaege', 'text', 'teal', 'Vorschläge', sum.vorschlaege)}
+      ${setToggle('book', 'green', 'Berichtsheft', `data-s="bhOn" ${settings.bhOn ? 'checked' : ''}`)}
     </div>
     <div class="card s-group">
       ${setLink('#/einstellungen/scheine', 'doc', 'purple', 'Arbeitsscheine', sum.scheine)}
@@ -3896,7 +3910,7 @@ function hiddenSuggestionsHTML() {
 }
 
 const backupJson = (indent) =>
-  JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets, trips, settings, payslips, reports: reports() }, null, indent);
+  JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets, trips, settings, payslips, reports: reports(), berichtsheft: bhBackup() }, null, indent);
 
 async function exportBackup() {
   let data;
@@ -4092,6 +4106,8 @@ function mergeBackup(data) {
   }
   // Arbeitsscheine: fehlende übernehmen
   if (Array.isArray(data.reports)) addReports(data.reports.filter((r) => r && r.id && r.date && !reports().some((x) => x.id === r.id)));
+  // Berichtsheft: fehlende Hefte und Seiten übernehmen
+  if (data.berichtsheft) bhMerge(data.berichtsheft);
   return { added, same, conflicts, signature, renamed, tripsAdded, tripsSame, settingsRestored };
 }
 
