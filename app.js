@@ -991,6 +991,7 @@ function saveSheets(changed) {
   } catch {
     toast('Speichern fehlgeschlagen!');
   }
+  teamQueueUpload();
 }
 function saveSettings() {
   try {
@@ -998,6 +999,7 @@ function saveSettings() {
   } catch {
     toast('Speichern fehlgeschlagen!');
   }
+  teamQueueUpload();
 }
 
 // Speicher als dauerhaft markieren, damit iOS ihn nicht aufräumt
@@ -1701,7 +1703,7 @@ function enterReport(rep, s, dayIndex, draft) {
   toast('Eingetragen');
 }
 
-// ───────────────────────── Leiste unten, Team, Darstellung ─────────────────────────
+// ───────────────────────── Leiste unten, Darstellung ─────────────────────────
 
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
@@ -1728,18 +1730,6 @@ function updateTabbar() {
   document.body.classList.add('tabs');
   document.querySelectorAll('#tabbar .tab-row > .tab').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.hash === tab[0]));
 }
-
-function renderTeam() {
-  app.innerHTML = `
-    <header class="nav">
-      <span class="nav-btn"></span>
-      <span class="nav-title"></span>
-      <span class="nav-btn"></span>
-    </header>
-    <h1 class="large-title">Team</h1>
-    <div class="team-empty">${svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48)}<b>Kommt bald</b></div>`;
-}
-
 
 /** Darstellung: „Wie iPhone“ folgt dem Hell-/Dunkelmodus des iPhones */
 // Schalter in den Einstellungen; ohne Wahl (auto) wie das iPhone

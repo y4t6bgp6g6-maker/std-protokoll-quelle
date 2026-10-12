@@ -1352,6 +1352,37 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
 .team-empty svg { color: var(--accent); }
 .team-empty b { display: block; margin: 12px 0 4px; color: var(--text); font-size: 19px; }
+/* Team: Beitreten mit Code; danach ein Tag, darunter je Kollege eine Karte (nur lesen) */
+.tm-join { margin: 22px 0 12px; padding: 0 16px; }
+.tm-join input { width: 100%; padding: 14px 0; font-size: 17px; border: 0; background: none; color: var(--text); text-align: center; letter-spacing: 0.05em; outline: none; }
+.tm-join-btn { background: var(--accent-fill); color: var(--on-accent); }
+.tm-join-btn:disabled { opacity: 0.5; }
+.tm-week { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tm-arrow { width: 40px; height: 36px; display: grid; place-items: center; color: var(--accent); }
+.tm-arrow:disabled { opacity: 0.25; }
+.tm-bar { display: flex; padding: 4px; margin-bottom: 4px; }
+.tm-bar .db-day { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 6px 0; border-radius: 16px; }
+.tm-bar .db-day.off { opacity: 0.35; }
+.tm-bar .db-day.on { background: var(--accent-fill); color: var(--on-accent); }
+.tm-bar .db-day.on :is(.db-h, .db-name) { color: inherit; }
+.tm-name { display: flex; justify-content: space-between; gap: 12px; }
+.tm-name span:first-child { color: var(--text); font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tm-name span:last-child { flex: none; }
+.tm-row { display: flex; gap: 12px; padding: 10px 14px; border-bottom: 0.5px solid var(--sep); align-items: baseline; }
+.tm-time { flex: none; width: 112px; white-space: nowrap; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tm-text { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.tm-text span { color: var(--muted); font-size: 14px; }
+.tm-foot { display: flex; justify-content: space-between; padding: 9px 14px; color: var(--muted); font-size: 15px; }
+.tm-foot b { color: var(--text); }
+.tm-none { padding: 12px 14px; color: var(--muted); }
+.tm-status { padding: 12px 14px; display: flex; gap: 6px; align-items: center; font-weight: 600; border-bottom: 0.5px solid var(--sep); }
+.tm-status:last-child { border-bottom: 0; }
+.tm-status.status-urlaub { color: var(--vac-ink); }
+.tm-status.status-krank { color: var(--sick-ink); }
+.tm-status.status-feiertag { color: var(--holiday-ink); }
+.tm-status.status-frei { color: var(--off-ink); }
+.tm-msg { text-align: center; margin: 24px 16px; }
+.tm-leave { margin-top: 8px; color: var(--danger); }
 
 /* Oberer und unterer Bildschirmrand blenden weich aus (wie WhatsApp): Inhalt wird zum Rand hin unscharf und geht in den Hintergrund über */
 .edge-fade { position: fixed; left: 0; right: 0; z-index: 9; pointer-events: none; }

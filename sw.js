@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v5';
+const CACHE = 'std-protokoll-v6';
 const ASSETS = [
   './',
   'index.html',
@@ -15,6 +15,7 @@ const ASSETS = [
   'payslip.js',
   'guide.js',
   'lock.js',
+  'team.js',
   'manifest.webmanifest',
   'icons/apple-touch-icon.png?v=2',
   'icons/icon-192.png?v=2',
