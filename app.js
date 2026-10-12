@@ -2064,16 +2064,11 @@ function gapRowHTML(gap) {
   const oldest = gap.at(-1);
   const partial = (n) => sheetActiveDays(n).length < 7;
   const kw = (n) => isoWeek(parseDate(n.weekStart));
-  const title =
-    gap.length === 1
-      ? `KW ${kw(newest)} fehlt${partial(newest) ? ' (Teilwoche)' : ''}`
-      : `KW ${kw(oldest)}–${kw(newest)} fehlen`;
   return `<button class="list-gap" data-act="gap" data-date="${isoDate(sheetFirstDate(oldest))}" data-count="${gap.length}">
-    <span class="gap-icon">${ICON.plus}</span>
-    <span class="list-main">
-      <span class="list-title">${title}</span>
-      <span class="list-sub">${fmtShort(sheetFirstDate(oldest))} – ${fmtShort(sheetLastDate(newest))}</span>
-    </span>
+    <span class="list-kw">KW ${gap.length === 1 ? kw(newest) : `${kw(oldest)}–${kw(newest)}`}</span>
+    <span class="list-main"><span class="list-title">${fmtDayMonth(sheetFirstDate(oldest))} – ${fmtDayMonth(sheetLastDate(newest))} ${
+      gap.length === 1 ? `fehlt${partial(newest) ? ' (Teilwoche)' : ''}` : 'fehlen'
+    }</span></span>
   </button>`;
 }
 
@@ -2109,10 +2104,7 @@ function listBodyHTML() {
           if (sh.missing && Array.isArray(rows.at(-1))) rows.at(-1).push(sh);
           else rows.push(sh.missing ? [sh] : sh);
         }
-        // Urlaubstage des Monats (Tage aus Teilwochen zählen in ihrem eigenen Monat); keine → nichts anzeigen
-        const vac = list.filter((sh) => !sh.missing).reduce((t, sh) => t + sh.days.filter((d, i) => d.status === 'urlaub' && sheetIsActive(sh, i)).length, 0);
-        const vacHTML = vac ? `<span class="month-vac">${vac} ${vac === 1 ? 'Urlaubstag' : 'Urlaubstage'} · </span>` : '';
-        return `<h2 class="section-title month-head"><span>${MONTHS[(k % 100) - 1]} ${Math.floor(k / 100)}</span>${searching ? '' : `<span class="month-total">${vacHTML}Gesamt ${fmtH(monthTotal)}</span>`}</h2>
+        return `<h2 class="section-title month-head"><span>${MONTHS[(k % 100) - 1]} ${Math.floor(k / 100)}</span>${searching ? '' : `<span class="month-total">Gesamt ${fmtH(monthTotal)}</span>`}</h2>
         <div class="card list">${rows.map((r) => (Array.isArray(r) ? gapRowHTML(r) : listRowHTML(r, hits.get(r.id)))).join('')}</div>`;
       })
       .join('');
@@ -2441,17 +2433,15 @@ function listRowHTML(s, hit) {
   const sent = !!s.sentAt;
   return `<div class="swipe">
     <div class="swipe-track">
-      <a draggable="false" class="list-row" href="#/zettel/${encodeURIComponent(s.id)}">
-        <span class="status ${sent ? 'sent' : 'open'}">${sent ? ICON.check : ''}</span>
+      <a draggable="false" class="list-row week-row" href="#/zettel/${encodeURIComponent(s.id)}">
+        <span class="list-kw ${sent ? '' : 'open'}" aria-label="${sent ? 'gesendet' : 'offen'}">KW ${isoWeek(parseDate(s.weekStart))}</span>
         <span class="list-main">
-          <span class="list-title">${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}${sheetHasWarning(s) ? ` <span class="list-warn">⚠️</span>` : ''}${
+          <span class="list-title">${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}${sheetHasWarning(s) ? `<span class="list-warn">⚠️</span>` : ''}${
             tripsForSheet(s).some((t) => t.dates.length) ? `<button class="list-trip" data-act="open-trip" data-id="${s.id}" aria-label="Reisekostenabrechnung öffnen">${ICON.suitcaseSmall}</button>` : ''
           }</span>
-          <span class="list-sub">KW ${isoWeek(parseDate(s.weekStart))} · ${sent ? 'gesendet' : 'offen'}</span>
           ${hit ? `<span class="list-hit">${escapeHtml(hit.label)}</span>` : ''}
         </span>
         <span class="list-hours">${fmtH(sheetTotal(s))}</span>
-        <span class="list-chevron">${ICON.chevronRight}</span>
       </a>
       <button class="swipe-del" data-act="delete" data-id="${s.id}">Löschen</button>
     </div>
