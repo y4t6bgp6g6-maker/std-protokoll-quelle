@@ -19,6 +19,8 @@ const saveTeam = () => {
     else localStorage.removeItem(TEAM_KEY);
   } catch {}
 };
+/** Im Team steht nur der Vorname (erstes Wort des Namens) */
+const teamFirstName = (name) => String(name ?? '').trim().split(/\s+/)[0];
 const teamMonth = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 
 async function teamRequest(method, path, body, code = team && team.code) {
@@ -41,7 +43,7 @@ function teamPayload() {
   return {
     member: team.member,
     token: team.token,
-    name: settings.name.trim(),
+    name: teamFirstName(settings.name),
     month: teamMonth(now),
     sheets: sheets
       .filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1)
@@ -141,7 +143,7 @@ function teamClean(members) {
   const str = (v, n) => String(v ?? '').slice(0, n);
   return (Array.isArray(members) ? members : []).map((m) => ({
     member: str(m.member, 64),
-    name: str(m.name, 80),
+    name: teamFirstName(str(m.name, 80)),
     updated: num(m.updated) || 0,
     sheets: (Array.isArray(m.sheets) ? m.sheets : [])
       .filter((s) => s && /^\d{4}-\d{2}-\d{2}$/.test(s.weekStart) && Array.isArray(s.days) && s.days.length === 7)
