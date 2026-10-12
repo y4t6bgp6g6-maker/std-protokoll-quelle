@@ -182,7 +182,6 @@ input { font: inherit; color: inherit; }
 .section-title {
   font-size: 13px;
   font-weight: 400;
-  text-transform: uppercase;
   color: var(--muted);
   margin: 24px 16px 7px;
 }
@@ -218,8 +217,9 @@ input { font: inherit; color: inherit; }
   padding: 9px 12px 9px 14px;
   text-align: left;
   color: var(--warning);
-  background: repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--warning) 9%, transparent) 7px 14px);
 }
+/* Schraffur für Lücken: Zettel-Liste und Monate der Übersicht gleich */
+.list-gap, .ov-month.has-gap { background: repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--warning) 9%, transparent) 7px 14px); }
 .list-gap:active { background-color: var(--fill); }
 .swipe-del {
   flex: 0 0 92px;
@@ -751,7 +751,7 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .suggest-wrap.missing .txt { padding-right: 30px; }
 
 /* Monatssumme neben dem Monatsnamen */
-.month-head { display: flex; justify-content: space-between; align-items: baseline; text-transform: none; }
+.month-head { display: flex; justify-content: space-between; align-items: baseline; }
 .month-total { text-transform: none; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
 
 /* Überstunden-Konto */
@@ -1146,6 +1146,8 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 /* Pfeil addiert sich zum Hintergrund: überall gleich gut sichtbar – auf Streifen, Karte und Gesamt-Zeile */
 .ov-chev { position: absolute; right: 12px; top: 0; bottom: 0; display: flex; align-items: center; color: var(--muted); }
 :root[data-theme='dark'] .ov-chev { color: #121823; mix-blend-mode: plus-lighter; }
+/* Auf dem orangenen Streifen etwas heller, damit er dort genauso gut zu sehen ist */
+:root[data-theme='dark'] .ov-month.has-gap .ov-chev { color: #2a3348; }
 .ov-month:active, .ov-totallink:active .ov-total { background: var(--fill); }
 /* Jahresübersicht */
 .yr-card { margin-bottom: 6px; }
@@ -1168,8 +1170,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ov-month .ov-row { min-height: 0; line-height: 1.2; }
 .ov-month .ov-verdict { margin-top: 2px; padding-bottom: 0; line-height: 1.2; }
 .ov-month .ov-verdict.now { margin: 3px 16px 0; padding: 1px 8px; font-size: 11px; }
-/* Monat mit Werktagen ohne Eintrag: schraffiert wie Lücken in der Liste */
-.ov-month.has-gap { background: repeating-linear-gradient(-45deg, transparent 0 7px, color-mix(in srgb, var(--warning) 12%, transparent) 7px 14px); }
+/* Monat mit Werktagen ohne Eintrag: schraffiert wie Lücken in der Liste (Regel bei .list-gap) */
 .ov-total { min-height: 52px; border-top: 0.5px solid var(--sep); font-size: 18px; }
 .ov-sumnote { margin-top: 0; padding-top: 0; background: var(--fill); }
 .ps-when { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
@@ -1191,8 +1192,8 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ws-fact span { width: 56px; flex: none; color: var(--muted); }
 .ws-fact b { font-weight: 600; font-variant-numeric: tabular-nums; }
 .ws-label { margin: 12px 0 4px; color: var(--muted); font-size: 13px; }
-.ws-label.sec { margin: 18px 4px 6px; text-transform: uppercase; letter-spacing: 0.02em; }
-.ws-done { display: inline-flex; align-items: center; gap: 4px; color: var(--success); text-transform: none; font-size: 14px; letter-spacing: 0; }
+.ws-label.sec { margin: 18px 4px 6px; }
+.ws-done { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-size: 14px; }
 .ws-text { font-size: 15px; line-height: 1.35; }
 .ws-no { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .ws-form { padding: 10px 14px 12px; border-radius: 12px; background: var(--card); }
