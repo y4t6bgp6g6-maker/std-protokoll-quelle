@@ -3,7 +3,8 @@
 // lädt seine Zettel des laufenden Monats automatisch hoch und sieht die der anderen. Beim Monatswechsel
 // löscht der Worker die alten Einträge.
 //
-// Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, cache: { month, members, at } }
+// Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, seen, cache: { month, members, posts, at } }
+// seen: Zeitpunkt der zuletzt gesehenen Pinnwand-Nachricht (Punkt am Reiter „Pinnwand“)
 
 const TEAM_URL = 'https://std-protokoll-team.std-protokoll.workers.dev';
 const TEAM_KEY = 'stdprotokoll.team.v1';
@@ -141,8 +142,23 @@ let teamDay = null;
 let teamWeek = null;
 const teamOpen = new Set();
 let teamScroll = 0;
+/** Angefangene Nachricht für die Pinnwand */
+let teamDraft = '';
+let teamPosting = false;
 
 /** Einträge der anderen nur in bekannter Form übernehmen (jeder mit dem Code kann dort schreiben) */
+function teamCleanPosts(posts) {
+  return (Array.isArray(posts) ? posts : [])
+    .filter((p) => p && typeof p.text === 'string' && p.text.trim())
+    .map((p) => ({
+      id: Number(p.id) || 0,
+      member: String(p.member ?? '').slice(0, 64),
+      name: teamFirstName(String(p.name ?? '').slice(0, 80)),
+      text: p.text.slice(0, 500),
+      created: typeof p.created === 'number' && isFinite(p.created) ? p.created : 0,
+    }));
+}
+
 function teamClean(members) {
   const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
   const str = (v, n) => String(v ?? '').slice(0, n);
@@ -175,7 +191,7 @@ async function teamLoad() {
   teamLoading = true;
   try {
     const data = await teamRequest('GET', '/team');
-    team.cache = { month: data.month, members: teamClean(data.members), at: Date.now() };
+    team.cache = { month: data.month, members: teamClean(data.members), posts: teamCleanPosts(data.posts), at: Date.now() };
     saveTeam();
     teamData = team.cache;
   } catch (e) {
@@ -355,6 +371,91 @@ function teamWeekHTML(members) {
     <div class="card tm-table${days.length > 5 ? ' wide' : ''}" style="--cols:${days.length}">${head}${people.map(line).join('')}</div>`;
 }
 
+// ───────── Pinnwand ─────────
+
+const teamPosts = () => (teamData || (team && team.cache) || {}).posts || [];
+/** Neue Nachrichten anderer seit dem letzten Blick auf die Pinnwand */
+const teamUnread = () => teamPosts().some((p) => p.member !== team.member && p.created > (team.seen || 0));
+
+function teamPostsHTML() {
+  const posts = teamPosts();
+  if (!posts.length) return `<p class="tm-msg muted">Noch keine Nachrichten</p>`;
+  return posts
+    .map((p) => {
+      const me = p.member === team.member;
+      return `<div class="tm-post${me ? ' me' : ''}">${me ? '' : teamAvatar(p, 30)}<div class="tm-bubble"${me ? ` data-team="post-del" data-id="${p.id}"` : ''}><div class="tm-post-h"><b>${me ? 'Du' : escapeHtml(p.name || '?')}</b><span>${teamAgo(p.created)}</span></div>${escapeHtml(p.text)}</div></div>`;
+    })
+    .join('');
+}
+
+function teamBoardHTML() {
+  return `<div class="card tm-compose"><input data-team="post-text" placeholder="Nachricht ans Team" maxlength="500" enterkeyhint="send" autocomplete="off" value="${escapeHtml(teamDraft)}"><button class="tm-send" data-team="post" aria-label="Senden" ${teamPosting ? 'disabled' : ''}>${ICON.chevronRight}</button></div>
+    <div class="tm-posts" id="tm-posts">${teamPostsHTML()}</div>
+    <p class="footnote center">Nachrichten verschwinden am Monatsende.</p>`;
+}
+
+/** Neueste Nachricht oben auf „Heute“ */
+function teamTeaserHTML() {
+  const p = teamPosts()[0];
+  if (!p) return '';
+  const me = p.member === team.member;
+  const n = teamPosts().length;
+  return `<h2 class="section-title tm-name"><span>Pinnwand</span><button class="tm-more" data-team="tab" data-tab="pinnwand">${n} ${n === 1 ? 'Nachricht' : 'Nachrichten'} ›</button></h2>
+    <button class="card tm-teaser" data-team="tab" data-tab="pinnwand">${me ? '<span class="tm-av tm-av-me" style="--s:30px">D</span>' : teamAvatar(p, 30)}<span><b>${me ? 'Du' : escapeHtml(p.name || '?')}</b> <span class="muted">${teamAgo(p.created)}</span><span class="tm-teaser-t">${escapeHtml(p.text)}</span></span></button>`;
+}
+
+function teamMarkSeen() {
+  const newest = teamPosts()[0];
+  if (newest && newest.created > (team.seen || 0)) {
+    team.seen = newest.created;
+    saveTeam();
+  }
+}
+
+async function teamSendPost() {
+  const input = app.querySelector('[data-team="post-text"]');
+  const text = (input ? input.value : teamDraft).trim();
+  if (!text || teamPosting || !team) return;
+  teamPosting = true;
+  const btn = app.querySelector('[data-team="post"]');
+  if (btn) btn.disabled = true;
+  const send = () => teamRequest('POST', '/post', { member: team.member, token: team.token, text });
+  try {
+    try {
+      await send();
+    } catch (e) {
+      // Noch kein Eintrag in diesem Monat (z. B. gleich nach dem Monatswechsel): erst die Zettel hochladen
+      if (e.message !== 'join') throw e;
+      team.sent = '';
+      await teamRequest('PUT', '/me', teamPayload());
+      team.sent = JSON.stringify(teamPayload());
+      saveTeam();
+      await send();
+    }
+    teamDraft = '';
+    if (input) input.value = '';
+    haptic();
+    teamPosting = false;
+    await teamLoad();
+  } catch (e) {
+    toast(e.status === 429 ? 'Zu viele Nachrichten in diesem Monat' : 'Keine Verbindung');
+  }
+  teamPosting = false;
+  const b2 = app.querySelector('[data-team="post"]');
+  if (b2) b2.disabled = false;
+}
+
+function teamDeletePost(id) {
+  confirmDialog('Nachricht löschen?', '', 'Löschen', async () => {
+    try {
+      await teamRequest('DELETE', '/post', { member: team.member, token: team.token, id: Number(id) });
+      await teamLoad();
+    } catch {
+      toast('Keine Verbindung');
+    }
+  }, true);
+}
+
 function renderTeamBody() {
   const body = document.getElementById('team-body');
   if (!body) return;
@@ -370,15 +471,22 @@ function renderTeamBody() {
   }
   const members = teamMembers();
   let content;
-  if (!teamData && !team.cache) content = `<p class="tm-msg muted">Wird geladen …</p>`;
-  else if (!members.length) content = `<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>`;
-  else content = teamTab === 'woche' ? teamWeekHTML(members) : teamTodayHTML(members);
+  if (teamTab === 'pinnwand') {
+    content = teamBoardHTML();
+    teamMarkSeen();
+  } else if (!teamData && !team.cache) content = `<p class="tm-msg muted">Wird geladen …</p>`;
+  else if (!members.length) content = `${teamTeaserHTML()}<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>`;
+  else content = teamTab === 'woche' ? teamWeekHTML(members) : teamTeaserHTML() + teamTodayHTML(members);
   body.innerHTML = `
     <div class="seg tm-seg">${[
       ['heute', 'Heute'],
       ['woche', 'Woche'],
+      ['pinnwand', 'Pinnwand'],
     ]
-      .map(([k, t]) => `<button class="${teamTab === k ? 'on' : ''}" data-team="tab" data-tab="${k}">${t}</button>`)
+      .map(
+        ([k, t]) =>
+          `<button class="${teamTab === k ? 'on' : ''}" data-team="tab" data-tab="${k}">${t}${k === 'pinnwand' && teamTab !== k && teamUnread() ? '<i class="tm-dot"></i>' : ''}</button>`
+      )
       .join('')}</div>
     ${teamData && teamData.offline ? `<p class="tm-msg muted">Offline${teamData.at ? ` – Stand ${teamAgo(teamData.at)}` : ''}</p>` : ''}
     ${content}
@@ -464,7 +572,12 @@ function renderTeamSheet(id, weekStart) {
 
 /** Nach dem Laden die gerade offene Team-Seite neu zeichnen */
 function teamRefreshView() {
-  if (currentView === 'team') renderTeamBody();
+  // Pinnwand: nur die Nachrichten neu, damit Eingabefeld und Tastatur bleiben
+  const list = currentView === 'team' && teamTab === 'pinnwand' && document.getElementById('tm-posts');
+  if (list) {
+    list.innerHTML = teamPostsHTML();
+    teamMarkSeen();
+  } else if (currentView === 'team') renderTeamBody();
   const pm = location.hash.match(/^#\/team\/([^/]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/);
   if (!pm) return;
   if (currentView === 'teamPerson') renderTeamPerson(decodeURIComponent(pm[1]));
@@ -486,6 +599,13 @@ document.addEventListener('click', (e) => {
       haptic();
       teamTab = el.dataset.tab;
       renderTeamBody();
+      window.scrollTo(0, 0);
+      break;
+    case 'post':
+      teamSendPost();
+      break;
+    case 'post-del':
+      teamDeletePost(el.dataset.id);
       break;
     case 'toggle': {
       haptic();
@@ -512,6 +632,10 @@ document.addEventListener('click', (e) => {
 // Return im Code-Feld (app.js schließt danach die Tastatur)
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches('[data-team="code"]')) joinTeam(e.target.value);
+  if (e.key === 'Enter' && e.target.matches('[data-team="post-text"]')) teamSendPost();
+});
+document.addEventListener('input', (e) => {
+  if (e.target.matches('[data-team="post-text"]')) teamDraft = e.target.value;
 });
 
 // Beim Öffnen der App und bei Rückkehr: hochladen, Team-Seite neu laden
@@ -521,4 +645,8 @@ document.addEventListener('visibilitychange', () => {
   if (currentView === 'team') teamLoad();
 });
 window.addEventListener('online', () => teamQueueUpload(500));
+// Pinnwand offen und App im Vordergrund: alle 10 Sekunden nach neuen Nachrichten sehen (fast wie ein Chat)
+setInterval(() => {
+  if (team && currentView === 'team' && teamTab === 'pinnwand' && document.visibilityState === 'visible' && navigator.onLine) teamLoad();
+}, 10000);
 setTimeout(() => teamQueueUpload(0), 2000);

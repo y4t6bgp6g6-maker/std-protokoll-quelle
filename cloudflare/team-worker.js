@@ -10,12 +10,16 @@
 // Die Tabelle legt der Worker selbst an.
 //
 // Anfragen (Code im Header X-Team-Code):
-//   GET    /team   → { month, members: [{ member, name, updated, sheets }] }
+//   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }] }
 //   PUT    /me     ← { member, token, name, month, sheets }   eigener Eintrag
-//   DELETE /me     ← { member, token }                         Team verlassen
+//   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
+//   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
+//   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
 
 const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
 const MAX_BODY = 1_000_000;
+const MAX_TEXT = 500;
+const MAX_POSTS = 300; // je Person und Monat
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -43,7 +47,7 @@ function cors(req) {
   return ok
     ? {
         'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Methods': 'GET, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
@@ -76,14 +80,37 @@ export default {
     const db = env.DB;
     const month = currentMonth();
     await db.exec('CREATE TABLE IF NOT EXISTS members (member TEXT PRIMARY KEY, token TEXT NOT NULL, name TEXT, month TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)');
+    await db.exec('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)');
     await db.prepare('DELETE FROM members WHERE month <> ?').bind(month).run();
+    await db.prepare('DELETE FROM posts WHERE month <> ?').bind(month).run();
 
     const path = new URL(req.url).pathname;
     try {
       if (path === '/team' && req.method === 'GET') {
         const { results } = await db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month).all();
         const members = results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
-        return json({ month, members }, 200, h);
+        const posts = (await db.prepare('SELECT id, member, name, text, created FROM posts WHERE month = ? ORDER BY created DESC LIMIT 200').bind(month).all()).results;
+        return json({ month, members, posts }, 200, h);
+      }
+
+      if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
+        const body = await readBody(req);
+        if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
+        // Nur wer im laufenden Monat einen Eintrag hat (Token geprüft), darf schreiben
+        const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
+        if (!me) return json({ error: 'join' }, 403, h);
+        if (me.token !== (await sha256(body.token))) return json({ error: 'token' }, 403, h);
+
+        if (req.method === 'DELETE') {
+          await db.prepare('DELETE FROM posts WHERE id = ? AND member = ?').bind(Number(body.id) || 0, body.member).run();
+          return json({ ok: true }, 200, h);
+        }
+        const text = String(body.text ?? '').trim().slice(0, MAX_TEXT);
+        if (!text) return json({ error: 'text' }, 400, h);
+        const { n } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE member = ? AND month = ?').bind(body.member, month).first();
+        if (n >= MAX_POSTS) return json({ error: 'limit' }, 429, h);
+        await db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()).run();
+        return json({ ok: true }, 200, h);
       }
 
       if (path === '/me' && (req.method === 'PUT' || req.method === 'DELETE')) {
