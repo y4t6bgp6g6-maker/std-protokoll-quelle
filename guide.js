@@ -60,9 +60,9 @@ function renderGuide() {
       ${step(2, `Code kopieren, im Editor alles markieren und ersetzen:
         <button class="guide-copy" data-act="guide-copy-code">${gIcon('copy')} Code kopieren</button>
         <span class="guide-note">Der Code enthält deinen Schlüssel – nicht weitergeben.</span>`)}
-      ${step(3, `Oben links auf „Unbenanntes Projekt“ tippen, <b>Yetizettel</b> nennen. Dann speichern ${gBtn('', 'save', 'icon')}`)}
+      ${step(3, `Oben links auf „Unbenanntes Projekt“ tippen, <b>Std-Protokoll</b> nennen. Dann speichern ${gBtn('', 'save', 'icon')}`)}
       ${step(4, `Daneben <b>doGet</b> auswählen ${gBtn('doGet', 'down')} und ${gBtn('Ausführen', 'run')}<br>
-        Google fragt nach Erlaubnis: <b>Berechtigungen prüfen</b> → dein Konto → <b>Erweitert</b> → <b>Yetizettel öffnen (unsicher)</b> → <b>Alle auswählen</b> → <b>Weiter</b>.
+        Google fragt nach Erlaubnis: <b>Berechtigungen prüfen</b> → dein Konto → <b>Erweitert</b> → <b>Std-Protokoll öffnen (unsicher)</b> → <b>Alle auswählen</b> → <b>Weiter</b>.
         <span class="guide-note">„Unsicher“ heißt nur: Google hat dein eigenes Skript nicht geprüft. Eine Fehlermeldung danach ist normal.</span>`)}
       ${step(5, `Oben rechts ${gBtn('Bereitstellen', 'down', 'blue')} → <b>Neue Bereitstellung</b> → Zahnrad ${gBtn('', 'gear', 'icon')} → <b>Web-App</b>`)}
       ${step(6, `Einstellen: <b>Ausführen als: Ich</b> · <b>Zugriff: Jeder</b>. Dann ${gBtn('Bereitstellen', '', 'blue')}`)}

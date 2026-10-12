@@ -1366,7 +1366,7 @@ async function driveBackup(manual = false) {
   try {
     const data = await sealBackup(plain);
     // text/plain: ohne Vorabanfrage (CORS); das Skript liest den Inhalt selbst
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'backup', name: `Yetizettel-Sicherung ${isoDate(new Date())}.json`, data }) });
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'backup', name: `Std-Protokoll-Sicherung ${isoDate(new Date())}.json`, data }) });
     let out;
     try {
       out = await res.json();
@@ -3906,7 +3906,7 @@ async function exportBackup() {
     infoDialog('Sicherung nicht möglich', escapeHtml(e.message));
     return;
   }
-  const file = new File([data], `Yetizettel-Sicherung ${isoDate(new Date())}.json`, { type: 'application/json' });
+  const file = new File([data], `Std-Protokoll-Sicherung ${isoDate(new Date())}.json`, { type: 'application/json' });
   if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return downloadFile(file);
   const share = () =>
     navigator.share({ files: [file] }).catch((e) => {

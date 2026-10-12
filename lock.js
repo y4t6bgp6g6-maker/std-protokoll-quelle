@@ -33,8 +33,8 @@ const unb64 = (s) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
 async function createLockKey() {
   const cred = await navigator.credentials.create({
     publicKey: {
-      rp: { name: 'Yetizettel', id: location.hostname },
-      user: { id: rand(16), name: 'Yetizettel', displayName: 'Yetizettel' },
+      rp: { name: 'Std-Protokoll', id: location.hostname },
+      user: { id: rand(16), name: 'Std-Protokoll', displayName: 'Std-Protokoll' },
       challenge: rand(32),
       pubKeyCredParams: [
         { type: 'public-key', alg: -7 },
@@ -74,7 +74,7 @@ function showLock() {
     'beforeend',
     `<div id="lock" role="dialog" aria-modal="true"><div class="lock-bg"></div>
       <img src="icons/icon-512.png?v=2" alt="" class="lock-icon">
-      <b class="lock-title">Yetizettel ist gesperrt</b>
+      <b class="lock-title">Std-Protokoll ist gesperrt</b>
       <span class="lock-sub">Mit Face ID entsperren</span>
       <button class="lock-btn" data-lock="open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0"/></svg>Entsperren</button>
       <p class="lock-msg" id="lock-msg"></p>
