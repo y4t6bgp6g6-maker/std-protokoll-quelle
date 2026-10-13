@@ -291,8 +291,8 @@ function teamGroupSites(people) {
   teamSites = new Map(names.map((n, i) => [n, ids.has(root(i)) ? ids.get(root(i)) : (ids.set(root(i), ids.size), ids.size - 1)]));
 }
 const teamSiteId = (name) => teamSites.get(String(name).trim()) ?? -1;
-/** Textmarker-Farben, eine je Baustelle */
-const TEAM_MARKERS = ['#ffd84a', '#7fe0a0', '#ff9cc2', '#8ec9ff', '#ffb46b', '#c9a8ff', '#9ee6e0', '#e6e07a'];
+/** Textmarker-Farben; in einer KW bekommt jede markierte Baustelle eine andere */
+const TEAM_MARKERS = ['#ffd84a', '#7fe0a0', '#ff9cc2', '#8ec9ff', '#ffb46b', '#c9a8ff', '#7fe8e0', '#ff7a7a'];
 
 /** Baustelle des Tages: meiste Stunden; bei Gleichstand die, auf der an dem Tag mehr Leute waren; dann alphabetisch */
 function teamMainSite(d, date, people) {
@@ -326,8 +326,8 @@ function teamWeeks(people) {
 }
 
 /** Ein Zettel als kleines Blatt: KW, Mo–Fr mit Baustelle, Gesamt; darunter 0–2 weitere Blätter wie auf einem Stapel.
- *  sites: Baustelle je Tag (aus teamMainSite); shared(i, id): steht dieselbe Baustelle an diesem Tag auch bei jemand anderem → Textmarker */
-function teamPaperHTML(p, s, w, sites, shared) {
+ *  sites: Baustelle je Tag (aus teamMainSite); marker(i, id): Textmarker-Farbe, wenn dieselbe Baustelle an diesem Tag auch bei jemand anderem steht */
+function teamPaperHTML(p, s, w, sites, marker) {
   const rows = [0, 1, 2, 3, 4]
     .map((i) => {
       const day = `<u>${WEEKDAYS_SHORT[i]}</u>`;
@@ -336,7 +336,8 @@ function teamPaperHTML(p, s, w, sites, shared) {
       if (d.status && !holidayWork(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
       const site = sites[i];
       const name = site ? escapeHtml(site.name) : '';
-      return `<i>${day}<span>${site && shared(i, site.id) ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${name}</mark>` : name}</span></i>`;
+      const mk = site && marker(i, site.id);
+      return `<i>${day}<span>${mk ? `<mark style="--mk:${mk}">${name}</mark>` : name}</span></i>`;
     })
     .join('');
   // Stapel: fest je Person und Woche, damit nichts springt
@@ -376,6 +377,24 @@ function teamSheetsHTML(members) {
       shown.set(`${p.member}|${w.iso}`, sites);
       sites.forEach((x, i) => x && crew.set(`${isoDate(sheetDate(s, i))}|${x.id}`, (crew.get(`${isoDate(sheetDate(s, i))}|${x.id}`) || new Set()).add(p.member)));
     }
+  const shared = (date, id) => (crew.get(`${date}|${id}`) || new Set()).size > 1;
+  // Farben nur für markierte Baustellen: in einer KW nie dieselbe Farbe für verschiedene Baustellen, sonst möglichst wenig benutzte
+  const weeksOf = new Map();
+  for (const key of [...crew.keys()].sort()) {
+    const [date, id] = key.split('|');
+    if (!shared(date, id)) continue;
+    const wk = isoDate(mondayOf(parseDate(date)));
+    weeksOf.set(Number(id), (weeksOf.get(Number(id)) || new Set()).add(wk));
+  }
+  const colorOf = new Map();
+  const used = TEAM_MARKERS.map(() => 0);
+  for (const [id, wks] of weeksOf) {
+    const taken = new Set([...colorOf].filter(([other]) => [...weeksOf.get(other)].some((w) => wks.has(w))).map(([, c]) => c));
+    const free = TEAM_MARKERS.map((_, c) => c).filter((c) => !taken.has(c));
+    const pick = (free.length ? free : TEAM_MARKERS.map((_, c) => c)).sort((a, b) => used[a] - used[b] || a - b)[0];
+    colorOf.set(id, pick);
+    used[pick]++;
+  }
   const cards = people
     .map((p) => {
       let total = 0;
@@ -384,8 +403,8 @@ function teamSheetsHTML(members) {
           const s = sheetOf(p, w);
           if (!s) return `<span class="tm-z-slot gap"></span>`;
           total += sheetTotal(s);
-          const shared = (i, id) => (crew.get(`${isoDate(sheetDate(s, i))}|${id}`) || new Set()).size > 1;
-          return `<span class="tm-z-slot" style="--tilt:${[-0.3, 0.2, -0.1, 0.35, -0.2, 0.15][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), shared)}</span>`;
+          const marker = (i, id) => (shared(isoDate(sheetDate(s, i)), id) ? TEAM_MARKERS[colorOf.get(id)] : '');
+          return `<span class="tm-z-slot" style="--tilt:${[-0.3, 0.2, -0.1, 0.35, -0.2, 0.15][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), marker)}</span>`;
         })
         .join('');
       return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b>${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
