@@ -46,7 +46,7 @@ function teamPayload() {
     token: team.token,
     name: teamFirstName(settings.name),
     month: teamMonth(now),
-    sheets: sheets
+    sheets: savedSheets()
       .filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1)
       .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days })),
   };

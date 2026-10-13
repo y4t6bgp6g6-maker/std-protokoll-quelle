@@ -140,7 +140,8 @@ input { font: inherit; color: inherit; }
 .nav-actions,
 .nav-title:not(:empty),
 .search-bar .nav-btn,
-.search-field {
+.search-field,
+.daybar {
   border-radius: 22px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)),
     color-mix(in srgb, var(--card) 30%, transparent);
@@ -149,7 +150,7 @@ input { font: inherit; color: inherit; }
   box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 1px rgba(255, 255, 255, 0.15),
     0 10px 30px rgba(0, 0, 0, 0.2);
 }
-:root[data-theme='dark'] :is(.nav > .nav-btn:not(:empty), .title-row .nav-btn, .nav-actions, .nav-title:not(:empty), .search-bar .nav-btn, .search-field) {
+:root[data-theme='dark'] :is(.nav > .nav-btn:not(:empty), .title-row .nav-btn, .nav-actions, .nav-title:not(:empty), .search-bar .nav-btn, .search-field, .daybar) {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
     color-mix(in srgb, var(--card) 30%, transparent);
   box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(255, 255, 255, 0.08),
@@ -390,6 +391,10 @@ input { font: inherit; color: inherit; }
 .arrow { color: var(--muted); }
 .row-hours { flex: 1; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 15px; }
 .row-del, .row-del-space { width: 32px; height: 32px; flex: none; }
+/* Löschen oben rechts in der Ecke der Zeile */
+.row-times { padding-right: 26px; }
+.row-del { position: absolute; top: 2px; right: 2px; z-index: 1; }
+.row-del-space { display: none; }
 .row-del { display: grid; place-items: center; color: var(--muted); border-radius: 50%; }
 .row-del:active { background: var(--fill); }
 
@@ -433,6 +438,40 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
   font-variant-numeric: tabular-nums;
 }
 .day-total { margin-left: auto; font-size: 15px; font-variant-numeric: tabular-nums; }
+.day-foot .link-btn { font-size: 16px; font-weight: 600; }
+.day-foot .pill { padding: 6.5px 12px; font-size: 14.5px; border-radius: 16px; }
+
+/* „Eintrag speichern“: erscheint erst nach einer Änderung; geänderte Tage mit weißem Rahmen */
+.day.unsaved { box-shadow: 0 0 0 2px var(--text), var(--shadow); }
+:root[data-theme='dark'] .day.unsaved { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), var(--shadow); }
+.save-bar { position: fixed; left: 0; right: 0; bottom: calc(var(--tab-h) + 30px); z-index: 15; display: flex; justify-content: center; pointer-events: none; }
+.save-bar[hidden] { display: none; }
+.save-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 24px;
+  border-radius: 26px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)),
+    color-mix(in srgb, var(--card) 55%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 1px rgba(255, 255, 255, 0.15),
+    0 10px 30px rgba(0, 0, 0, 0.2);
+}
+:root[data-theme='dark'] .save-btn {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--card) 55%, transparent);
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.save-btn svg { width: 20px; height: 20px; stroke-width: 2.6; }
+.save-btn:active { transform: scale(0.97); }
+body.tabs.unsaved #app { padding-bottom: calc(var(--tab-h) + 96px); }
 
 .summary { margin-top: 16px; }
 .sum-row {
@@ -444,29 +483,6 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 }
 .sum-row + .sum-row { border-top: 0.5px solid var(--sep); }
 /* Stunden Gesamt und Überstunden im Zettel: Glas-Kapseln am Seitenende */
-/* Wochenseite: je Tag eine gleich große Karte; Antippen öffnet den Tag */
-.wv-title { margin: 0 4px 12px; }
-.wv-title .large-title { margin: -6px 0 0; }
-.wv-dates { color: var(--muted); font-size: 15px; padding: 0; }
-.wv-cards { display: grid; gap: 10px; }
-.wv-card { display: flex; flex-direction: column; gap: 4px; height: 92px; padding: 12px 14px; text-align: left; color: inherit; }
-.wv-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.wv-top .muted { font-size: 14px; }
-.wv-h { flex: none; font-variant-numeric: tabular-nums; }
-.wv-time { font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
-.wv-time .muted { font-weight: 400; font-size: 14px; }
-.wv-sites { color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.wv-add { display: flex; align-items: center; gap: 4px; margin-top: auto; color: var(--accent); font-weight: 600; }
-.wv-add svg { width: 18px; height: 18px; }
-.wv-card.empty { background: transparent; box-shadow: none; border: 1.5px dashed var(--sep); }
-.wv-status { display: flex; align-items: center; gap: 6px; margin-top: auto; font-weight: 600; color: var(--status-ink); white-space: nowrap; overflow: hidden; }
-.wv-status .muted { font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
-.wv-status svg { flex: none; width: 18px; height: 18px; }
-.wv-card.st { background: color-mix(in srgb, var(--status) 12%, var(--card)); }
-/* Tagesseite: „Speichern“ fest über der Leiste unten */
-.day-save-space { height: 84px; }
-.day-save-bar { position: fixed; left: 16px; right: 16px; bottom: calc(var(--tab-h) + 30px); z-index: 15; }
-.day-save-bar .day-save { width: 100%; padding: 15px; border-radius: 16px; font-size: 17px; font-weight: 700; background: var(--accent-fill); color: var(--on-accent); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3); }
 .sum-bar { display: flex; justify-content: center; gap: 10px; margin-top: 16px; }
 .sum-pill {
   flex: 1;
@@ -791,6 +807,34 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 /* Titel im Zettel: antippen ändert die Woche */
 button.nav-title { font-size: 17px; }
 
+/* Tagesleiste */
+.daybar {
+  grid-column: 1 / -1;
+  justify-self: stretch;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  margin-top: 8px;
+  padding: 4px;
+  border-radius: 16px;
+}
+.db-day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 4px 0;
+  border-radius: 16px;
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+}
+.db-day:active { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.db-name { font-size: 12px; font-weight: 600; color: var(--muted); }
+.db-h { font-size: 13px; font-weight: 500; min-height: 17px; white-space: nowrap; }
+.db-day.off { opacity: 0.35; }
+.db-day.has-status .db-h { color: var(--status-ink); font-weight: 600; }
+/* Heute: nur ein farbiger Rand um das Milchglas */
+.db-day.today { box-shadow: inset 0 0 0 1.5px var(--accent); }
 
 /* Suche in der Liste */
 .search-bar { grid-column: 1 / -1; justify-self: stretch; display: flex; align-items: center; gap: 4px; }
@@ -912,7 +956,9 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
   transition: box-shadow 0.15s;
 }
 
-/* Warnzeichen in der Liste */
+/* Warnzeichen in Tagesleiste und Liste */
+.db-name { position: relative; }
+.db-warn { position: absolute; left: 100%; top: 0; font-size: 10px; margin-left: 1px; }
 .list-warn { font-size: 14px; }
 
 /* Reisekosten */
@@ -1210,7 +1256,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ws-work p { margin: 10px 0; line-height: 1.4; }
 
 /* Zahlen: iPhone-Schrift mit gleich breiten Ziffern, damit sie untereinander stehen */
-.list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ov-num, .ws-fact b {
+.list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ov-num, .ws-fact b, .db-h {
   font-family: var(--mono);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1486,7 +1532,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   @keyframes pg-nav { from { opacity: 0; } }
 
   /* Antippen: Karten und Zeilen drücken sich leicht ein und federn zurück */
-  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .trip-pick, .ws-chip, .ov-tile) {
+  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .db-day, .trip-pick, .ws-chip, .ov-tile) {
     transition: transform 0.45s cubic-bezier(0.3, 1.6, 0.5, 1), background-color 0.2s;
   }
   :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .trip-pick, .ws-chip, .ov-tile):active {
@@ -1494,6 +1540,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
     transition-duration: 0.12s;
     transition-timing-function: ease-out;
   }
+  .db-day:active { transform: scale(0.92); transition-duration: 0.12s; transition-timing-function: ease-out; }
 
   /* Fenster federn von unten herein (Hinweise wachsen federnd auf); Schließen ohne Federn */
   #modal-layer.show .modal { transition: transform 0.4s cubic-bezier(0.3, 1.08, 0.5, 1); }
@@ -1505,6 +1552,12 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   .stagger { animation: stagger-in 0.36s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
   @keyframes stagger-in { from { opacity: 0; transform: translateY(8px); } }
 }
+
+/* Tagesleiste: ganze Leiste etwas milchiger als die übrigen Glaskapseln oben */
+.nav .daybar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)),
+  color-mix(in srgb, var(--text) 9%, color-mix(in srgb, var(--card) 68%, transparent)); }
+:root[data-theme='dark'] .nav .daybar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
+  color-mix(in srgb, var(--text) 9%, color-mix(in srgb, var(--card) 68%, transparent)); }
 
 /* Anleitung: nummerierte Schritte, nachgezeichnete Knöpfe der Google-Skript-Seite */
 .guide-lead { margin: 0 4px 8px; color: var(--muted); font-size: 15px; line-height: 1.4; }
