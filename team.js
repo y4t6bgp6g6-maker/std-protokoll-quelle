@@ -332,7 +332,7 @@ function teamWeeks(people) {
 }
 
 /** Ein Zettel als kleines Blatt: KW, Mo–Fr mit Baustelle, Gesamt; darunter 0–2 weitere Blätter wie auf einem Stapel.
- *  sites: Baustelle je Tag (aus teamMainSite); shared(id): steht dieselbe Baustelle in dieser KW auch bei jemand anderem → Textmarker */
+ *  sites: Baustelle je Tag (aus teamMainSite); shared(i, id): steht dieselbe Baustelle an diesem Tag auch bei jemand anderem → Textmarker */
 function teamPaperHTML(p, s, w, sites, shared) {
   const rows = [0, 1, 2, 3, 4]
     .map((i) => {
@@ -342,12 +342,12 @@ function teamPaperHTML(p, s, w, sites, shared) {
       if (d.status && !holidayWork(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
       const site = sites[i];
       const name = site ? escapeHtml(site.name) : '';
-      return `<i>${day}<span>${site && shared(site.id) ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${name}</mark>` : name}</span></i>`;
+      return `<i>${day}<span>${site && shared(i, site.id) ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${name}</mark>` : name}</span></i>`;
     })
     .join('');
   // Stapel: fest je Person und Woche, damit nichts springt
   const seed = isoWeek(w.mon) * 7 + [...String(p.member)].reduce((t, c) => t + c.charCodeAt(0), 0);
-  const lay = [[-2.2, -2, 3], [1.8, 3, 2], [-1.2, 2, 4], [2.6, -2, 3], [-3, 1, 4], [1.2, -3, 2]];
+  const lay = [[-1, -1.5, 3], [0.8, 2, 2], [-0.6, 1.5, 3], [1.2, -1.5, 3], [-1.3, 1, 3], [0.6, -2, 2]];
   const under = Array.from({ length: seed % 3 }, (_, k) => {
     const [r, x, y] = lay[(seed + k * 2) % lay.length];
     return `<i class="tm-z-under" style="--r:${r}deg;--x:${x}px;--y:${y}px"></i>`;
@@ -355,9 +355,7 @@ function teamPaperHTML(p, s, w, sites, shared) {
   // Eigene Zettel nur ansehen (bearbeiten über „Zettel“), Zettel der Kollegen öffnen die Wochenansicht
   const tag = p.me ? 'div' : 'a';
   const href = p.me ? '' : ` href="#/team/${encodeURIComponent(p.member)}/${s.weekStart}"`;
-  return `<${tag} class="tm-z${w.now ? ' now' : ''}"${href}><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span>${
-    w.now ? '<svg class="tm-z-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M5 11v15a2.5 2.5 0 0 0 5 0V7a4 4 0 0 0-8 0v19a5.5 5.5 0 0 0 11 0V9"/></svg>' : ''
-  }<span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
+  return `<${tag} class="tm-z${w.now ? ' now' : ''}"${href}><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span><span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
     <span class="tm-z-t">${rows}</span>
     <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></${tag}>`;
 }
@@ -370,7 +368,7 @@ function teamSheetsHTML(members) {
   teamGroupSites(people);
   const weeks = teamWeeks(people);
   const nowCol = weeks.findIndex((w) => w.now);
-  // Baustelle je Person, Woche und Tag; dazu, wer in welcher KW welche Baustelle auf dem Zettel stehen hat
+  // Baustelle je Person, Woche und Tag; dazu, wer an welchem Tag welche Baustelle auf dem Zettel stehen hat
   const sheetOf = (p, w) => (p.sheets || []).find((x) => x.weekStart === w.iso);
   const shown = new Map();
   const crew = new Map();
@@ -380,7 +378,7 @@ function teamSheetsHTML(members) {
       if (!s) continue;
       const sites = [0, 1, 2, 3, 4].map((i) => (sheetIsActive(s, i) && !(s.days[i].status && !holidayWork(s.days[i])) ? teamMainSite(s.days[i], sheetDate(s, i), people) : null));
       shown.set(`${p.member}|${w.iso}`, sites);
-      for (const x of sites) if (x) crew.set(`${w.iso}|${x.id}`, (crew.get(`${w.iso}|${x.id}`) || new Set()).add(p.member));
+      sites.forEach((x, i) => x && crew.set(`${isoDate(sheetDate(s, i))}|${x.id}`, (crew.get(`${isoDate(sheetDate(s, i))}|${x.id}`) || new Set()).add(p.member)));
     }
   const cards = people
     .map((p) => {
@@ -390,8 +388,8 @@ function teamSheetsHTML(members) {
           const s = sheetOf(p, w);
           if (!s) return `<span class="tm-z-slot gap"></span>`;
           total += sheetTotal(s);
-          const shared = (id) => (crew.get(`${w.iso}|${id}`) || new Set()).size > 1;
-          return `<span class="tm-z-slot" style="--tilt:${[-0.6, 0.4, -0.2, 0.7, -0.4, 0.3][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), shared)}</span>`;
+          const shared = (i, id) => (crew.get(`${isoDate(sheetDate(s, i))}|${id}`) || new Set()).size > 1;
+          return `<span class="tm-z-slot" style="--tilt:${[-0.3, 0.2, -0.1, 0.35, -0.2, 0.15][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), shared)}</span>`;
         })
         .join('');
       return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b>${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>

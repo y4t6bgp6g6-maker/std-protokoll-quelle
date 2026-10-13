@@ -1431,8 +1431,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-z::before, .tm-z::after { content: ''; position: absolute; z-index: -2; bottom: 7px; width: 46%; height: 30%; box-shadow: 0 9px 10px rgba(0, 0, 0, 0.55); }
 .tm-z::before { left: 5px; transform: rotate(-3.5deg); }
 .tm-z::after { right: 5px; transform: rotate(3.5deg); }
-/* laufende Woche: kleine Büroklammer, KW blau */
-.tm-z-clip { position: absolute; top: -7px; left: 12px; z-index: 2; width: 8px; height: 21px; fill: none; stroke: color-mix(in srgb, var(--accent-fill) 75%, #9aa3b5); stroke-width: 1.4; stroke-linecap: round; transform: rotate(-14deg); transform-origin: 50% 30%; filter: drop-shadow(0.5px 1px 0.6px rgba(0, 0, 0, 0.3)); }
+/* laufende Woche: KW blau */
 .tm-z.now .tm-z-top b { color: var(--accent-fill); }
 .tm-z-top { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; align-items: baseline; padding-bottom: 4px; border-bottom: 1.5px solid var(--strong); }
 .tm-z-top small, .tm-z-f small { font-size: 6.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--print); font-weight: 700; }
