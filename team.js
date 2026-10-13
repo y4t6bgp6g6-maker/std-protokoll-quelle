@@ -223,21 +223,6 @@ function teamMemberDay(m, date) {
   return null;
 }
 
-function teamDayHTML(x) {
-  if (!x) return `<div class="tm-none">Kein Eintrag</div>`;
-  const { d, i } = x;
-  if (d.status && !holidayWork(d)) return `<div class="tm-status status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</div>`;
-  const rows = (d.rows || []).filter((r) => !rowIsEmpty(r));
-  if (!rows.length) return `<div class="tm-none">Kein Eintrag</div>`;
-  const time = (m) => (m == null ? '–' : fmtTime(m));
-  return `${d.status ? `<div class="tm-status status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</div>` : ''}${rows
-    .map(
-      (r) => `<div class="tm-row"><span class="tm-time">${time(r.start)}–${time(r.end)}</span><span class="tm-text"><b>${escapeHtml(r.site)}</b><span>${escapeHtml(r.work)}</span></span></div>`
-    )
-    .join('')}
-    <div class="tm-foot"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><span>Gesamt <b>${fmtH(dayTotal(d, i))}</b></span></div>`;
-}
-
 const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
 
 /** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
@@ -563,7 +548,7 @@ function teamFindMember(id) {
   return teamMembers().find((m) => m.member === id) || null;
 }
 
-/** Ein Zettel (eine Woche) eines Kollegen, nur lesen */
+/** Ein Zettel (eine Woche) eines Kollegen, nur lesen: eine Karte, je Tag links Tag und Datum, rechts alle Einträge, Pause und Stunden */
 function renderTeamSheet(id, weekStart) {
   const m = teamFindMember(id);
   if (m === undefined) return;
@@ -572,19 +557,34 @@ function renderTeamSheet(id, weekStart) {
     app.innerHTML = `${teamNav()}<p class="tm-msg muted">Nicht mehr verfügbar</p>`;
     return;
   }
-  const days = sheetActiveDays(s)
+  const time = (v) => (v == null ? '–' : fmtTime(v));
+  const blocks = sheetActiveDays(s)
     .filter((i) => i < 5 || teamDayHasContent({ d: s.days[i], i }))
     .map((i) => {
-      const t = dayTotal(s.days[i], i);
-      return `<h2 class="section-title tm-name"><span>${WEEKDAYS[i]}, ${fmtDayMonth(sheetDate(s, i))}</span><span>${t ? fmtH(t) : ''}</span></h2>
-        <div class="card tm-day">${teamDayHTML({ d: s.days[i], i })}</div>`;
+      const d = s.days[i];
+      const rows = teamDayRows({ d });
+      const status = d.status ? `<span class="tm-w-st status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>` : '';
+      let main;
+      if (d.status && !holidayWork(d)) main = status;
+      else if (!rows.length) main = `<span class="muted">Kein Eintrag</span>`;
+      else
+        main = `${status}${rows
+          .map(
+            (r) =>
+              `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(r.work)}</span></span></div>`
+          )
+          .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
+      return `<div class="tm-w-day"><div class="tm-w-date"><b>${WEEKDAYS_SHORT[i]}</b><span>${fmtDayMonth(sheetDate(s, i))}</span></div><div class="tm-w-main">${main}</div></div>`;
     })
     .join('');
-  app.innerHTML = `${teamNav()}
-    <div class="tm-sheet-head">${teamAvatar(m, 40)}<div><h1>KW ${isoWeek(parseDate(s.weekStart))}</h1>
-      <span class="muted">${escapeHtml(m.name || '?')} · ${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}</span></div>
-      <b>${fmtH(sheetTotal(s))}</b></div>
-    ${days}`;
+  app.innerHTML = `
+    <header class="nav">
+      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-title">${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}</span>
+      <span class="nav-btn"></span>
+    </header>
+    <div class="tm-w-who">${teamAvatar(m, 36)}<div><b>${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
+    <div class="card tm-w">${blocks}</div>`;
 }
 
 /** Nach dem Laden die gerade offene Team-Seite neu zeichnen */
