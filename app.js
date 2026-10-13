@@ -985,6 +985,8 @@ function sheetProblems(s) {
 
 /** Speichert alle Zettel; ein geänderter Zettel bekommt den Zeitstempel „zuletzt geändert“. */
 function saveSheets(changed) {
+  // Kopie auf der Tagesseite: erst „Speichern“ übernimmt sie
+  if (changed && changed === dayDraft) return;
   if (changed) changed.updatedAt = Date.now();
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(sheets));
@@ -1708,7 +1710,7 @@ function enterReport(rep, s, dayIndex, draft) {
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
-  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
+  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'day', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team', 'teamPerson', 'teamSheet']],
   ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
@@ -1808,13 +1810,16 @@ function route() {
     }
   }
   const hash = location.hash;
-  const m = hash.match(/^#\/zettel\/(.+)$/);
+  const m = hash.match(/^#\/zettel\/([^/]+)$/);
+  const dm = hash.match(/^#\/zettel\/([^/]+)\/([0-6])$/);
   const tm = hash.match(/^#\/reise\/(.+)$/);
   const lm = hash.match(/^#\/lohn\/(\d{4}-\d{2})$/);
   const jm = hash.match(/^#\/jahr\/(\d{4})$/);
   const am = hash.match(/^#\/arbeitsschein\/(.+)$/);
   const pm = hash.match(/^#\/team\/([^/]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/);
   if (currentView === 'list') listScroll = window.scrollY;
+  if (currentView === 'editor') weekScroll = window.scrollY;
+  if (currentView === 'day') dayDraft = null;
   if (currentView === 'team') teamScroll = window.scrollY;
   if (currentView === 'trip') dropEmptyTrip();
   closeModal(true);
@@ -1825,12 +1830,19 @@ function route() {
     renderTrip(decodeURIComponent(tm[1]));
     syncNav();
     window.scrollTo(0, 0);
+  } else if (dm) {
+    currentView = 'day';
+    renderDay(decodeURIComponent(dm[1]), Number(dm[2]));
+    fetchReports();
+    syncNav();
+    window.scrollTo(0, 0);
   } else if (m) {
     currentView = 'editor';
     renderEditor(decodeURIComponent(m[1]));
     fetchReports();
     syncNav();
-    window.scrollTo(0, 0);
+    // Zurück vom Tag: an derselben Stelle der Woche weiter
+    window.scrollTo(0, prevView === 'day' ? weekScroll : 0);
   } else if (/^#\/einstellungen(\/[a-z]+)?$/.test(hash)) {
     currentView = settingsSub() ? 'settingsSub' : 'settings';
     renderSettings();
@@ -1900,7 +1912,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamPerson: 1, teamSheet: 2, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamPerson: 1, teamSheet: 2, day: 2, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -1998,6 +2010,7 @@ const BACK_TARGETS = [
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
   [/^#\/team\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/team\/[^/]+)\/.*$/, '$1')],
   [/^#\/team\/[^/]+$/, '#/team'],
+  [/^#\/zettel\/[^/]+\/\d$/, () => location.hash.replace(/\/\d$/, '')],
   [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];
@@ -2477,62 +2490,107 @@ function renderEditor(id) {
     return;
   }
   editorId = id;
-  suggestions = { site: collectSuggestions('site'), work: collectSuggestions('work') };
-  workBySite = collectWorkBySite();
+  dayDraft = null;
 
   app.innerHTML = `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
-      <button class="nav-title" data-act="week" id="nav-title">${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}</button>
+      <span class="nav-title"></span>
       <span class="nav-actions">
         <button class="nav-btn" data-act="share" aria-label="Als PDF senden">${ICON.share}</button>
         <button class="nav-btn" data-act="more" aria-label="Weitere Aktionen">${ICON.more}</button>
       </span>
-      <div class="daybar" id="daybar">${dayBarHTML(s)}</div>
     </header>
-    <div id="days">${daysHTML(s)}</div>
+    <div class="wv-title"><h1 class="large-title">KW ${isoWeek(parseDate(s.weekStart))}</h1>
+      <button class="wv-dates" data-act="week">${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}${sheetLastDate(s).getFullYear()}</button></div>
+    <div class="wv-cards">${weekCardsHTML(s)}</div>
     <div class="sum-bar" id="summary">${summaryHTML(s)}</div>
     ${pdfThumbHTML('Zettel')}`;
-  fitRowTexts();
-  requestAnimationFrame(fitRowTexts);
   updatePdfThumb(true);
 }
 
-/** Kurze Stundenangabe für die Tagesleiste: „9,5“ */
-const fmtTiny = (min) => String(Math.round((min / 60) * 100) / 100).replace('.', ',');
-
-/** Tagesleiste: Mo–So mit Stunden, heute markiert */
-function dayBarHTML(s) {
-  const today = new Date();
-  return `${s.days
-    .map((d, i) => {
-      if (!sheetIsActive(s, i)) return `<span class="db-day off"><span class="db-name">${WEEKDAYS_SHORT[i]}</span><span class="db-h"></span></span>`;
+/** Wochenseite: je Tag eine gleich große Karte mit dem Wichtigsten; Antippen öffnet den Tag */
+function weekCardsHTML(s) {
+  return [0, 1, 2, 3, 4, 5, 6]
+    .filter((i) => sheetIsActive(s, i))
+    .map((i) => {
+      const d = s.days[i];
+      const rows = d.rows.filter((r) => !rowIsEmpty(r));
       const total = dayTotal(d, i);
-      const cls = ['db-day', sameDay(sheetDate(s, i), today) ? 'today' : '', d.status ? `status-${d.status} has-status` : ''].join(' ');
-      return `<button class="${cls}" data-act="jump" data-day="${i}">
-        <span class="db-name">${WEEKDAYS_SHORT[i]}${sheetDayWarning(s, i) ? `<span class="db-warn">⚠️</span>` : ''}</span>
-        <span class="db-h">${d.status && !holidayWork(d) ? DAY_STATUS_SHORT[d.status].slice(0, 2) + '.' : total ? fmtTiny(total) : '–'}</span>
-      </button>`;
+      const statusOnly = d.status && !holidayWork(d);
+      const empty = !statusOnly && !rows.length;
+      const top = `<span class="wv-top"><span><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(sheetDate(s, i))}</span>${sheetDayWarning(s, i) ? ' ⚠️' : ''}</span><b class="wv-h">${empty ? '' : fmtH(total)}</b></span>`;
+      let body;
+      if (statusOnly) {
+        const holiday = d.status === 'feiertag' ? holidayName(sheetDate(s, i)) : '';
+        body = `<span class="wv-status">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status]}${holiday ? `<span class="muted"> · ${escapeHtml(holiday)}</span>` : ''}</span>`;
+      } else if (empty) body = `<span class="wv-add">${ICON.plus} Eintragen</span>`;
+      else {
+        const from = rows[0].start;
+        const to = rows[rows.length - 1].end;
+        const sites = [...new Set(rows.map((r) => r.site.trim()).filter(Boolean))];
+        body = `<span class="wv-time">${from == null ? '…' : fmtTime(from)}–${to == null ? '…' : fmtTime(to)}${d.pause != null ? `<span class="muted"> · Pause ${fmtDec(d.pause)}</span>` : ''}</span>
+          <span class="wv-sites">${escapeHtml(sites.join(' · ') || rows[0].work)}</span>`;
+      }
+      return `<button class="card wv-card${statusOnly ? ` st status-${d.status}` : ''}${empty ? ' empty' : ''}" data-act="open-day" data-day="${i}">${top}${body}</button>`;
     })
-    .join('')}`;
+    .join('');
 }
 
-/** Alle Tage; zusammenhängende Tage des anderen Monats werden zu einer schmalen Zeile */
-function daysHTML(s) {
-  let html = '';
-  for (let i = 0; i < 7; ) {
-    if (sheetIsActive(s, i)) {
-      html += dayHTML(s, i);
-      i++;
-      continue;
-    }
-    let j = i;
-    while (j + 1 < 7 && !sheetIsActive(s, j + 1)) j++;
-    const range = i === j ? WEEKDAYS_SHORT[i] : `${WEEKDAYS_SHORT[i]} – ${WEEKDAYS_SHORT[j]}`;
-    html += `<div class="other-month">${range} ${i === 0 ? 'vorheriger' : 'nächster'} Monat</div>`;
-    i = j + 1;
+// ───────────────────────── Tagesseite ─────────────────────────
+
+/**
+ * Ein Tag zum Bearbeiten. Gearbeitet wird auf einer Kopie des Zettels (dayDraft): alle Funktionen des Tages
+ * (Zeiten, Vorschläge, Pause, Tagesart, Zeilen, Warnungen) laufen wie gewohnt über currentSheet(), aber erst
+ * „Speichern“ übernimmt den Tag in den echten Zettel. Wer mit Änderungen die Seite verlässt, wird gefragt.
+ */
+let dayDraft = null;
+let dayIndexOpen = 0;
+let weekScroll = 0;
+
+function renderDay(id, i, keep = false) {
+  const s = findSheet(id);
+  if (!s || !sheetIsActive(s, i)) {
+    location.replace(s ? `#/zettel/${encodeURIComponent(id)}` : '#/');
+    return;
   }
-  return html;
+  editorId = id;
+  dayIndexOpen = i;
+  if (!keep || !dayDraft || dayDraft.id !== id) dayDraft = structuredClone(s);
+  suggestions = { site: collectSuggestions('site'), work: collectSuggestions('work') };
+  workBySite = collectWorkBySite();
+  app.innerHTML = `
+    <header class="nav">
+      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
+      <span class="nav-title">${WEEKDAYS[i]}, ${fmtDayMonth(sheetDate(s, i))}</span>
+      <span class="nav-btn"></span>
+    </header>
+    <div id="days">${dayHTML(dayDraft, i)}</div>
+    <div class="day-save-space"></div>
+    <div class="day-save-bar"><button class="primary day-save" data-act="day-save">Speichern</button></div>`;
+  fitRowTexts();
+  requestAnimationFrame(fitRowTexts);
+}
+
+/** Ungespeicherte Änderungen am offenen Tag? */
+function dayDirty() {
+  if (currentView !== 'day' || !dayDraft) return false;
+  const s = findSheet(dayDraft.id);
+  return !!s && JSON.stringify(dayDraft.days[dayIndexOpen]) !== JSON.stringify(s.days[dayIndexOpen]);
+}
+
+function saveDay() {
+  const s = findSheet(dayDraft && dayDraft.id);
+  if (!s) return;
+  // Offenes Textfeld zuerst abschließen (Leerzeichen am Ende usw.)
+  if (document.activeElement && document.activeElement.matches('.txt')) document.activeElement.blur();
+  if (dayDirty()) {
+    s.days[dayIndexOpen] = structuredClone(dayDraft.days[dayIndexOpen]);
+    saveSheets(s);
+  }
+  haptic();
+  dayDraft = null;
+  goBack();
 }
 
 /** Leerer Sa/So ohne Tagesart wird eingeklappt angezeigt */
@@ -2636,7 +2694,7 @@ function summaryHTML(s) {
     <div class="sum-pill"><span class="sum-label">davon Überstunden</span><span class="sum-value"><b>${fmtH(sheetOvertime(s, target))}</b><span class="sum-sub">ab ${fmtH(Math.round(target * 60))}</span></span></div>`;
 }
 
-const currentSheet = () => findSheet(editorId);
+const currentSheet = () => (currentView === 'day' && dayDraft ? dayDraft : findSheet(editorId));
 
 function refreshDay(i) {
   const s = currentSheet();
@@ -2651,10 +2709,8 @@ function refreshSummary() {
   updatePdfThumb();
   const s = currentSheet();
   const el = document.getElementById('summary');
-  const snap = countSnapshot('#summary b, #daybar .db-h');
+  const snap = countSnapshot('#summary b');
   if (el) el.innerHTML = summaryHTML(s);
-  const bar = document.getElementById('daybar');
-  if (bar) bar.innerHTML = dayBarHTML(s);
   animateCounts(snap);
 }
 
@@ -2671,18 +2727,12 @@ function updateDayWarnings(dayEl, day) {
   }
   const pill = dayEl.querySelector('[data-act="pause"]');
   if (pill && day.pause == null) pill.innerHTML = `Pause${pauseMissing(day) ? ` ⚠️` : ''}`;
-  const bar = document.getElementById('daybar');
-  if (bar) bar.innerHTML = dayBarHTML(currentSheet());
 }
 
-/** Zum Tag scrollen, ohne dass er unter der festen Kopfzeile verschwindet */
-function jumpToDay(i) {
-  const el = document.querySelector(`.day[data-day="${i}"]`);
-  if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - navHeight() - 8, behavior: 'smooth' });
-}
 function refreshAll() {
   const y = window.scrollY;
-  renderEditor(editorId);
+  if (currentView === 'day') renderDay(editorId, dayIndexOpen, true);
+  else renderEditor(editorId);
   window.scrollTo(0, y);
 }
 
@@ -3458,7 +3508,7 @@ function refreshTrip() {
 }
 /** Baustelle / Art der Arbeit: Feld so hoch wie sein Text (mehrzeilig statt rechts abgeschnitten) */
 const fitRowTexts = () => document.querySelectorAll('textarea.txt').forEach(fitTextarea);
-window.addEventListener('resize', () => currentView === 'editor' && fitRowTexts());
+window.addEventListener('resize', () => currentView === 'day' && fitRowTexts());
 const fitTextarea = (el) => {
   el.style.height = 'auto';
   // + Rahmen (Linie unten), weil die Höhe den Rahmen mit einschließt
@@ -5297,6 +5347,25 @@ suggestBar.addEventListener('click', (e) => {
 
 // ───────────────────────── Ereignisse ─────────────────────────
 
+// Tagesseite mit ungespeicherten Änderungen verlassen (Zurück, Leiste unten, „+“): erst fragen
+let dayLeaveOk = false;
+document.addEventListener(
+  'click',
+  (e) => {
+    const el = e.target.closest('[data-act="back"], [data-act="tab"], [data-act="new"]');
+    if (!el || layer.contains(el) || dayLeaveOk || !dayDirty()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    confirmDialog('Änderungen verwerfen?', '', 'Verwerfen', () => {
+      dayDraft = null;
+      dayLeaveOk = true;
+      el.click();
+      dayLeaveOk = false;
+    }, true, 'Weiter bearbeiten');
+  },
+  true
+);
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-act]');
   if (!el || layer.contains(el)) return;
@@ -5554,8 +5623,11 @@ document.addEventListener('click', (e) => {
     case 'to-top':
       window.scrollTo({ top: 0, behavior: 'smooth' });
       break;
-    case 'jump':
-      jumpToDay(Number(el.dataset.day));
+    case 'open-day':
+      location.hash = `#/zettel/${encodeURIComponent(editorId)}/${el.dataset.day}`;
+      break;
+    case 'day-save':
+      saveDay();
       break;
     case 'expand': {
       const { s, dayIndex } = rowContext(el);
