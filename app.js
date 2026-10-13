@@ -221,8 +221,10 @@ delete settings.prorateTarget;
 delete settings.credit;
 delete settings.overtime;
 settings.minuteStep = 30; // Zeitauswahl immer in 30-Minuten-Schritten
-// Sa/So: keine wählbare Tagesart mehr (nur automatisch eingetragene Feiertage)
-if (sheets.map(fixWeekend).some(Boolean)) saveSheets();
+// Sa/So: keine wählbare Tagesart mehr (nur automatisch eingetragene Feiertage).
+// Erst speichern, wenn app.js ganz geladen ist: saveSheets braucht currentView und editorPending, die weiter unten stehen
+// (sonst bricht der Start ab und die App bleibt leer, z. B. wenn ein Feiertag am Wochenende nachgetragen wird)
+if (sheets.map(fixWeekend).some(Boolean)) queueMicrotask(() => saveSheets());
 
 /** Urlaubs- und Krankheitstage je Jahr (nach Datum des Tages) */
 function absenceStats() {
