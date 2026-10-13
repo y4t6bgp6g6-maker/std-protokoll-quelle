@@ -238,15 +238,15 @@ function teamAvatar(m, size = 34) {
 
 // Baustellen: gleiche Baustelle trotz anderer Schreibweise erkennen (für Farbe und Wahl der Tagesbaustelle)
 
-/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; letters: Teil vor dem Komma (danach steht meist der Ort),
- *  words: alle Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
+/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma zählt (danach steht meist der Ort);
+ *  letters: alle Buchstaben, words: die einzelnen Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
 function teamSiteParts(name) {
   const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’`´]/g, '').replace(/strasse/g, 'str');
   const core = s.split(',')[0];
   return {
     letters: core.replace(/[^a-z]/g, ''),
-    words: [...new Set(s.split(/[^a-z]+/).filter((w) => w.length >= 2))],
-    nums: (core.match(/\d+/g) || s.match(/\d+/g) || []).join(' '),
+    words: [...new Set(core.split(/[^a-z]+/).filter((w) => w.length >= 2))],
+    nums: (core.match(/\d+/g) || []).join(' '),
   };
 }
 function teamEditDistance(a, b) {
@@ -262,8 +262,8 @@ function teamEditDistance(a, b) {
   }
   return row[b.length];
 }
-/** Gleiche Wörter? gleich, eins der Anfang des anderen oder ein Tippfehler */
-const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))) || (Math.min(x.length, y.length) >= 5 && teamEditDistance(x, y) <= 1);
+/** Gleiche Wörter? gleich oder ein Tippfehler (nicht „Anfang von“: sonst wäre „Markt“ = „Marktplatz“) */
+const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 5 && teamEditDistance(x, y) <= 1);
 /** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, Anfang der anderen (Ort fehlt am Ende), ein bis zwei Tippfehler
  *  oder alle Wörter der kürzeren stecken in der längeren (Ort fehlt vorne, z. B. „Roma“ = „Musterstadt Roma“) */
 function teamSameSite(a, b) {
@@ -283,10 +283,20 @@ function teamGroupSites(people) {
   for (const p of people)
     for (const s of p.sheets || [])
       for (const d of s.days) for (const r of d.rows || []) if (r.site && r.site.trim() && !names.includes(r.site.trim())) names.push(r.site.trim());
+  // Zusammenfassen nur, wenn jede Schreibweise der einen Gruppe zu jeder der anderen passt
+  // (sonst würden z. B. „Musterstadt“, „Musterstadt Roma“ und „Musterstadt Rathaus“ über den Ort zu einer Baustelle)
   const parts = names.map(teamSiteParts);
-  const group = names.map((_, i) => i);
-  const root = (i) => (group[i] === i ? i : (group[i] = root(group[i])));
-  for (let i = 0; i < names.length; i++) for (let j = 0; j < i; j++) if (teamSameSite(parts[i], parts[j])) group[root(i)] = root(j);
+  const groups = names.map((_, i) => [i]);
+  const of = names.map((_, i) => i);
+  for (let i = 0; i < names.length; i++)
+    for (let j = 0; j < i; j++) {
+      const a = of[i], b = of[j];
+      if (a === b || !groups[a].every((x) => groups[b].every((y) => teamSameSite(parts[x], parts[y])))) continue;
+      for (const x of groups[a]) of[x] = b;
+      groups[b].push(...groups[a]);
+      groups[a] = [];
+    }
+  const root = (i) => of[i];
   const ids = new Map();
   teamSites = new Map(names.map((n, i) => [n, ids.has(root(i)) ? ids.get(root(i)) : (ids.set(root(i), ids.size), ids.size - 1)]));
 }
