@@ -119,6 +119,8 @@ function leaveTeamLocal(message) {
 
 function leaveTeam() {
   confirmDialog('Team verlassen?', 'Deine Zettel werden für das Team gelöscht.', 'Verlassen', async () => {
+    // Inzwischen schon draußen (z. B. Code ungültig): nichts mehr zu tun
+    if (!team) return;
     try {
       await teamRequest('DELETE', '/me', { member: team.member, token: team.token });
     } catch (e) {
@@ -140,6 +142,8 @@ let teamLoading = false;
 let teamPinOpen = false;
 let teamScroll = 0;
 let teamX = null;
+/** Woche, in der teamX gemerkt wurde (in einer neuen Woche wieder die laufende zeigen) */
+let teamXWeek = '';
 /** Angefangene Nachricht fürs Teammeeting */
 let teamDraft = '';
 let teamPosting = false;
@@ -187,21 +191,32 @@ function teamClean(members) {
 async function teamLoad() {
   if (!team || !TEAM_URL || teamLoading) return;
   teamLoading = true;
+  const before = teamDrawnKey();
   try {
     const data = await teamRequest('GET', '/team');
+    // Während des Ladens das Team verlassen: Ergebnis verwerfen
+    if (!team) return;
     team.cache = { month: data.month, members: teamClean(data.members), posts: teamCleanPosts(data.posts), at: Date.now() };
     saveTeam();
     teamData = team.cache;
   } catch (e) {
+    if (!team) return;
     if (e.status === 401) {
-      teamLoading = false;
       leaveTeamLocal('Team-Code ungültig');
       return;
     }
     teamData = { ...(team.cache || { members: [] }), offline: true };
+  } finally {
+    teamLoading = false;
   }
-  teamLoading = false;
-  teamRefreshView();
+  // Nichts Neues: nicht neu zeichnen (sonst bricht z. B. ein laufendes Wischen ab)
+  if (teamDrawnKey() !== before) teamRefreshView();
+}
+
+/** Was die Team-Seiten zeigen (ohne Ladezeitpunkt), dazu die laufende Woche */
+function teamDrawnKey() {
+  const src = teamData || (team && team.cache);
+  return JSON.stringify([src ? [src.members, src.posts, !!src.offline] : null, isoDate(mondayOf(new Date()))]);
 }
 
 const teamAgo = (ms) => {
@@ -213,21 +228,13 @@ const teamAgo = (ms) => {
   return `vor ${d} Tag${d > 1 ? 'en' : ''}`;
 };
 
-/** Tag einer Person am Datum (aus dem Zettel, zu dessen Monat das Datum gehört) */
-function teamMemberDay(m, date) {
-  for (const s of m.sheets || []) {
-    if (!Array.isArray(s.days) || s.days.length !== 7) continue;
-    const i = Math.round((startOfDay(date) - parseDate(s.weekStart)) / 86400000);
-    if (i >= 0 && i < 7 && sheetIsActive(s, i)) return { d: s.days[i], i };
-  }
-  return null;
-}
-
 const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
 
 /** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
 const teamMembers = () => ((teamData || (team && team.cache) || {}).members || []).filter((m) => team && m.member !== team.member);
-const teamDayRows = (x) => (x ? (x.d.rows || []).filter((r) => !rowIsEmpty(r)) : []);
+const teamDayRows = (d) => (d.rows || []).filter((r) => !rowIsEmpty(r));
+/** Tag mit Tagesart (Urlaub, krank …) statt Arbeit; Arbeit am Feiertag zählt als Arbeit */
+const teamDayOff = (d) => d.status && !holidayWork(d);
 
 /** Kreis mit dem Anfangsbuchstaben; Farbe nach der Stelle in der Liste, damit sich keine zwei gleichen */
 function teamAvatar(m, size = 34) {
@@ -239,12 +246,14 @@ function teamAvatar(m, size = 34) {
 // Baustellen: gleiche Baustelle trotz anderer Schreibweise erkennen (für Farbe und Wahl der Tagesbaustelle)
 
 /** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma zählt (danach steht meist der Ort);
- *  letters: alle Buchstaben, words: die einzelnen Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
+ *  letters: alle Buchstaben, ends: wo in letters ein Wort endet, words: die einzelnen Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
 function teamSiteParts(name) {
   const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’`´]/g, '').replace(/strasse/g, 'str');
   const core = s.split(',')[0];
+  let n = 0;
   return {
     letters: core.replace(/[^a-z]/g, ''),
+    ends: (core.match(/[a-z]+/g) || []).map((w) => (n += w.length)),
     words: [...new Set(core.split(/[^a-z]+/).filter((w) => w.length >= 2))],
     nums: (core.match(/\d+/g) || []).join(' '),
   };
@@ -264,25 +273,31 @@ function teamEditDistance(a, b) {
 }
 /** Gleiche Wörter? gleich oder ein Tippfehler (nicht „Anfang von“: sonst wäre „Markt“ = „Marktplatz“) */
 const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 5 && teamEditDistance(x, y) <= 1);
-/** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, Anfang der anderen (Ort fehlt am Ende), ein bis zwei Tippfehler
+/** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, ganze Wörter am Anfang der anderen (Ort fehlt am Ende;
+ *  „Markt“ ≠ „Marktplatz“), ein Tippfehler (ab 12 Buchstaben zwei; „Kirchweg“ ≠ „Kirchberg“)
  *  oder alle Wörter der kürzeren stecken in der längeren (Ort fehlt vorne, z. B. „Roma“ = „Musterstadt Roma“) */
 function teamSameSite(a, b) {
   if (a.nums && b.nums && a.nums !== b.nums) return false;
   if (!a.letters || !b.letters) return a.letters === b.letters && a.nums === b.nums;
   if (a.letters === b.letters) return true;
-  const [x, y] = a.letters.length <= b.letters.length ? [a.letters, b.letters] : [b.letters, a.letters];
-  if (x.length >= 4 && y.startsWith(x)) return true;
-  if (teamEditDistance(x, y) <= (x.length >= 8 ? 2 : x.length >= 5 ? 1 : 0)) return true;
+  const [x, y] = a.letters.length <= b.letters.length ? [a, b] : [b, a];
+  const n = x.letters.length;
+  if (n >= 4 && y.letters.startsWith(x.letters) && y.ends.includes(n)) return true;
+  if (teamEditDistance(x.letters, y.letters) <= (n >= 12 ? 2 : n >= 5 ? 1 : 0)) return true;
   const [few, many] = a.words.length <= b.words.length ? [a.words, b.words] : [b.words, a.words];
   return few.join('').length >= 4 && few.every((w) => many.some((v) => teamSameWord(w, v)));
 }
-/** Schreibweise → Nummer der Baustelle (nach erstem Auftreten); wird bei jedem Zeichnen neu gebildet */
+/** Schreibweise → Nummer der Baustelle (nach erstem Auftreten); neu gebildet, sobald sich die Schreibweisen ändern */
 let teamSites = new Map();
+let teamSitesKey = null;
 function teamGroupSites(people) {
   const names = [];
   for (const p of people)
     for (const s of p.sheets || [])
       for (const d of s.days) for (const r of d.rows || []) if (r.site && r.site.trim() && !names.includes(r.site.trim())) names.push(r.site.trim());
+  const key = names.join('\n');
+  if (key === teamSitesKey) return;
+  teamSitesKey = key;
   // Zusammenfassen nur, wenn jede Schreibweise der einen Gruppe zu jeder der anderen passt
   // (sonst würden z. B. „Musterstadt“, „Musterstadt Roma“ und „Musterstadt Rathaus“ über den Ort zu einer Baustelle)
   const parts = names.map(teamSiteParts);
@@ -296,18 +311,18 @@ function teamGroupSites(people) {
       groups[b].push(...groups[a]);
       groups[a] = [];
     }
-  const root = (i) => of[i];
   const ids = new Map();
-  teamSites = new Map(names.map((n, i) => [n, ids.has(root(i)) ? ids.get(root(i)) : (ids.set(root(i), ids.size), ids.size - 1)]));
+  teamSites = new Map(names.map((n, i) => [n, ids.has(of[i]) ? ids.get(of[i]) : (ids.set(of[i], ids.size), ids.size - 1)]));
 }
 const teamSiteId = (name) => teamSites.get(String(name).trim()) ?? -1;
 /** Textmarker-Farben; in einer KW bekommt jede markierte Baustelle eine andere */
 const TEAM_MARKERS = ['#ffd84a', '#7fe0a0', '#ff9cc2', '#8ec9ff', '#ffb46b', '#c9a8ff', '#7fe8e0', '#ff7a7a'];
 
-/** Baustelle des Tages: meiste Stunden; bei Gleichstand die, auf der an dem Tag mehr Leute waren; dann alphabetisch */
-function teamMainSite(d, date, people) {
+/** Baustelle des Tages: zuerst eine, die an dem Tag auch bei jemand anderem steht (bekommt den Textmarker); sonst meiste Stunden;
+ *  bei Gleichstand die, auf der an dem Tag mehr Leute waren; dann alphabetisch. crew(id): wie viele Leute die Baustelle an dem Tag haben */
+function teamMainSite(d, crew) {
   const sites = new Map();
-  for (const r of teamDayRows({ d })) {
+  for (const r of teamDayRows(d)) {
     const name = r.site.trim();
     if (!name) continue;
     const id = teamSiteId(name);
@@ -316,10 +331,9 @@ function teamMainSite(d, date, people) {
     sites.set(id, e);
   }
   if (!sites.size) return null;
-  const crew = (id) => people.filter((q) => teamDayRows(teamMemberDay(q, date)).some((r) => teamSiteId(r.site) === id)).length;
   return [...sites.values()]
     .map((e) => ({ ...e, n: crew(e.id) }))
-    .sort((a, b) => b.m - a.m || b.n - a.n || a.name.localeCompare(b.name, 'de'))[0];
+    .sort((a, b) => (b.n > 1) - (a.n > 1) || b.m - a.m || b.n - a.n || a.name.localeCompare(b.name, 'de'))[0];
 }
 
 /** Wochen des laufenden Monats (ganze und Teilwochen) bis zur laufenden bzw. bis zur letzten mit einem Zettel */
@@ -343,7 +357,7 @@ function teamPaperHTML(p, s, w, sites, marker) {
       const day = `<u>${WEEKDAYS_SHORT[i]}</u>`;
       if (!sheetIsActive(s, i)) return `<i class="off">${day}<span></span></i>`;
       const d = s.days[i];
-      if (d.status && !holidayWork(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
+      if (teamDayOff(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
       const site = sites[i];
       const name = site ? escapeHtml(site.name) : '';
       const mk = site && marker(i, site.id);
@@ -375,27 +389,42 @@ function teamSheetsHTML(members) {
   teamGroupSites(people);
   const weeks = teamWeeks(people);
   const nowCol = weeks.findIndex((w) => w.now);
-  // Baustelle je Person, Woche und Tag; dazu, wer an welchem Tag welche Baustelle auf dem Zettel stehen hat
   const sheetOf = (p, w) => (p.sheets || []).find((x) => x.weekStart === w.iso);
-  const shown = new Map();
+  const workDay = (s, i) => sheetIsActive(s, i) && !teamDayOff(s.days[i]);
+  // Wer an welchem Tag welche Baustelle auf dem Zettel hat (alle Einträge, auch kurze)
   const crew = new Map();
   for (const p of people)
     for (const w of weeks) {
       const s = sheetOf(p, w);
       if (!s) continue;
-      const sites = [0, 1, 2, 3, 4].map((i) => (sheetIsActive(s, i) && !(s.days[i].status && !holidayWork(s.days[i])) ? teamMainSite(s.days[i], sheetDate(s, i), people) : null));
-      shown.set(`${p.member}|${w.iso}`, sites);
-      sites.forEach((x, i) => x && crew.set(`${isoDate(sheetDate(s, i))}|${x.id}`, (crew.get(`${isoDate(sheetDate(s, i))}|${x.id}`) || new Set()).add(p.member)));
+      for (let i = 0; i < 5; i++) {
+        if (!workDay(s, i)) continue;
+        for (const r of teamDayRows(s.days[i])) {
+          if (!r.site.trim()) continue;
+          const key = `${isoDate(sheetDate(s, i))}|${teamSiteId(r.site)}`;
+          crew.set(key, (crew.get(key) || new Set()).add(p.member));
+        }
+      }
     }
-  const shared = (date, id) => (crew.get(`${date}|${id}`) || new Set()).size > 1;
-  // Farben nur für markierte Baustellen: in einer KW nie dieselbe Farbe für verschiedene Baustellen, sonst möglichst wenig benutzte
+  const count = (date, id) => (crew.get(`${date}|${id}`) || new Set()).size;
+  const shared = (date, id) => count(date, id) > 1;
+  // Baustelle je Person, Woche und Tag; dazu, in welchen KW eine Baustelle markiert wird (für die Farben)
+  const shown = new Map();
   const weeksOf = new Map();
-  for (const key of [...crew.keys()].sort()) {
-    const [date, id] = key.split('|');
-    if (!shared(date, id)) continue;
-    const wk = isoDate(mondayOf(parseDate(date)));
-    weeksOf.set(Number(id), (weeksOf.get(Number(id)) || new Set()).add(wk));
-  }
+  for (const w of weeks)
+    for (const p of people) {
+      const s = sheetOf(p, w);
+      if (!s) continue;
+      const sites = [0, 1, 2, 3, 4].map((i) => {
+        if (!workDay(s, i)) return null;
+        const date = isoDate(sheetDate(s, i));
+        const x = teamMainSite(s.days[i], (id) => count(date, id));
+        if (x && shared(date, x.id)) weeksOf.set(x.id, (weeksOf.get(x.id) || new Set()).add(w.iso));
+        return x;
+      });
+      shown.set(`${p.member}|${w.iso}`, sites);
+    }
+  // Farben nur für markierte Baustellen: in einer KW nie dieselbe Farbe für verschiedene Baustellen, sonst möglichst wenig benutzte
   const colorOf = new Map();
   const used = TEAM_MARKERS.map(() => 0);
   for (const [id, wks] of weeksOf) {
@@ -426,6 +455,7 @@ function teamSheetsHTML(members) {
 
 /** Zettelreihen auf den gemerkten Stand bzw. so, dass die laufende Woche rechts zu sehen ist */
 function teamPlaceRows() {
+  if (teamXWeek !== isoDate(mondayOf(new Date()))) teamX = null;
   document.querySelectorAll('.tm-z-scroll').forEach((o) => {
     if (teamX != null) {
       o.scrollLeft = teamX;
@@ -492,14 +522,14 @@ async function teamSendPost() {
     teamDraft = '';
     if (input) input.value = '';
     haptic();
-    teamPosting = false;
     await teamLoad();
   } catch (e) {
     toast(e.status === 429 ? 'Zu viele Nachrichten in diesem Monat' : 'Keine Verbindung');
+  } finally {
+    teamPosting = false;
+    const b2 = app.querySelector('[data-team="post"]');
+    if (b2) b2.disabled = false;
   }
-  teamPosting = false;
-  const b2 = app.querySelector('[data-team="post"]');
-  if (b2) b2.disabled = false;
 }
 
 function teamDeletePost(id) {
@@ -571,10 +601,10 @@ function renderTeamBody() {
 
 // ───────── Zettel eines Kollegen ─────────
 
-const teamNav = () => `
+const teamNav = (title = '') => `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
-      <span class="nav-title"></span>
+      <span class="nav-title">${title}</span>
       <span class="nav-btn"></span>
     </header>`;
 
@@ -601,13 +631,13 @@ function renderTeamSheet(id, weekStart) {
   const time = (v) => (v == null ? '–' : fmtTime(v));
   // Sa/So nur mit Einträgen (ein automatisch eingetragener Feiertag am Wochenende zählt nicht)
   const blocks = sheetActiveDays(s)
-    .filter((i) => i < 5 || teamDayRows({ d: s.days[i] }).length > 0)
+    .filter((i) => i < 5 || teamDayRows(s.days[i]).length > 0)
     .map((i) => {
       const d = s.days[i];
-      const rows = teamDayRows({ d });
+      const rows = teamDayRows(d);
       const status = d.status ? `<span class="tm-w-st status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>` : '';
       let main;
-      if (d.status && !holidayWork(d)) main = status;
+      if (teamDayOff(d)) main = status;
       else if (!rows.length) main = `<span class="muted">Kein Eintrag</span>`;
       else
         main = `${status}${rows
@@ -619,12 +649,7 @@ function renderTeamSheet(id, weekStart) {
       return `<div class="tm-w-day"><div class="tm-w-date"><b>${WEEKDAYS_SHORT[i]}</b><span>${fmtDayMonth(sheetDate(s, i))}</span></div><div class="tm-w-main">${main}</div></div>`;
     })
     .join('');
-  app.innerHTML = `
-    <header class="nav">
-      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
-      <span class="nav-title">${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}</span>
-      <span class="nav-btn"></span>
-    </header>
+  app.innerHTML = `${teamNav(`${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}`)}
     <div class="tm-w-who">${teamAvatar(m, 36)}<div><b>${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
     <div class="card tm-w">${blocks}</div>`;
 }
@@ -690,6 +715,7 @@ document.addEventListener(
     if (!(el instanceof Element) || !el.classList.contains('tm-z-scroll')) return;
     if ((teamLead && teamLead.isConnected && el !== teamLead) || (teamX != null && Math.abs(el.scrollLeft - teamX) < 1)) return;
     teamX = el.scrollLeft;
+    teamXWeek = isoDate(mondayOf(new Date()));
     document.querySelectorAll('.tm-z-scroll').forEach((o) => o !== el && (o.scrollLeft = teamX));
   },
   true
