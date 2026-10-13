@@ -15,11 +15,16 @@
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
+//   POST   /error  ← { member, token, name, version, ua, reports: [{ message, stack, view, count, first, last }] }
+//                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
+//                    ERROR_DAYS Tagen gelöscht und nur im Cloudflare-Dashboard bzw. per D1-Abfrage gelesen
 
 const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
 const MAX_BODY = 1_000_000;
 const MAX_TEXT = 500;
 const MAX_POSTS = 300; // je Person und Monat
+const MAX_ERRORS = 30; // Fehlerberichte je Gerät und Tag
+const ERROR_DAYS = 180;
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -110,6 +115,32 @@ export default {
         const { n } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE member = ? AND month = ?').bind(body.member, month).first();
         if (n >= MAX_POSTS) return json({ error: 'limit' }, 429, h);
         await db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()).run();
+        return json({ ok: true }, 200, h);
+      }
+
+      if (path === '/error' && req.method === 'POST') {
+        const body = await readBody(req);
+        if (!validId(body.member) || !Array.isArray(body.reports)) return json({ error: 'id' }, 400, h);
+        // Fehlerberichte nicht mit dem Monat löschen, sondern erst nach ERROR_DAYS Tagen
+        await db.exec('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)');
+        await db.prepare('DELETE FROM errors WHERE created < ?').bind(Date.now() - ERROR_DAYS * 86400000).run();
+        // Mit Eintrag im laufenden Monat muss das Token passen; ohne (z. B. gleich nach dem Monatswechsel) reicht der Code
+        const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
+        if (me && me.token !== (await sha256(String(body.token ?? '')))) return json({ error: 'token' }, 403, h);
+        const since = Date.now() - 86400000;
+        const { n } = await db.prepare('SELECT COUNT(*) AS n FROM errors WHERE member = ? AND created > ?').bind(body.member, since).first();
+        const reports = body.reports.slice(0, Math.max(0, MAX_ERRORS - n));
+        if (!reports.length) return json({ error: 'limit' }, 429, h);
+        const str = (v, k) => String(v ?? '').slice(0, k);
+        const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+        const now = Date.now();
+        await db.batch(
+          reports.map((r) =>
+            db
+              .prepare('INSERT INTO errors (member, name, version, ua, view, message, stack, count, first, last, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+              .bind(body.member, me ? me.name : str(body.name, 40), str(body.version, 40), str(body.ua, 200), str(r && r.view, 60), str(r && r.message, 300) || '?', str(r && r.stack, 2000), Math.max(1, Math.min(1e6, num(r && r.count) || 1)), num(r && r.first), num(r && r.last), now)
+          )
+        );
         return json({ ok: true }, 200, h);
       }
 
