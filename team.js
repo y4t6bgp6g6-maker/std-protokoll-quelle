@@ -228,7 +228,6 @@ const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5
 /** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
 const teamMembers = () => ((teamData || (team && team.cache) || {}).members || []).filter((m) => team && m.member !== team.member);
 const teamDayRows = (x) => (x ? (x.d.rows || []).filter((r) => !rowIsEmpty(r)) : []);
-const teamDayHasContent = (x) => !!x && (!!x.d.status || teamDayRows(x).length > 0);
 
 /** Kreis mit dem Anfangsbuchstaben; Farbe nach der Stelle in der Liste, damit sich keine zwei gleichen */
 function teamAvatar(m, size = 34) {
@@ -239,11 +238,16 @@ function teamAvatar(m, size = 34) {
 
 // Baustellen: gleiche Baustelle trotz anderer Schreibweise erkennen (für Farbe und Wahl der Tagesbaustelle)
 
-/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma (danach steht meist der Ort); Hausnummern getrennt */
+/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; letters: Teil vor dem Komma (danach steht meist der Ort),
+ *  words: alle Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
 function teamSiteParts(name) {
-  const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/strasse/g, 'str');
+  const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’`´]/g, '').replace(/strasse/g, 'str');
   const core = s.split(',')[0];
-  return { letters: core.replace(/[^a-z]/g, ''), nums: (core.match(/\d+/g) || []).join(' ') };
+  return {
+    letters: core.replace(/[^a-z]/g, ''),
+    words: [...new Set(s.split(/[^a-z]+/).filter((w) => w.length >= 2))],
+    nums: (core.match(/\d+/g) || s.match(/\d+/g) || []).join(' '),
+  };
 }
 function teamEditDistance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, j) => j);
@@ -258,14 +262,19 @@ function teamEditDistance(a, b) {
   }
   return row[b.length];
 }
-/** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, Anfang der anderen (Ort fehlt) oder ein bis zwei Tippfehler */
+/** Gleiche Wörter? gleich, eins der Anfang des anderen oder ein Tippfehler */
+const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 4 && (x.startsWith(y) || y.startsWith(x))) || (Math.min(x.length, y.length) >= 5 && teamEditDistance(x, y) <= 1);
+/** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, Anfang der anderen (Ort fehlt am Ende), ein bis zwei Tippfehler
+ *  oder alle Wörter der kürzeren stecken in der längeren (Ort fehlt vorne, z. B. „Roma“ = „Musterstadt Roma“) */
 function teamSameSite(a, b) {
   if (a.nums && b.nums && a.nums !== b.nums) return false;
   if (!a.letters || !b.letters) return a.letters === b.letters && a.nums === b.nums;
   if (a.letters === b.letters) return true;
   const [x, y] = a.letters.length <= b.letters.length ? [a.letters, b.letters] : [b.letters, a.letters];
   if (x.length >= 4 && y.startsWith(x)) return true;
-  return teamEditDistance(x, y) <= (x.length >= 8 ? 2 : x.length >= 5 ? 1 : 0);
+  if (teamEditDistance(x, y) <= (x.length >= 8 ? 2 : x.length >= 5 ? 1 : 0)) return true;
+  const [few, many] = a.words.length <= b.words.length ? [a.words, b.words] : [b.words, a.words];
+  return few.join('').length >= 4 && few.every((w) => many.some((v) => teamSameWord(w, v)));
 }
 /** Schreibweise → Nummer der Baustelle (nach erstem Auftreten); wird bei jedem Zeichnen neu gebildet */
 let teamSites = new Map();
@@ -337,19 +346,21 @@ function teamPaperHTML(p, s, w, sites, shared) {
     const [r, x, y] = lay[(seed + k * 2) % lay.length];
     return `<i class="tm-z-under" style="--r:${r}deg;--x:${x}px;--y:${y}px"></i>`;
   }).join('');
-  // Eigene Zettel nur ansehen (bearbeiten über „Zettel“), Zettel der Kollegen öffnen die Wochenansicht
-  const tag = p.me ? 'div' : 'a';
-  const href = p.me ? '' : ` href="#/team/${encodeURIComponent(p.member)}/${s.weekStart}"`;
-  return `<${tag} class="tm-z${w.now ? ' now' : ''}"${href}><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span><span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
+  return `<a class="tm-z${w.now ? ' now' : ''}" href="#/team/${encodeURIComponent(p.member)}/${s.weekStart}"><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span><span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
     <span class="tm-z-t">${rows}</span>
-    <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></${tag}>`;
+    <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></a>`;
+}
+
+/** Man selbst wie ein Kollege: eigene gespeicherte Zettel des laufenden Monats */
+function teamMe() {
+  const now = new Date();
+  return { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1) };
 }
 
 function teamSheetsHTML(members) {
   const now = new Date();
-  const me = { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1) };
   // Die eigene Reihe steht immer ganz unten
-  const people = [...members, me];
+  const people = [...members, teamMe()];
   teamGroupSites(people);
   const weeks = teamWeeks(people);
   const nowCol = weeks.findIndex((w) => w.now);
@@ -544,11 +555,12 @@ function teamFindMember(id) {
     location.replace('#/team');
     return undefined;
   }
+  if (id === team.member) return teamMe();
   if (!teamData) teamLoad();
   return teamMembers().find((m) => m.member === id) || null;
 }
 
-/** Ein Zettel (eine Woche) eines Kollegen, nur lesen: eine Karte, je Tag links Tag und Datum, rechts alle Einträge, Pause und Stunden */
+/** Ein Zettel (eine Woche) eines Kollegen oder der eigene, nur lesen: eine Karte, je Tag links Tag und Datum, rechts alle Einträge, Pause und Stunden */
 function renderTeamSheet(id, weekStart) {
   const m = teamFindMember(id);
   if (m === undefined) return;
@@ -558,8 +570,9 @@ function renderTeamSheet(id, weekStart) {
     return;
   }
   const time = (v) => (v == null ? '–' : fmtTime(v));
+  // Sa/So nur mit Einträgen (ein automatisch eingetragener Feiertag am Wochenende zählt nicht)
   const blocks = sheetActiveDays(s)
-    .filter((i) => i < 5 || teamDayHasContent({ d: s.days[i], i }))
+    .filter((i) => i < 5 || teamDayRows({ d: s.days[i] }).length > 0)
     .map((i) => {
       const d = s.days[i];
       const rows = teamDayRows({ d });
