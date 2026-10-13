@@ -1359,14 +1359,11 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .team-empty { text-align: center; padding: 70px 24px 0; color: var(--muted); }
 .team-empty svg { color: var(--accent); }
 .team-empty b { display: block; margin: 12px 0 4px; color: var(--text); font-size: 19px; }
-/* Team: Beitreten mit Code; danach ein Tag, darunter je Kollege eine Karte (nur lesen) */
+/* Team: Beitreten mit Code; danach je Person eine Karte mit ihren Zetteln des Monats (nur lesen) */
 .tm-join { margin: 22px 0 12px; padding: 0 16px; }
 .tm-join input { width: 100%; padding: 14px 0; font-size: 17px; border: 0; background: none; color: var(--text); text-align: center; letter-spacing: 0.05em; outline: none; }
 .tm-join-btn { background: var(--accent-fill); color: var(--on-accent); }
 .tm-join-btn:disabled { opacity: 0.5; }
-.tm-week { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 8px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.tm-arrow { width: 40px; height: 36px; display: grid; place-items: center; color: var(--accent); }
-.tm-arrow:disabled { opacity: 0.25; }
 .tm-name { display: flex; justify-content: space-between; gap: 12px; }
 .tm-name span:first-child { color: var(--text); font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tm-name span:last-child { flex: none; }
@@ -1385,14 +1382,7 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-status.status-frei { color: var(--off-ink); }
 .tm-msg { text-align: center; margin: 24px 16px; }
 .tm-leave { margin-top: 8px; color: var(--danger); }
-.tm-seg { margin-bottom: 14px; }
 /* Pinnwand */
-.tm-seg > button { position: relative; }
-.tm-dot { position: absolute; top: 6px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
-.tm-more { flex: none; color: inherit; font: inherit; }
-.tm-teaser { display: flex; gap: 12px; width: 100%; padding: 12px 14px; margin-bottom: 18px; text-align: left; color: inherit; }
-.tm-teaser .muted { font-size: 13px; }
-.tm-teaser-t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 3px; font-size: 15px; overflow-wrap: anywhere; }
 .tm-compose { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 16px; margin-bottom: 16px; }
 .tm-compose input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font-size: 16px; outline: none; padding: 8px 0; }
 .tm-send { flex: none; width: 36px; height: 36px; border-radius: 50%; background: var(--accent-fill); color: var(--on-accent); display: grid; place-items: center; }
@@ -1409,49 +1399,64 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 /* Kreis mit Anfangsbuchstaben (Farbe je Kollege aus team.js) */
 .tm-av { flex: none; display: inline-grid; place-items: center; width: var(--s); height: var(--s); border-radius: 50%; background: var(--av); color: #fff; font-weight: 700; font-size: calc(var(--s) * 0.44); }
 .tm-av-me { background: var(--accent-fill); color: var(--on-accent); }
-/* Heute: Tag wählen, darunter je Kollege eine Zeile zum Aufklappen */
-.tm-dayhead { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 6px; font-weight: 600; }
 .tm-list .list-row { flex: none; width: 100%; text-align: left; }
-.tm-acc, .tm-wrow { border-bottom: 0.5px solid var(--sep); }
-.tm-acc:last-child, .tm-wrow:last-child { border-bottom: 0; }
-.tm-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.tm-mid > span { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tm-h { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tm-wrow { border-bottom: 0.5px solid var(--sep); }
+.tm-wrow:last-child { border-bottom: 0; }
 .tm-chev { flex: none; display: grid; }
-.tm-chev svg { width: 16px; height: 16px; color: var(--muted); transition: transform 0.2s; }
-.tm-acc.open .tm-chev svg { transform: rotate(90deg); }
-.tm-acc.open > .list-row { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
-.tm-acc-body { background: color-mix(in srgb, var(--accent) 5%, var(--card)); border-top: 0.5px solid var(--sep); }
-.tm-acc-body :is(.tm-row, .tm-foot, .tm-status) { padding-left: 60px; }
-.tm-acc-body .tm-time { width: 100px; font-size: 15px; }
-.tm-acc-body .tm-foot { border-bottom: 0.5px solid var(--sep); }
-.tm-all { display: flex; justify-content: flex-end; align-items: center; gap: 4px; padding: 11px 14px; color: var(--accent); font-weight: 600; text-decoration: none; }
-.tm-all svg { width: 16px; height: 16px; }
-.tm-ink svg { width: 14px; height: 14px; vertical-align: -2px; }
-.tm-ink.status-urlaub { color: var(--vac-ink); }
-.tm-ink.status-krank { color: var(--sick-ink); }
-.tm-ink.status-feiertag { color: var(--holiday-ink); }
-.tm-ink.status-frei { color: var(--off-ink); }
-/* Woche: Tabelle mit Stunden je Tag */
-.tm-table { padding: 4px 0; }
-.tm-wk { display: grid; grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 40px) 50px; align-items: center; padding: 9px 12px; border-bottom: 0.5px solid var(--sep); font-variant-numeric: tabular-nums; text-align: center; font-size: 15px; }
-.tm-wk:last-child { border-bottom: 0; }
-.tm-wk > a { color: inherit; text-decoration: none; }
-.tm-wk-h { color: var(--muted); font-size: 13px; font-weight: 600; }
-.tm-wk-h small { display: block; font-weight: 400; }
-.tm-wk-n { display: flex; align-items: center; gap: 8px; text-align: left; font-weight: 600; min-width: 0; }
-.tm-wk-n > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tm-wk b { text-align: right; }
-.tm-me { background: var(--accent-soft); }
-/* Mit Sa/So: schmalere Spalten, nur der Kreis statt des Namens */
-.tm-table.wide .tm-wk { grid-template-columns: minmax(0, 1fr) repeat(var(--cols), 37px) 46px; font-size: 14px; }
-.tm-table.wide .tm-wk-n > :not(.tm-av) { display: none; }
-.tm-table.wide .tm-wk-n { font-size: 0; }
-.tm-st { font-weight: 700; font-size: 14px; border-radius: 6px; padding: 1px 0; margin: 0 3px; }
-.tm-st.status-urlaub { color: var(--vac-ink); background: color-mix(in srgb, var(--vac) 18%, transparent); }
-.tm-st.status-krank { color: var(--sick-ink); background: color-mix(in srgb, var(--sick) 18%, transparent); }
-.tm-st.status-feiertag { color: var(--holiday-ink); background: color-mix(in srgb, var(--holiday) 18%, transparent); }
-.tm-st.status-frei { color: var(--off-ink); background: color-mix(in srgb, var(--off) 18%, transparent); }
+.tm-chev svg { width: 16px; height: 16px; color: var(--muted); }
+/* Startseite: Pinnwand-Knopf oben rechts mit Zahl neuer Nachrichten */
+.tm-pin { position: relative; color: var(--text); }
+.tm-pin svg { width: 22px; height: 22px; }
+.tm-badge { position: absolute; top: -2px; right: -2px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font: 700 12px/18px -apple-system, sans-serif; font-style: normal; text-align: center; }
+/* Je Person eine Karte; die Zettel des Monats als Spalten (KW untereinander), drei sichtbar, alle Reihen wischen gemeinsam */
+.tm-pcard { padding: 12px; margin-bottom: 12px; }
+.tm-pcard.me { box-shadow: var(--shadow), inset 0 0 0 1.5px var(--accent-fill); }
+.tm-pcard-h { display: flex; align-items: center; gap: 8px; font-size: 17px; margin-bottom: 10px; }
+.tm-pcard-h a { color: inherit; text-decoration: none; }
+.tm-pcard-h > span:last-child { margin-left: auto; font-weight: 700; font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tm-z-scroll { container-type: inline-size; overflow-x: auto; scrollbar-width: none; margin: 0 -12px -12px; padding: 4px 12px 16px; scroll-snap-type: x mandatory; scroll-padding: 0 12px; }
+.tm-z-scroll::-webkit-scrollbar { display: none; }
+.tm-z-row { display: grid; grid-template-columns: repeat(var(--n), calc((100cqw - 44px) / 3)); gap: 10px; }
+.tm-z-slot { isolation: isolate; position: relative; scroll-snap-align: start; transform: rotate(var(--tilt, 0deg)); }
+.tm-z-slot.gap { border-radius: 4px; border: 1.5px dashed color-mix(in srgb, var(--text) 16%, transparent); transform: none; min-height: 150px; }
+/* Zettel: Formular in Druckschrift, Einträge in Schreibmaschine (Special Elite, Apache-Lizenz 2.0, Google Fonts); hell weiß, dunkel hellblau */
+@font-face { font-family: 'Special Elite'; src: url('fonts/special-elite.woff2') format('woff2'); font-display: swap; }
+.tm-z { --paper: #fdfcf7; --paper2: #f1eee3; --flap: #c9c3b2; --flap2: #ece8dc; --ink: #1d232b; --print: #8a8d92; --rule: #dcd8cc; --strong: #2a3038;
+  --type: 'Special Elite', 'American Typewriter', 'Courier New', monospace;
+  position: relative; display: flex; flex-direction: column; padding: 8px 8px 7px; color: var(--ink); text-decoration: none; }
+:root[data-theme='dark'] .tm-z { --paper: #e6eefc; --paper2: #d3e0f7; --flap: #a6b8e2; --flap2: #d5e0f6; --ink: #132764; --print: #5a71ad; --rule: #b4c6ec; --strong: #1d3a8a; }
+/* Papier als eigene Ebene: Ecke abgeschnitten, Schatten folgt der Form; darunter leicht verschobene Blätter (Stapel) */
+.tm-z-bg { position: absolute; inset: 0; z-index: -1; filter: drop-shadow(0 0 0.5px rgba(0, 0, 0, 0.45)) drop-shadow(0 1.5px 2px rgba(0, 0, 0, 0.18)); }
+.tm-z-paper, .tm-z-under { position: absolute; inset: 0; border-radius: 1px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E"), linear-gradient(160deg, var(--paper) 0%, var(--paper) 55%, var(--paper2) 100%); }
+.tm-z-paper { clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%); }
+.tm-z-under { transform: translate(var(--x), var(--y)) rotate(var(--r)); background: linear-gradient(160deg, var(--paper2), var(--paper)); filter: brightness(0.95); }
+.tm-z-flap { position: absolute; top: 0; right: 0; width: 14px; height: 14px; clip-path: polygon(0 0, 0 100%, 100% 100%); background: linear-gradient(225deg, var(--flap) 30%, var(--flap2) 75%); border-bottom-left-radius: 2px; }
+/* angehobene Ecken: zwei schräge Schatten unter dem Blatt */
+.tm-z::before, .tm-z::after { content: ''; position: absolute; z-index: -2; bottom: 7px; width: 46%; height: 30%; box-shadow: 0 9px 10px rgba(0, 0, 0, 0.55); }
+.tm-z::before { left: 5px; transform: rotate(-3.5deg); }
+.tm-z::after { right: 5px; transform: rotate(3.5deg); }
+/* laufende Woche: kleine Büroklammer, KW blau */
+.tm-z-clip { position: absolute; top: -7px; left: 12px; z-index: 2; width: 8px; height: 21px; fill: none; stroke: color-mix(in srgb, var(--accent-fill) 75%, #9aa3b5); stroke-width: 1.4; stroke-linecap: round; transform: rotate(-14deg); transform-origin: 50% 30%; filter: drop-shadow(0.5px 1px 0.6px rgba(0, 0, 0, 0.3)); }
+.tm-z.now .tm-z-top b { color: var(--accent-fill); }
+.tm-z-top { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 4px; align-items: baseline; padding-bottom: 4px; border-bottom: 1.5px solid var(--strong); }
+.tm-z-top small, .tm-z-f small { font-size: 6.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--print); font-weight: 700; }
+.tm-z-top small { grid-column: 1 / -1; }
+.tm-z-top b { font-size: 12px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+.tm-z-top .tm-z-range { grid-column: auto; font-size: 8px; letter-spacing: 0; text-transform: none; font-weight: 600; text-align: right; padding-right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tm-z-t { display: flex; flex-direction: column; }
+.tm-z-t i { display: grid; grid-template-columns: 17px minmax(0, 1fr); align-items: center; height: 21px; font-style: normal; border-bottom: 0.5px solid var(--rule); }
+.tm-z-t u { text-decoration: none; font-size: 8.5px; font-weight: 700; color: var(--print); height: 100%; display: flex; align-items: center; border-right: 0.5px solid var(--rule); }
+.tm-z-t span { padding-left: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--type); font-size: 9.6px; letter-spacing: -0.03em; line-height: 21px; }
+/* Baustelle wie mit Textmarker angestrichen, Farbe je Baustelle */
+.tm-z-t mark { color: inherit; padding: 0 2px; margin: 0 -2px; background: linear-gradient(100deg, transparent 2px, color-mix(in srgb, var(--mk) 62%, transparent) 3px, color-mix(in srgb, var(--mk) 50%, transparent) calc(100% - 3px), transparent calc(100% - 2px)) 0 60% / 100% 62% no-repeat; -webkit-box-decoration-break: clone; }
+.tm-z-t em { font-style: normal; }
+.tm-z-t i.st-urlaub em { color: #b0650a; }
+.tm-z-t i.st-krank em { color: #b12a5b; }
+.tm-z-t i.st-feiertag em { color: #7432ad; }
+.tm-z-t i.off { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--print) 22%, transparent) 0 1.5px, transparent 1.5px 5px); }
+.tm-z-t i.off u { opacity: 0.45; }
+.tm-z-f { display: flex; justify-content: space-between; align-items: baseline; gap: 4px; padding-top: 4px; margin-top: 2px; border-top: 1.5px solid var(--strong); }
+.tm-z-f b { font-family: var(--type); font-size: 11.5px; font-weight: 400; white-space: nowrap; }
 /* Zettel eines Kollegen */
 .tm-profile { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 4px 0 22px; text-align: center; }
 .tm-profile h1 { margin: 4px 0 0; font-size: 30px; }

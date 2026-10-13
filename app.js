@@ -1875,10 +1875,12 @@ function route() {
     window.scrollTo(0, 0);
   } else if (hash === '#/team') {
     currentView = 'team';
+    // Zurück von den Zetteln eines Kollegen: an derselben Stelle weiter (auch seitlich); sonst die laufende Woche zeigen
+    const back = prevView === 'teamPerson' || prevView === 'teamSheet';
+    if (!back) teamX = null;
     renderTeam();
     syncNav();
-    // Zurück von den Zetteln eines Kollegen: an derselben Stelle weiter
-    window.scrollTo(0, prevView === 'teamPerson' || prevView === 'teamSheet' ? teamScroll : 0);
+    window.scrollTo(0, back ? teamScroll : 0);
   } else if (pm) {
     currentView = pm[2] ? 'teamSheet' : 'teamPerson';
     if (pm[2]) renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);

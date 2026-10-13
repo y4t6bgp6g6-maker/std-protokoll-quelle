@@ -4,7 +4,7 @@
 // löscht der Worker die alten Einträge.
 //
 // Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, seen, cache: { month, members, posts, at } }
-// seen: Zeitpunkt der zuletzt gesehenen Pinnwand-Nachricht (Punkt am Reiter „Pinnwand“)
+// seen: Zeitpunkt der zuletzt gesehenen Pinnwand-Nachricht (Zahl am Pinnwand-Knopf)
 
 const TEAM_URL = 'https://std-protokoll-team.std-protokoll.workers.dev';
 const TEAM_KEY = 'stdprotokoll.team.v1';
@@ -131,17 +131,15 @@ function leaveTeam() {
   }, true);
 }
 
-// ───────── Team-Seite: Reiter „Heute“ (Kollegen zum Aufklappen) und „Woche“ (Stunden je Tag) ─────────
+// ───────── Team-Seite: je Person eine Karte mit ihren Zetteln des Monats (gleiche KW untereinander) ─────────
 
 /** Zuletzt geladene Einträge der Kollegen (null = noch nichts geladen) */
 let teamData = null;
 let teamLoading = false;
-/** Gewählter Reiter, Tag unter „Heute“ (ohne Wahl heute), Montag unter „Woche“, aufgeklappte Kollegen, Scrollstand */
-let teamTab = 'heute';
-let teamDay = null;
-let teamWeek = null;
-const teamOpen = new Set();
+/** Pinnwand offen (statt der Zettel), Scrollstand, waagerechter Stand der Zettelreihen (null = laufende Woche zeigen) */
+let teamPinOpen = false;
 let teamScroll = 0;
+let teamX = null;
 /** Angefangene Nachricht für die Pinnwand */
 let teamDraft = '';
 let teamPosting = false;
@@ -215,7 +213,7 @@ const teamAgo = (ms) => {
   return `vor ${d} Tag${d > 1 ? 'en' : ''}`;
 };
 
-/** Tag eines Kollegen am Datum (aus dem Zettel, zu dessen Monat das Datum gehört) */
+/** Tag einer Person am Datum (aus dem Zettel, zu dessen Monat das Datum gehört) */
 function teamMemberDay(m, date) {
   for (const s of m.sheets || []) {
     if (!Array.isArray(s.days) || s.days.length !== 7) continue;
@@ -240,142 +238,171 @@ function teamDayHTML(x) {
     <div class="tm-foot"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><span>Gesamt <b>${fmtH(dayTotal(d, i))}</b></span></div>`;
 }
 
-function renderTeam() {
-  app.innerHTML = `
-    <header class="nav">
-      <span class="nav-btn"></span>
-      <span class="nav-title"></span>
-      <span class="nav-btn"></span>
-    </header>
-    <h1 class="large-title">Team</h1>
-    <div id="team-body"></div>`;
-  renderTeamBody();
-  if (team) {
-    teamUpload();
-    teamLoad();
-  }
-}
-
 const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
-const TEAM_STATUS_LETTER = { krank: 'K', urlaub: 'U', feiertag: 'FT', frei: 'F' };
 
 /** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
 const teamMembers = () => ((teamData || (team && team.cache) || {}).members || []).filter((m) => team && m.member !== team.member);
-const teamInMonth = (d) => {
-  const t = new Date();
-  return d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear();
-};
-const teamDayHasContent = (x) => !!x && (!!x.d.status || (x.d.rows || []).some((r) => !rowIsEmpty(r)));
+const teamDayRows = (x) => (x ? (x.d.rows || []).filter((r) => !rowIsEmpty(r)) : []);
+const teamDayHasContent = (x) => !!x && (!!x.d.status || teamDayRows(x).length > 0);
 
 /** Kreis mit dem Anfangsbuchstaben; Farbe nach der Stelle in der Liste, damit sich keine zwei gleichen */
 function teamAvatar(m, size = 34) {
+  if (m.me) return `<span class="tm-av tm-av-me" style="--s:${size}px">D</span>`;
   const k = Math.max(0, teamMembers().findIndex((x) => x.member === m.member));
   return `<span class="tm-av" style="--av:${TEAM_COLORS[k % TEAM_COLORS.length]};--s:${size}px">${escapeHtml(([...(m.name || '?')][0] || '?').toUpperCase())}</span>`;
 }
 
-/** Eine Zeile für den Tag: Baustelle (oder Anzahl), erste bis letzte Uhrzeit, Stunden */
-function teamDaySummary(x) {
-  const none = { sub: '<span class="muted">Kein Eintrag</span>', h: '', detail: false };
-  if (!x) return none;
-  const { d, i } = x;
-  const rows = (d.rows || []).filter((r) => !rowIsEmpty(r));
-  if (d.status && !holidayWork(d))
-    return { sub: `<span class="tm-ink status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>`, h: '', detail: false };
-  if (!rows.length) return none;
-  const sites = [...new Set(rows.map((r) => r.site.trim()).filter(Boolean))];
-  const where = sites.length > 1 ? `${sites.length} Baustellen` : escapeHtml(sites[0] || rows[0].work || '');
-  const from = rows[0].start, to = rows[rows.length - 1].end;
-  const time = from != null && to != null ? `${fmtTime(from)}–${fmtTime(to)}` : '';
-  return { sub: `<span class="muted">${[where, time].filter(Boolean).join(' · ')}</span>`, h: fmtH(dayTotal(d, i)), detail: true };
-}
+// Baustellen: gleiche Baustelle trotz anderer Schreibweise erkennen (für Farbe und Wahl der Tagesbaustelle)
 
-/** Voriger/nächster Tag im laufenden Monat; Sa/So nur, wenn jemand etwas eingetragen hat */
-function teamStepDay(dir) {
-  const members = teamMembers();
-  for (let d = addDays(teamDay, dir); teamInMonth(d); d = addDays(d, dir)) {
-    const wd = (d.getDay() + 6) % 7;
-    if (wd < 5 || members.some((m) => teamDayHasContent(teamMemberDay(m, d)))) return d;
+/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma (danach steht meist der Ort); Hausnummern getrennt */
+function teamSiteParts(name) {
+  const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/strasse/g, 'str');
+  const core = s.split(',')[0];
+  return { letters: core.replace(/[^a-z]/g, ''), nums: (core.match(/\d+/g) || []).join(' ') };
+}
+function teamEditDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = t;
+    }
   }
-  return null;
+  return row[b.length];
+}
+/** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, Anfang der anderen (Ort fehlt) oder ein bis zwei Tippfehler */
+function teamSameSite(a, b) {
+  if (a.nums && b.nums && a.nums !== b.nums) return false;
+  if (!a.letters || !b.letters) return a.letters === b.letters && a.nums === b.nums;
+  if (a.letters === b.letters) return true;
+  const [x, y] = a.letters.length <= b.letters.length ? [a.letters, b.letters] : [b.letters, a.letters];
+  if (x.length >= 4 && y.startsWith(x)) return true;
+  return teamEditDistance(x, y) <= (x.length >= 8 ? 2 : x.length >= 5 ? 1 : 0);
+}
+/** Schreibweise → Nummer der Baustelle (nach erstem Auftreten); wird bei jedem Zeichnen neu gebildet */
+let teamSites = new Map();
+function teamGroupSites(people) {
+  const names = [];
+  for (const p of people)
+    for (const s of p.sheets || [])
+      for (const d of s.days) for (const r of d.rows || []) if (r.site && r.site.trim() && !names.includes(r.site.trim())) names.push(r.site.trim());
+  const parts = names.map(teamSiteParts);
+  const group = names.map((_, i) => i);
+  const root = (i) => (group[i] === i ? i : (group[i] = root(group[i])));
+  for (let i = 0; i < names.length; i++) for (let j = 0; j < i; j++) if (teamSameSite(parts[i], parts[j])) group[root(i)] = root(j);
+  const ids = new Map();
+  teamSites = new Map(names.map((n, i) => [n, ids.has(root(i)) ? ids.get(root(i)) : (ids.set(root(i), ids.size), ids.size - 1)]));
+}
+const teamSiteId = (name) => teamSites.get(String(name).trim()) ?? -1;
+/** Textmarker-Farben, eine je Baustelle */
+const TEAM_MARKERS = ['#ffd84a', '#7fe0a0', '#ff9cc2', '#8ec9ff', '#ffb46b', '#c9a8ff', '#9ee6e0', '#e6e07a'];
+
+/** Baustelle des Tages: meiste Stunden; bei Gleichstand die, auf der an dem Tag mehr Leute waren; dann alphabetisch */
+function teamMainSite(d, date, people) {
+  const sites = new Map();
+  for (const r of teamDayRows({ d })) {
+    const name = r.site.trim();
+    if (!name) continue;
+    const id = teamSiteId(name);
+    const e = sites.get(id) || { id, name, m: 0 };
+    e.m += r.start != null && r.end != null ? Math.max(0, r.end - r.start) : 0;
+    sites.set(id, e);
+  }
+  if (!sites.size) return null;
+  const crew = (id) => people.filter((q) => teamDayRows(teamMemberDay(q, date)).some((r) => teamSiteId(r.site) === id)).length;
+  return [...sites.values()]
+    .map((e) => ({ ...e, n: crew(e.id) }))
+    .sort((a, b) => b.m - a.m || b.n - a.n || a.name.localeCompare(b.name, 'de'))[0];
 }
 
-function teamTodayHTML(members) {
-  const today = startOfDay(new Date());
-  if (!teamDay || !teamInMonth(teamDay)) teamDay = today;
-  const prev = teamStepDay(-1);
-  const next = teamStepDay(1);
-  const wd = (teamDay.getDay() + 6) % 7;
-  const label = `${sameDay(teamDay, today) ? 'Heute · ' : ''}${WEEKDAYS[wd]}, ${fmtDayMonth(teamDay)}`;
-  const arrow = (d, dir) =>
-    `<button class="tm-arrow" data-team="day" ${d ? `data-date="${isoDate(d)}"` : 'disabled'} aria-label="${dir < 0 ? 'Tag zurück' : 'Tag vor'}">${dir < 0 ? ICON.chevronLeft : ICON.chevronRight}</button>`;
-  const rows = members
-    .map((m) => {
-      const x = teamMemberDay(m, teamDay);
-      const { sub, h, detail } = teamDaySummary(x);
-      const open = teamOpen.has(m.member);
-      return `<div class="tm-acc${open ? ' open' : ''}">
-        <button class="list-row plain tm-person" data-team="toggle" data-member="${escapeHtml(m.member)}">${teamAvatar(m)}<span class="tm-mid"><b>${escapeHtml(m.name || '?')}</b>${sub}</span><span class="tm-h">${h}</span><span class="tm-chev">${ICON.chevronRight}</span></button>
-        ${open ? `<div class="tm-acc-body">${detail ? teamDayHTML(x) : ''}<a class="tm-all" href="#/team/${encodeURIComponent(m.member)}">Alle Zettel von ${escapeHtml(m.name || '?')} ${ICON.chevronRight}</a></div>` : ''}
-      </div>`;
+/** Wochen des laufenden Monats (ganze und Teilwochen) bis zur laufenden bzw. bis zur letzten mit einem Zettel */
+function teamWeeks(people) {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const weeks = [];
+  for (let d = mondayOf(first); d <= last; d = addDays(d, 7))
+    weeks.push({ mon: d, iso: isoDate(d), a: d < first ? first : d, b: addDays(d, 6) > last ? last : addDays(d, 6), now: sameDay(d, mondayOf(now)) });
+  let end = weeks.findIndex((w) => w.now);
+  weeks.forEach((w, k) => people.some((p) => (p.sheets || []).some((s) => s.weekStart === w.iso)) && (end = Math.max(end, k)));
+  return weeks.slice(0, end + 1);
+}
+
+/** Ein Zettel als kleines Blatt: KW, Mo–Fr mit Baustelle, Gesamt; darunter 0–2 weitere Blätter wie auf einem Stapel */
+function teamPaperHTML(p, s, w, people) {
+  const rows = [0, 1, 2, 3, 4]
+    .map((i) => {
+      const day = `<u>${WEEKDAYS_SHORT[i]}</u>`;
+      if (!sheetIsActive(s, i)) return `<i class="off">${day}<span></span></i>`;
+      const d = s.days[i];
+      if (d.status && !holidayWork(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
+      const site = teamMainSite(d, sheetDate(s, i), people);
+      return `<i>${day}<span>${site ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${escapeHtml(site.name)}</mark>` : ''}</span></i>`;
     })
     .join('');
-  return `<div class="tm-dayhead">${arrow(prev, -1)}<span>${label}</span>${arrow(next, 1)}</div>
-    <div class="card tm-list">${rows}</div>`;
+  // Stapel: fest je Person und Woche, damit nichts springt
+  const seed = isoWeek(w.mon) * 7 + [...String(p.member)].reduce((t, c) => t + c.charCodeAt(0), 0);
+  const lay = [[-2.2, -2, 3], [1.8, 3, 2], [-1.2, 2, 4], [2.6, -2, 3], [-3, 1, 4], [1.2, -3, 2]];
+  const under = Array.from({ length: seed % 3 }, (_, k) => {
+    const [r, x, y] = lay[(seed + k * 2) % lay.length];
+    return `<i class="tm-z-under" style="--r:${r}deg;--x:${x}px;--y:${y}px"></i>`;
+  }).join('');
+  const href = p.me ? `#/zettel/${encodeURIComponent(s.id)}` : `#/team/${encodeURIComponent(p.member)}/${s.weekStart}`;
+  return `<a class="tm-z${w.now ? ' now' : ''}" href="${href}"><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span>${
+    w.now ? '<svg class="tm-z-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M5 11v15a2.5 2.5 0 0 0 5 0V7a4 4 0 0 0-8 0v19a5.5 5.5 0 0 0 11 0V9"/></svg>' : ''
+  }<span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
+    <span class="tm-z-t">${rows}</span>
+    <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></a>`;
 }
 
-/** Woche: alle Kollegen (und man selbst) mit Stunden je Tag */
-function teamWeekHTML(members) {
-  const overlaps = (mon) => teamInMonth(mon) || teamInMonth(addDays(mon, 6));
-  if (!teamWeek || !overlaps(teamWeek)) teamWeek = mondayOf(new Date());
-  const iso = isoDate(teamWeek);
+function teamSheetsHTML(members) {
   const now = new Date();
-  const own = sheets.find((s) => s.weekStart === iso && s.year === now.getFullYear() && s.month === now.getMonth() + 1);
-  const people = [
-    { name: 'Du', me: true, sheet: own },
-    ...members.map((m) => ({ m, name: m.name || '?', sheet: (m.sheets || []).find((s) => s.weekStart === iso) })),
-  ];
-  const content = (s, i) => s && sheetIsActive(s, i) && teamDayHasContent({ d: s.days[i], i });
-  // Nur Tage des laufenden Monats; Sa/So nur, wenn jemand etwas eingetragen hat
-  const days = [0, 1, 2, 3, 4, 5, 6].filter((i) => teamInMonth(addDays(teamWeek, i)) && (i < 5 || people.some((p) => content(p.sheet, i))));
-  const head = `<div class="tm-wk tm-wk-h"><span></span>${days
-    .map((i) => `<span>${WEEKDAYS_SHORT[i]}<small>${addDays(teamWeek, i).getDate()}.</small></span>`)
-    .join('')}<span>Σ</span></div>`;
-  const line = (p) => {
-    const s = p.sheet;
-    const link = (inner, cls = '') =>
-      p.me || !s ? `<span class="${cls}">${inner}</span>` : `<a class="${cls}" href="#/team/${encodeURIComponent(p.m.member)}/${iso}">${inner}</a>`;
-    const cells = days
-      .map((i) => {
-        if (!s || !sheetIsActive(s, i)) return `<span class="muted">–</span>`;
-        const d = s.days[i];
-        if (d.status && !holidayWork(d)) return link(TEAM_STATUS_LETTER[d.status] || '?', `tm-st status-${d.status}`);
-        const t = dayTotal(d, i);
-        return t ? link(fmtDec(t)) : `<span class="muted">–</span>`;
-      })
-      .join('');
-    const total = s ? sheetTotal(s) : 0;
-    const name = p.me
-      ? `<span class="tm-wk-n"><span class="tm-av tm-av-me" style="--s:24px">D</span>Du</span>`
-      : `<a class="tm-wk-n" href="#/team/${encodeURIComponent(p.m.member)}">${teamAvatar(p.m, 24)}<span>${escapeHtml(p.name)}</span></a>`;
-    return `<div class="tm-wk${p.me ? ' tm-me' : ''}">${name}${cells}<b>${total ? fmtDec(total) : '–'}</b></div>`;
-  };
-  const first = addDays(teamWeek, days[0] ?? 0);
-  const last = addDays(teamWeek, days.at(-1) ?? 4);
-  const canPrev = overlaps(addDays(teamWeek, -7));
-  const canNext = overlaps(addDays(teamWeek, 7));
-  return `<div class="tm-week">
-      <button class="tm-arrow" data-team="week" data-dir="-1" ${canPrev ? '' : 'disabled'} aria-label="Woche zurück">${ICON.chevronLeft}</button>
-      <span>KW ${isoWeek(teamWeek)} · ${fmtDayMonth(first)} – ${fmtDayMonth(last)}</span>
-      <button class="tm-arrow" data-team="week" data-dir="1" ${canNext ? '' : 'disabled'} aria-label="Woche vor">${ICON.chevronRight}</button>
-    </div>
-    <div class="card tm-table${days.length > 5 ? ' wide' : ''}" style="--cols:${days.length}">${head}${people.map(line).join('')}</div>`;
+  const me = { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1) };
+  const people = [me, ...members];
+  teamGroupSites(people);
+  const weeks = teamWeeks(people);
+  const nowCol = weeks.findIndex((w) => w.now);
+  const cards = people
+    .map((p) => {
+      let total = 0;
+      const slots = weeks
+        .map((w, k) => {
+          const s = (p.sheets || []).find((x) => x.weekStart === w.iso);
+          if (!s) return `<span class="tm-z-slot gap"></span>`;
+          total += sheetTotal(s);
+          return `<span class="tm-z-slot" style="--tilt:${[-0.6, 0.4, -0.2, 0.7, -0.4, 0.3][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, people)}</span>`;
+        })
+        .join('');
+      const name = p.me ? `<b>Du</b>` : `<a href="#/team/${encodeURIComponent(p.member)}"><b>${escapeHtml(p.name || '?')}</b></a>`;
+      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}${name}<span>${total ? fmtH(total) : ''}</span></div>
+        <div class="tm-z-scroll"><div class="tm-z-row" data-now="${nowCol}" style="--n:${weeks.length}">${slots}</div></div></div>`;
+    })
+    .join('');
+  return `<h2 class="section-title">${MONTHS[now.getMonth()]} ${now.getFullYear()}</h2>${cards}${members.length ? '' : '<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>'}`;
+}
+
+/** Zettelreihen auf den gemerkten Stand bzw. so, dass die laufende Woche rechts zu sehen ist */
+function teamPlaceRows() {
+  document.querySelectorAll('.tm-z-scroll').forEach((o) => {
+    if (teamX != null) {
+      o.scrollLeft = teamX;
+      return;
+    }
+    const row = o.firstElementChild;
+    const k = Number(row.dataset.now);
+    const col = row.children[0] ? row.children[0].getBoundingClientRect().width + 10 : 0;
+    o.scrollLeft = Math.max(0, (k < 0 ? row.children.length - 1 : k - 2) * col);
+  });
 }
 
 // ───────── Pinnwand ─────────
 
 const teamPosts = () => (teamData || (team && team.cache) || {}).posts || [];
-/** Neue Nachrichten anderer seit dem letzten Blick auf die Pinnwand */
-const teamUnread = () => teamPosts().some((p) => p.member !== team.member && p.created > (team.seen || 0));
+/** Neue Nachrichten anderer seit dem letzten Blick auf die Pinnwand (Zahl am Knopf) */
+const teamUnread = () => teamPosts().filter((p) => p.member !== team.member && p.created > (team.seen || 0)).length;
 
 function teamPostsHTML() {
   const posts = teamPosts();
@@ -392,16 +419,6 @@ function teamBoardHTML() {
   return `<div class="card tm-compose"><input data-team="post-text" placeholder="Nachricht ans Team" maxlength="500" enterkeyhint="send" autocomplete="off" value="${escapeHtml(teamDraft)}"><button class="tm-send" data-team="post" aria-label="Senden" ${teamPosting ? 'disabled' : ''}>${ICON.chevronRight}</button></div>
     <div class="tm-posts" id="tm-posts">${teamPostsHTML()}</div>
     <p class="footnote center">Nachrichten verschwinden am Monatsende.</p>`;
-}
-
-/** Neueste Nachricht oben auf „Heute“ */
-function teamTeaserHTML() {
-  const p = teamPosts()[0];
-  if (!p) return '';
-  const me = p.member === team.member;
-  const n = teamPosts().length;
-  return `<h2 class="section-title tm-name"><span>Pinnwand</span><button class="tm-more" data-team="tab" data-tab="pinnwand">${n} ${n === 1 ? 'Nachricht' : 'Nachrichten'} ›</button></h2>
-    <button class="card tm-teaser" data-team="tab" data-tab="pinnwand">${me ? '<span class="tm-av tm-av-me" style="--s:30px">D</span>' : teamAvatar(p, 30)}<span><b>${me ? 'Du' : escapeHtml(p.name || '?')}</b> <span class="muted">${teamAgo(p.created)}</span><span class="tm-teaser-t">${escapeHtml(p.text)}</span></span></button>`;
 }
 
 function teamMarkSeen() {
@@ -456,9 +473,41 @@ function teamDeletePost(id) {
   }, true);
 }
 
+/** Sprechblase für den Pinnwand-Knopf (svg() kommt aus app.js, das erst nach team.js geladen wird) */
+const teamChatIcon = () => svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/>', 22);
+
+function renderTeam() {
+  app.innerHTML = `
+    <header class="nav" id="team-nav"></header>
+    <h1 class="large-title" id="team-title"></h1>
+    <div id="team-body"></div>`;
+  renderTeamBody();
+  if (team) {
+    teamUpload();
+    teamLoad();
+  }
+}
+
+/** Kopf: Pinnwand-Knopf (mit Zahl neuer Nachrichten) bzw. auf der Pinnwand der Weg zurück */
+function renderTeamNav() {
+  const nav = document.getElementById('team-nav');
+  if (!nav) return;
+  const n = team ? teamUnread() : 0;
+  nav.innerHTML =
+    team && teamPinOpen
+      ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
+      : `<span class="nav-btn"></span><span class="nav-title"></span>${
+          team ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Pinnwand">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
+        }`;
+  document.getElementById('team-title').textContent = team && teamPinOpen ? 'Pinnwand' : 'Team';
+}
+
 function renderTeamBody() {
   const body = document.getElementById('team-body');
   if (!body) return;
+  if (!team) teamPinOpen = false;
+  if (teamPinOpen) teamMarkSeen();
+  renderTeamNav();
   if (!team) {
     body.innerHTML = `
       <div class="team-empty">${svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48)}<b>Zettel der Kollegen sehen</b></div>
@@ -469,28 +518,15 @@ function renderTeamBody() {
       <p class="footnote center">Deine Zettel des laufenden Monats sind dann für das Team sichtbar.</p>`;
     return;
   }
-  const members = teamMembers();
-  let content;
-  if (teamTab === 'pinnwand') {
-    content = teamBoardHTML();
-    teamMarkSeen();
-  } else if (!teamData && !team.cache) content = `<p class="tm-msg muted">Wird geladen …</p>`;
-  else if (!members.length) content = `${teamTeaserHTML()}<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>`;
-  else content = teamTab === 'woche' ? teamWeekHTML(members) : teamTeaserHTML() + teamTodayHTML(members);
-  body.innerHTML = `
-    <div class="seg tm-seg">${[
-      ['heute', 'Heute'],
-      ['woche', 'Woche'],
-      ['pinnwand', 'Pinnwand'],
-    ]
-      .map(
-        ([k, t]) =>
-          `<button class="${teamTab === k ? 'on' : ''}" data-team="tab" data-tab="${k}">${t}${k === 'pinnwand' && teamTab !== k && teamUnread() ? '<i class="tm-dot"></i>' : ''}</button>`
-      )
-      .join('')}</div>
-    ${teamData && teamData.offline ? `<p class="tm-msg muted">Offline${teamData.at ? ` – Stand ${teamAgo(teamData.at)}` : ''}</p>` : ''}
-    ${content}
+  const offline = teamData && teamData.offline ? `<p class="tm-msg muted">Offline${teamData.at ? ` – Stand ${teamAgo(teamData.at)}` : ''}</p>` : '';
+  if (teamPinOpen) {
+    body.innerHTML = offline + teamBoardHTML();
+    return;
+  }
+  const content = !teamData && !team.cache ? `<p class="tm-msg muted">Wird geladen …</p>` : teamSheetsHTML(teamMembers());
+  body.innerHTML = `${offline}${content}
     <div class="center"><button class="link-btn tm-leave" data-team="leave">Team verlassen</button></div>`;
+  teamPlaceRows();
 }
 
 // ───────── Zettel eines Kollegen ─────────
@@ -573,7 +609,7 @@ function renderTeamSheet(id, weekStart) {
 /** Nach dem Laden die gerade offene Team-Seite neu zeichnen */
 function teamRefreshView() {
   // Pinnwand: nur die Nachrichten neu, damit Eingabefeld und Tastatur bleiben
-  const list = currentView === 'team' && teamTab === 'pinnwand' && document.getElementById('tm-posts');
+  const list = currentView === 'team' && teamPinOpen && document.getElementById('tm-posts');
   if (list) {
     list.innerHTML = teamPostsHTML();
     teamMarkSeen();
@@ -594,10 +630,10 @@ document.addEventListener('click', (e) => {
       e.preventDefault();
       joinTeam(app.querySelector('[data-team="code"]').value);
       break;
-    case 'tab':
-      if (teamTab === el.dataset.tab) break;
+    case 'pin':
+    case 'pin-close':
       haptic();
-      teamTab = el.dataset.tab;
+      teamPinOpen = el.dataset.team === 'pin';
       renderTeamBody();
       window.scrollTo(0, 0);
       break;
@@ -607,28 +643,23 @@ document.addEventListener('click', (e) => {
     case 'post-del':
       teamDeletePost(el.dataset.id);
       break;
-    case 'toggle': {
-      haptic();
-      const id = el.dataset.member;
-      if (!teamOpen.delete(id)) teamOpen.add(id);
-      renderTeamBody();
-      break;
-    }
-    case 'day':
-      haptic();
-      teamDay = parseDate(el.dataset.date);
-      renderTeamBody();
-      break;
-    case 'week':
-      haptic();
-      teamWeek = addDays(teamWeek, 7 * Number(el.dataset.dir));
-      renderTeamBody();
-      break;
     case 'leave':
       leaveTeam();
       break;
   }
 });
+// Alle Zettelreihen wischen gemeinsam (gleiche KW bleibt untereinander); Stand merken für das nächste Zeichnen
+// (die nachgezogenen Reihen melden denselben Stand und werden dann übergangen)
+document.addEventListener(
+  'scroll',
+  (e) => {
+    const el = e.target;
+    if (!(el instanceof Element) || !el.classList.contains('tm-z-scroll') || (teamX != null && Math.abs(el.scrollLeft - teamX) < 1)) return;
+    teamX = el.scrollLeft;
+    document.querySelectorAll('.tm-z-scroll').forEach((o) => o !== el && (o.scrollLeft = teamX));
+  },
+  true
+);
 // Return im Code-Feld (app.js schließt danach die Tastatur)
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches('[data-team="code"]')) joinTeam(e.target.value);
@@ -647,6 +678,6 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => teamQueueUpload(500));
 // Pinnwand offen und App im Vordergrund: alle 10 Sekunden nach neuen Nachrichten sehen (fast wie ein Chat)
 setInterval(() => {
-  if (team && currentView === 'team' && teamTab === 'pinnwand' && document.visibilityState === 'visible' && navigator.onLine) teamLoad();
+  if (team && currentView === 'team' && teamPinOpen && document.visibilityState === 'visible' && navigator.onLine) teamLoad();
 }, 10000);
 setTimeout(() => teamQueueUpload(0), 2000);
