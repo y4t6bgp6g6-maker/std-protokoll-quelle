@@ -2681,15 +2681,18 @@ function refreshDay(i) {
   updateSaveBar();
 }
 
-/** Unter jedem geänderten Tag ein Knopf „Eintrag speichern“, dazu ein weißer Rahmen um den Tag */
-const daySaveHTML = () => `<div class="day-save"><button class="day-save-btn" data-act="save-day">${ICON.check}<span>Eintrag speichern</span></button></div>`;
+/**
+ * Geänderter Tag: weißer Rahmen und „Speichern“ in der Fußzeile an der Stelle von „Gesamt“ (die Summe steht
+ * oben in der Tagesleiste). Tage ohne Fußzeile (Urlaub, Krank …) bekommen den Knopf im Kopf.
+ */
+const daySaveHTML = () => `<button class="day-save-btn" data-act="save-day" aria-label="Eintrag speichern">${ICON.check}<span>Speichern</span></button>`;
 function updateSaveBar() {
   const s = currentSheet();
   for (const el of document.querySelectorAll('#days .day')) {
     const dirty = !!s && editorDayDirty(s, Number(el.dataset.day));
     el.classList.toggle('unsaved', dirty);
-    const btn = el.querySelector(':scope > .day-save');
-    if (dirty && !btn) el.insertAdjacentHTML('beforeend', daySaveHTML());
+    const btn = el.querySelector('.day-save-btn');
+    if (dirty && !btn) (el.querySelector('.day-foot') || el.querySelector('.day-head')).insertAdjacentHTML('beforeend', daySaveHTML());
     else if (!dirty && btn) btn.remove();
   }
 }
