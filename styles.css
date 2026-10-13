@@ -450,28 +450,25 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 13px 24px;
-  border-radius: 26px;
-  font-size: 17px;
+  gap: 10px;
+  padding: 16px 30px;
+  border-radius: 30px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--text);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)),
-    color-mix(in srgb, var(--card) 55%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(1.6);
-  backdrop-filter: blur(14px) saturate(1.6);
-  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.45), inset 0 -1px 1px rgba(255, 255, 255, 0.15),
-    0 10px 30px rgba(0, 0, 0, 0.2);
+  /* dichteres Glas mit hellem Leuchtrand, damit sich der Knopf klar von den Karten abhebt */
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.2) 45%), color-mix(in srgb, var(--card) 80%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  backdrop-filter: blur(20px) saturate(1.8);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--text) 75%, transparent), 0 12px 34px rgba(0, 0, 0, 0.25);
 }
 :root[data-theme='dark'] .save-btn {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
-    color-mix(in srgb, var(--card) 55%, transparent);
-  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.28), inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-    0 10px 30px rgba(0, 0, 0, 0.45);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.03) 45%), color-mix(in srgb, var(--card) 80%, transparent);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 22px rgba(255, 255, 255, 0.28), 0 12px 34px rgba(0, 0, 0, 0.6);
 }
-.save-btn svg { width: 20px; height: 20px; stroke-width: 2.6; }
+.save-btn svg { width: 22px; height: 22px; stroke-width: 2.6; }
 .save-btn:active { transform: scale(0.97); }
-body.tabs.unsaved #app { padding-bottom: calc(var(--tab-h) + 96px); }
+body.tabs.unsaved #app { padding-bottom: calc(var(--tab-h) + 104px); }
 
 .summary { margin-top: 16px; }
 .sum-row {
