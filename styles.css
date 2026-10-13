@@ -26,6 +26,7 @@
   --holiday-ink: #7432ad;
   --off: #8e8e93;
   --off-ink: #5f6862;
+  --vac-plan: #c06a08;
   /* Zahlen in der iPhone-Schrift mit gleich breiten Ziffern (siehe unten) */
   --mono: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
   /* Leiste unten: schwebende Kapsel, Abstand zum unteren Rand; --tab-h = Platz, den sie unten belegt */
@@ -61,6 +62,7 @@
   --holiday-ink: #c9a0ff;
   --off: #97a2ac;
   --off-ink: #97a2ac;
+  --vac-plan: #b8680a;
   color-scheme: dark;
 }
 
@@ -747,7 +749,6 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 }
 .stats-card:active { background: var(--fill); }
 .stats-item { display: flex; flex-direction: column; flex: 1; }
-.ov-num small { font-size: 0.6em; font-weight: 600; }
 .stats-label { font-size: 13px; color: var(--muted); }
 .day-head > div:first-child { white-space: nowrap; }
 .day-actions { flex-wrap: nowrap; }
@@ -1068,22 +1069,9 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .cf-spell { margin-left: 8px; font-size: 12px; color: var(--muted); }
 .cf-txt mark { padding: 0 2px; border-radius: 4px; color: inherit; background: rgba(255, 159, 10, 0.28); }
 
-/* Übersicht: Kacheln je Jahr und Überstunden je Monat */
-.ov-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.ov-tile { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 10px; row-gap: 4px; padding: 12px 14px; border-radius: 14px; background: var(--card); }
-.ov-tile-t { display: contents; }
-.ov-tile .ov-label { grid-column: 1 / -1; white-space: nowrap; }
-.ov-tile .ov-icon { flex: none; width: 34px; height: 34px; border-radius: 10px; margin: 0; }
-.ov-tile .ov-icon svg { width: 19px; height: 19px; }
-.ov-tile .ov-num { font-size: 24px; }
-.ov-tile .ov-label { font-size: 13.5px; line-height: 1.2; }
+/* Übersicht: Überstunden je Monat */
 .stats-ot { display: flex; flex-direction: column; align-items: flex-end; text-align: right; }
 .stats-ot b { font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ov-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; color: #fff; margin-bottom: 6px; }
-.ov-icon.vac { background: var(--warning); }
-.ov-icon.sick { background: var(--danger); }
-.ov-num { font-size: 28px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ov-label { font-size: 14px; color: var(--muted); }
 .ov-months { margin-top: 10px; border-radius: 16px; }
 .ov-row { display: grid; grid-template-columns: 1fr 1fr 1.15fr; column-gap: 10px; align-items: center; min-height: 48px; padding: 0 16px; border-top: 0.5px solid var(--sep); font-size: 17px; white-space: nowrap; }
 .ov-head { min-height: 48px; padding-top: 6px; padding-bottom: 6px; border-top: 0; font-size: 13px; white-space: normal; line-height: 1.2; font-weight: 600; color: var(--muted); }
@@ -1155,20 +1143,6 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ps-bar { height: 8px; margin: 16px 0 10px; border-radius: 4px; background: var(--fill); overflow: hidden; }
 .ps-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
 /* Übersicht: Jahr umblättern, Abrechnung in der Monatstabelle */
-/* Jahresleiste: alle Jahre zum Antippen, bei vielen seitlich schiebbar, Rand blendet aus, wo weitere Jahre liegen */
-.ov-segwrap { margin: 4px 0 12px; border-radius: 22px; background: var(--card); }
-.ov-seg { border-radius: 22px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
-.ov-seg::-webkit-scrollbar { display: none; }
-.ov-seg-in { display: flex; min-width: 100%; width: max-content; padding: 3px; box-sizing: border-box; }
-.ov-seg button { flex: 1 0 78px; height: 38px; border-radius: 19px; font-size: 16px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-.ov-seg button.on { background: var(--accent-fill); color: var(--on-accent); }
-.ov-seg.single button.on { background: none; color: var(--text); }
-.ov-seg.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 48px); mask-image: linear-gradient(to right, transparent, #000 48px); }
-.ov-seg.fade-r { -webkit-mask-image: linear-gradient(to left, transparent, #000 48px); mask-image: linear-gradient(to left, transparent, #000 48px); }
-.ov-seg.fade-l.fade-r {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
-  mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent);
-}
 /* Monat mit Abrechnung: ein Satz darunter */
 .ov-month { display: block; color: inherit; text-decoration: none; border-top: 0.5px solid var(--sep); }
 .ov-month .ov-row { border-top: 0; }
@@ -1251,7 +1225,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ws-work p { margin: 10px 0; line-height: 1.4; }
 
 /* Zahlen: iPhone-Schrift mit gleich breiten Ziffern, damit sie untereinander stehen */
-.list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ov-num, .ws-fact b, .db-h {
+.list-hours, .day-total b, .sum-pill b, .stats-ot b, .row-hours, .time, .ws-fact b, .db-h {
   font-family: var(--mono);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -1527,10 +1501,10 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
   @keyframes pg-nav { from { opacity: 0; } }
 
   /* Antippen: Karten und Zeilen drücken sich leicht ein und federn zurück */
-  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .db-day, .trip-pick, .ws-chip, .ov-tile) {
+  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .db-day, .trip-pick, .ws-chip, .ovc) {
     transition: transform 0.45s cubic-bezier(0.3, 1.6, 0.5, 1), background-color 0.2s;
   }
-  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .trip-pick, .ws-chip, .ov-tile):active {
+  :is(.list-row, .list-gap, .stats-card, .ov-month, .ov-totallink, .list-btn, .list-trip, .pv-thumb, .trip-pick, .ws-chip):active {
     transform: scale(0.97);
     transition-duration: 0.12s;
     transition-timing-function: ease-out;
@@ -1801,3 +1775,86 @@ a.s-row:active { background: var(--fill); }
 .bh-form .field span { white-space: nowrap; }
 .list-row.bh-r { flex: none; width: 100%; text-align: left; }
 .action .muted { color: var(--muted); font-weight: 400; }
+
+/* ───────── Übersicht: Karten (karten.js) ───────── */
+.ov-yearbtn { gap: 4px; padding: 0 12px 0 16px !important; color: var(--text) !important; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ov-yearbtn svg { width: 16px; height: 16px; color: var(--muted); }
+.ovc-check { display: inline-flex; vertical-align: -1px; margin-left: 6px; }
+.ovc-check svg { width: 16px; height: 16px; stroke-width: 2.6; }
+.ovc-wrap { display: grid; gap: 10px; margin-bottom: 10px; }
+.ovc { position: relative; background: var(--card); border-radius: 20px; box-shadow: var(--shadow); padding: 16px; transition: transform 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.ovc.pressing { transform: scale(0.95); transition: transform 0.45s cubic-bezier(0.4, 0, 0.6, 1); }
+.ovc-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ovc-s { display: flex; flex-direction: column; min-height: 108px; padding: 12px 12px 13px; }
+.ovc-label { font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ovc-num { display: block; overflow: hidden; margin: 4px 0 6px; font-size: 26px; font-weight: 700; line-height: 1.1; letter-spacing: -0.02em; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ovc-num small { margin-left: 2px; font-size: 0.55em; font-weight: 600; color: var(--muted); }
+.ovc-sub { margin-top: auto; font-size: 12px; line-height: 1.2; color: var(--muted); }
+.ovc .sick { color: var(--sick-ink); }
+.ovc .vac { color: var(--vac-ink); }
+.ovc .hol { color: var(--holiday-ink); }
+
+.ovc-big { padding: 18px 18px 16px; }
+.ovc-title { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.ovc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.ovc-head b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.ovc-avg { margin-right: 1px; font-weight: 600; color: var(--muted); }
+.ovc-vac { display: grid; grid-template-columns: 136px 1fr; align-items: center; column-gap: 18px; }
+.ovc-donut { position: relative; width: 136px; height: 136px; }
+.ovc-donut svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ovc-track, .ovc-arc { fill: none; stroke-width: 15; }
+.ovc-track { stroke: var(--fill); }
+.ovc-arc.vac { stroke: var(--vac); }
+.ovc-arc.vac-plan { stroke: var(--vac-plan); }
+.ovc-arc.rest { stroke: var(--fill); }
+.ovc-arc.acc { stroke: var(--accent-fill); }
+.ovc-arc.sick { stroke: var(--sick); }
+.ovc-arc.hol { stroke: var(--holiday); }
+.ovc-donut-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ovc-donut-c b { font-size: 36px; font-weight: 800; line-height: 1; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.ovc-donut-c span { margin-top: 3px; font-size: 12.5px; color: var(--muted); }
+.ovc-lines { margin-top: 6px; }
+.ovc-lines div { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 16px; }
+.ovc-lines b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.ovc-foot { margin-top: 6px; font-size: 13px; color: var(--muted); }
+.ovc-dot { flex: none; width: 12px; height: 12px; border-radius: 4px; }
+.ovc-dot.vac { background: var(--vac); }
+.ovc-dot.vac-plan { background: var(--vac-plan); }
+.ovc-dot.rest { background: var(--fill); box-shadow: inset 0 0 0 1px var(--sep); }
+.ovc-dot.acc { background: var(--accent-fill); }
+.ovc-dot.sick { background: var(--sick); }
+.ovc-dot.hol { background: var(--holiday); }
+.ovc-dot.plan { border: 1.5px dashed var(--vac); }
+
+.ovc-bars { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 5px; height: 160px; padding-top: 18px; }
+.ovc-col { display: flex; flex-direction: column; min-width: 0; }
+.ovc-plot { flex: 1; display: flex; flex-direction: column; }
+.ovc-up, .ovc-dn { display: flex; flex-direction: column; align-items: center; }
+.ovc-up { justify-content: flex-end; gap: 2px; }
+.ovc-dn { justify-content: flex-start; border-top: 1px solid var(--sep); padding-top: 1px; }
+.ovc-bar { display: block; flex: none; width: 100%; max-width: 22px; border-radius: 5px; background: var(--accent-fill); }
+.ovc-bar.plus, .ovc-bar.ok { background: var(--success); }
+.ovc-bar.minus { background: var(--danger); }
+.ovc-bar.vac { background: var(--vac); }
+.ovc-bar.sick { background: var(--sick); }
+.ovc-bar.plan { background: none; border: 1.5px dashed var(--vac); }
+.ovc-bar.ovc-none { height: 4px; border-radius: 2px; background: var(--fill); }
+.ovc-val { margin-bottom: 2px; font-size: 10.5px; font-weight: 600; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ovc-dn .ovc-val { margin: 2px 0 0; }
+.ovc-m { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); }
+.ovc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 13px; }
+.ovc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .ovc-arc { animation: ovc-arc 0.9s cubic-bezier(0.3, 0.8, 0.3, 1) both; animation-delay: calc(140ms + var(--d, 0ms)); }
+  @keyframes ovc-arc { from { stroke-dasharray: 0 100; } }
+  .ovc-up .ovc-bar { transform-origin: bottom; }
+  .ovc-dn .ovc-bar { transform-origin: top; }
+  .ovc-bar { animation: ovc-grow 0.7s cubic-bezier(0.2, 0.9, 0.25, 1.05) both; animation-delay: calc(140ms + var(--i) * 35ms); }
+  @keyframes ovc-grow { from { transform: scaleY(0); } }
+  .ovc-val { animation: ovc-fade 0.4s ease-out both; animation-delay: calc(420ms + var(--i) * 35ms); }
+  @keyframes ovc-fade { from { opacity: 0; transform: translateY(4px); } }
+  .ovc-swap { animation: ovc-swap 0.55s cubic-bezier(0.3, 1.35, 0.5, 1) both; }
+  @keyframes ovc-swap { from { opacity: 0; transform: scale(0.9); } }
+  .ovc.picked { transform: scale(1.02); transition: transform 0.2s ease-out; }
+}

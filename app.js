@@ -187,6 +187,8 @@ const DEFAULT_SETTINGS = {
   kvExtra: '',
   otPct: '25',
   bav: '',
+  vacationDays: 30, // Urlaubsanspruch im Jahr (Karte „Urlaub“ in der Übersicht)
+  ovCards: null, // Inhalt der Karten in der Übersicht (karten.js), null = Vorgabe
   theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
   autoBackup: true, // Sicherung automatisch über die Abholadresse (Google-Skript) in Google Drive
   encryptBackup: false, // Sicherungen mit Passwort verschlüsseln (Schlüssel nur auf diesem iPhone, nie in der Sicherung)
@@ -212,7 +214,6 @@ delete settings.dayBar;
 settings.target = 40;
 settings.hoursPerDay = 8;
 settings.state = 'NI';
-delete settings.vacationDays;
 // Ebenfalls fest: Stunden in App und PDF dezimal; Überstunden immer, bei Teilwochen anteilig;
 // Krank/Urlaub/Feiertag zählen 8 Stunden (Sa/So 0), Frei 0
 delete settings.hourFormat;
@@ -1781,6 +1782,7 @@ const ICON = {
   close: svg('<path d="M18 6L6 18M6 6l12 12"/>', 16),
   chevronLeft: svg('<path d="M15 18l-6-6 6-6"/>', 20),
   chevronRight: svg('<path d="M9 18l6-6-6-6"/>', 20),
+  chevronDown: svg('<path d="M6 9l6 6 6-6"/>', 16),
   search: svg('<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>'),
   share: svg('<path d="M12 3v12M8 7l4-4 4 4"/><path d="M7 11H6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1"/>'),
   up: svg('<path d="M12 19V5M5 12l7-7 7 7"/>', 22),
@@ -1914,7 +1916,7 @@ function route() {
   } else if (hash === '#/uebersicht') {
     currentView = 'stats';
     renderStats();
-    placeYearBar();
+    ovcAnimate(document.querySelectorAll('#app [data-ovc]'), null, 120);
     syncNav();
     window.scrollTo(0, 0);
   } else {
@@ -1943,7 +1945,7 @@ function pageAnim(from, to) {
   // Klasse wieder entfernen, sonst laufen neu gezeichnete Teile (z. B. nach einer Änderung) die Animation erneut
   pageAnim.timer = setTimeout(() => app.classList.remove('pg-push', 'pg-pop', 'pg-fade'), 400);
   if (to === 'stats') {
-    document.querySelectorAll('#app .ov-tile, #app .ov-month, #app .ov-totallink').forEach((el, i) => {
+    document.querySelectorAll('#app .ovc, #app .ov-month, #app .ov-totallink').forEach((el, i) => {
       el.style.animationDelay = `${60 + i * 28}ms`;
       el.classList.add('stagger');
     });
@@ -2266,38 +2268,9 @@ function statsCardHTML() {
 }
 
 const balanceClass = (min) => (min > 0 ? 'plus' : min < 0 ? 'minus' : '');
-const OV_ICON = {
-  sun: svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 18),
-  cross: svg('<path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/>', 18),
-};
 
 /** In der Übersicht angezeigtes Jahr (null = laufendes Jahr); bleibt beim Zurückkehren erhalten, solange die App offen ist */
 let statsYear = null;
-
-/** Jahresleiste: gewähltes Jahr sichtbar halten (vorherige Lage behalten, nur bei Bedarf weich nachschieben) */
-function placeYearBar(prev) {
-  const bar = document.querySelector('.ov-seg');
-  const on = bar?.querySelector('.on');
-  if (!on) return;
-  bar.onscroll = () => fadeYearBar(bar);
-  requestAnimationFrame(() => fadeYearBar(bar));
-  if (prev == null) {
-    bar.scrollLeft = on.offsetLeft - (bar.clientWidth - on.offsetWidth) / 2;
-    return;
-  }
-  bar.scrollLeft = prev;
-  const left = on.offsetLeft - 8;
-  const right = on.offsetLeft + on.offsetWidth + 8 - bar.clientWidth;
-  if (bar.scrollLeft > left) bar.scrollTo({ left, behavior: 'smooth' });
-  else if (bar.scrollLeft < right) bar.scrollTo({ left: right, behavior: 'smooth' });
-}
-
-/** Rand der Jahresleiste sanft ausblenden, wo noch weitere Jahre liegen */
-function fadeYearBar(bar) {
-  const max = bar.scrollWidth - bar.clientWidth;
-  bar.classList.toggle('fade-l', bar.scrollLeft > 2);
-  bar.classList.toggle('fade-r', bar.scrollLeft < max - 2);
-}
 
 function renderStats() {
   const stats = absenceStats();
@@ -2309,33 +2282,25 @@ function renderStats() {
   const years = [...stats.keys()].sort((a, b) => b - a);
   if (!years.includes(statsYear)) statsYear = current;
   const y = statsYear;
-  const st = stats.get(y);
+  renderStats.years = years;
   app.innerHTML = `
     <header class="nav">
       <span class="nav-btn"></span>
       <span class="nav-title"></span>
       <span class="nav-btn"></span>
     </header>
-    <h1 class="large-title">Übersicht</h1>
-    <div class="ov-segwrap"><div class="ov-seg${years.length < 2 ? ' single' : ''}"><div class="ov-seg-in">
-      ${[...years].reverse().map((v) => `<button data-act="ov-year" data-year="${v}" class="${v === y ? 'on' : ''}">${v}</button>`).join('')}
-    </div></div></div>
-    <div class="ov-tiles">
-      <div class="ov-tile">
-        <span class="ov-icon vac">${OV_ICON.sun}</span>
-        <span class="ov-tile-t"><span class="ov-num">${fmtNum(st.urlaub)}</span><span class="ov-label">${st.urlaub === 1 ? 'Tag' : 'Tage'} Urlaub genommen</span></span>
-      </div>
-      <div class="ov-tile">
-        <span class="ov-icon sick">${OV_ICON.cross}</span>
-        <span class="ov-tile-t"><span class="ov-num">${fmtNum(st.krank)}</span><span class="ov-label">${st.krank === 1 ? 'Krankheitstag' : 'Krankheitstage'}</span></span>
-      </div>
+    <div class="title-row">
+      <h1 class="large-title">Übersicht</h1>
+      <button class="nav-btn ov-yearbtn" data-act="ov-years">${y}${ICON.chevronDown}</button>
     </div>
+    ${ovcCardsHTML(y)}
     ${overtimeYearHTML(y, account.get(y) || new Map())}
     <div class="card list ps-import">
       <label class="list-btn">Lohnabrechnung einlesen …<input type="file" accept="image/*" data-act-change="payslip-import" hidden></label>
     </div>
     <p class="footnote">Foto der Abrechnung – sie wird mit deinen Zetteln verglichen.</p>
     ${sheets.length ? `<p class="footnote">Überstunden: alles über ${fmtH(Math.round((settings.target * 60) / 5))} pro Werktag. Unvollständige Monate zählen nicht.</p>` : ''}`;
+  ovcFit(app);
 }
 
 /**
@@ -5462,13 +5427,22 @@ document.addEventListener('click', (e) => {
     case 'back':
       goBack();
       break;
-    case 'ov-year': {
-      const prev = document.querySelector('.ov-seg')?.scrollLeft;
-      statsYear = Number(el.dataset.year);
-      renderStats();
-      placeYearBar(prev);
+    case 'ov-years':
+      actionSheet(
+        renderStats.years.map((v) => ({
+          label: `${v}${v === statsYear ? ` <span class="ovc-check">${ICON.check}</span>` : ''}`,
+          run: () => {
+            if (v === statsYear) return;
+            const snap = ovcSnapshot();
+            statsYear = v;
+            const top = window.scrollY;
+            renderStats();
+            window.scrollTo(0, top);
+            ovcAnimate(document.querySelectorAll('#app [data-ovc]'), snap);
+          },
+        }))
+      );
       break;
-    }
     case 'week':
       changeWeek();
       break;
