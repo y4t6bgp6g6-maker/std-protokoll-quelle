@@ -1923,10 +1923,7 @@ function route() {
     syncNav();
     window.scrollTo(0, listScroll);
   }
-  if (currentView !== 'editor') {
-    editorSaved = null;
-    document.body.classList.remove('unsaved');
-  }
+  if (currentView !== 'editor') editorSaved = null;
   updateTopButton();
   updateTabbar();
   pageAnim(prevView, currentView);
@@ -2526,8 +2523,7 @@ function renderEditor(id) {
     </header>
     <div id="days">${daysHTML(s)}</div>
     <div class="sum-bar" id="summary">${summaryHTML(s)}</div>
-    ${pdfThumbHTML('Zettel')}
-    <div class="save-bar" id="save-bar" hidden><button class="save-btn" data-act="save-sheet">${ICON.check}<span>Eintrag speichern</span></button></div>`;
+    ${pdfThumbHTML('Zettel')}`;
   updateSaveBar();
   fitRowTexts();
   requestAnimationFrame(fitRowTexts);
@@ -2619,7 +2615,7 @@ function dayHTML(s, i) {
       ${extra}
     </section>`;
   }
-  return `<section class="day wd-${i}${editorDayDirty(s, i) ? ' unsaved' : ''}" data-day="${i}">
+  return `<section class="day wd-${i}" data-day="${i}">
     ${head}
     ${rowsAndFoot()}
   </section>`;
@@ -2685,18 +2681,34 @@ function refreshDay(i) {
   updateSaveBar();
 }
 
-/** Knopf „Eintrag speichern“ und weißer Rahmen um geänderte Tage */
+/** Unter jedem geänderten Tag ein Knopf „Eintrag speichern“, dazu ein weißer Rahmen um den Tag */
+const daySaveHTML = () => `<div class="day-save"><button class="day-save-btn" data-act="save-day">${ICON.check}<span>Eintrag speichern</span></button></div>`;
 function updateSaveBar() {
   const s = currentSheet();
-  const pending = !!s && editorPending() === s;
-  const bar = document.getElementById('save-bar');
-  if (bar) bar.hidden = !pending;
-  document.body.classList.toggle('unsaved', pending);
-  for (const el of document.querySelectorAll('#days .day')) el.classList.toggle('unsaved', !!s && editorDayDirty(s, Number(el.dataset.day)));
+  for (const el of document.querySelectorAll('#days .day')) {
+    const dirty = !!s && editorDayDirty(s, Number(el.dataset.day));
+    el.classList.toggle('unsaved', dirty);
+    const btn = el.querySelector(':scope > .day-save');
+    if (dirty && !btn) el.insertAdjacentHTML('beforeend', daySaveHTML());
+    else if (!dirty && btn) btn.remove();
+  }
 }
 
+/** Einen Tag übernehmen (die anderen Tage bleiben, wie sie sind) */
+function saveDay(i) {
+  if (document.activeElement && document.activeElement.matches('.txt')) document.activeElement.blur();
+  const s = currentSheet();
+  if (!s || !editorSaved) return;
+  editorSaved.days[i] = structuredClone(s.days[i]);
+  editorSaved.dayJson[i] = JSON.stringify(s.days[i]);
+  saveSheets(s);
+  haptic();
+  updateSaveBar();
+  updatePdfThumb(true);
+}
+
+/** Alle geänderten Tage übernehmen (vor dem Senden) */
 function saveSheetNow() {
-  // Offenes Textfeld zuerst abschließen (Leerzeichen am Ende usw.)
   if (document.activeElement && document.activeElement.matches('.txt')) document.activeElement.blur();
   const s = currentSheet();
   if (!s) return;
@@ -5655,8 +5667,8 @@ document.addEventListener('click', (e) => {
     case 'jump':
       jumpToDay(Number(el.dataset.day));
       break;
-    case 'save-sheet':
-      saveSheetNow();
+    case 'save-day':
+      saveDay(Number(el.closest('.day').dataset.day));
       break;
     case 'expand': {
       const { s, dayIndex } = rowContext(el);

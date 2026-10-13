@@ -441,35 +441,30 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .day-foot .link-btn { font-size: 16px; font-weight: 600; }
 .day-foot .pill { padding: 6.5px 12px; font-size: 14.5px; border-radius: 16px; }
 
-/* „Eintrag speichern“: erscheint erst nach einer Änderung; geänderte Tage mit weißem Rahmen */
+/* „Eintrag speichern“ unter jedem geänderten Tag; geänderte Tage mit weißem Rahmen */
 .day.unsaved { box-shadow: 0 0 0 2px var(--text), var(--shadow); }
 :root[data-theme='dark'] .day.unsaved { box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), var(--shadow); }
-.save-bar { position: fixed; left: 0; right: 0; bottom: calc(var(--tab-h) + 30px); z-index: 15; display: flex; justify-content: center; pointer-events: none; }
-.save-bar[hidden] { display: none; }
-.save-btn {
-  pointer-events: auto;
+.day-save { display: flex; justify-content: flex-end; padding: 0 12px 12px; }
+/* Glas wie die Knöpfe oben, dichter und mit feinem hellem Rand */
+.day-save-btn {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 30px;
-  border-radius: 30px;
-  font-size: 18px;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 22px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
-  /* Glas wie die Knöpfe oben, aber dichter und mit feinem hellem Rand, damit es sich von den Karten abhebt */
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.25) 50%, rgba(255, 255, 255, 0.35)),
     color-mix(in srgb, var(--card) 40%, transparent);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  backdrop-filter: blur(20px) saturate(1.8);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9), inset 0 1px 1px #fff, 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 10px 30px rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.9), inset 0 1px 1px #fff, 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 6px 18px rgba(0, 0, 0, 0.15);
 }
-:root[data-theme='dark'] .save-btn {
+:root[data-theme='dark'] .day-save-btn {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.04) 45%), color-mix(in srgb, var(--card) 88%, transparent);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 12px 34px rgba(0, 0, 0, 0.7), 0 0 0 6px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.4), 0 6px 18px rgba(0, 0, 0, 0.45);
 }
-.save-btn svg { width: 22px; height: 22px; stroke-width: 2.6; }
-.save-btn:active { transform: scale(0.97); }
-body.tabs.unsaved #app { padding-bottom: calc(var(--tab-h) + 104px); }
+.day-save-btn svg { width: 18px; height: 18px; stroke-width: 2.6; }
+.day-save-btn:active { transform: scale(0.98); }
 
 .summary { margin-top: 16px; }
 .sum-row {
