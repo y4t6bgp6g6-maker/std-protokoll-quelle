@@ -4,7 +4,7 @@
 // löscht der Worker die alten Einträge.
 //
 // Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, seen, cache: { month, members, posts, at } }
-// seen: Zeitpunkt der zuletzt gesehenen Pinnwand-Nachricht (Zahl am Pinnwand-Knopf)
+// seen: Zeitpunkt der zuletzt gesehenen Teammeeting-Nachricht (Zahl am Teammeeting-Knopf)
 
 const TEAM_URL = 'https://std-protokoll-team.std-protokoll.workers.dev';
 const TEAM_KEY = 'stdprotokoll.team.v1';
@@ -113,7 +113,7 @@ function leaveTeamLocal(message) {
   saveTeam();
   teamData = null;
   if (currentView === 'team') renderTeam();
-  else if (currentView === 'teamPerson' || currentView === 'teamSheet') location.replace('#/team');
+  else if (currentView === 'teamSheet') location.replace('#/team');
   if (message) toast(message);
 }
 
@@ -136,11 +136,11 @@ function leaveTeam() {
 /** Zuletzt geladene Einträge der Kollegen (null = noch nichts geladen) */
 let teamData = null;
 let teamLoading = false;
-/** Pinnwand offen (statt der Zettel), Scrollstand, waagerechter Stand der Zettelreihen (null = laufende Woche zeigen) */
+/** Teammeeting offen (statt der Zettel), Scrollstand, waagerechter Stand der Zettelreihen (null = laufende Woche zeigen) */
 let teamPinOpen = false;
 let teamScroll = 0;
 let teamX = null;
-/** Angefangene Nachricht für die Pinnwand */
+/** Angefangene Nachricht fürs Teammeeting */
 let teamDraft = '';
 let teamPosting = false;
 
@@ -331,16 +331,18 @@ function teamWeeks(people) {
   return weeks.slice(0, end + 1);
 }
 
-/** Ein Zettel als kleines Blatt: KW, Mo–Fr mit Baustelle, Gesamt; darunter 0–2 weitere Blätter wie auf einem Stapel */
-function teamPaperHTML(p, s, w, people) {
+/** Ein Zettel als kleines Blatt: KW, Mo–Fr mit Baustelle, Gesamt; darunter 0–2 weitere Blätter wie auf einem Stapel.
+ *  sites: Baustelle je Tag (aus teamMainSite); shared(id): steht dieselbe Baustelle in dieser KW auch bei jemand anderem → Textmarker */
+function teamPaperHTML(p, s, w, sites, shared) {
   const rows = [0, 1, 2, 3, 4]
     .map((i) => {
       const day = `<u>${WEEKDAYS_SHORT[i]}</u>`;
       if (!sheetIsActive(s, i)) return `<i class="off">${day}<span></span></i>`;
       const d = s.days[i];
       if (d.status && !holidayWork(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
-      const site = teamMainSite(d, sheetDate(s, i), people);
-      return `<i>${day}<span>${site ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${escapeHtml(site.name)}</mark>` : ''}</span></i>`;
+      const site = sites[i];
+      const name = site ? escapeHtml(site.name) : '';
+      return `<i>${day}<span>${site && shared(site.id) ? `<mark style="--mk:${TEAM_MARKERS[site.id % TEAM_MARKERS.length]}">${name}</mark>` : name}</span></i>`;
     })
     .join('');
   // Stapel: fest je Person und Woche, damit nichts springt
@@ -350,38 +352,53 @@ function teamPaperHTML(p, s, w, people) {
     const [r, x, y] = lay[(seed + k * 2) % lay.length];
     return `<i class="tm-z-under" style="--r:${r}deg;--x:${x}px;--y:${y}px"></i>`;
   }).join('');
-  const href = p.me ? `#/zettel/${encodeURIComponent(s.id)}` : `#/team/${encodeURIComponent(p.member)}/${s.weekStart}`;
-  return `<a class="tm-z${w.now ? ' now' : ''}" href="${href}"><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span>${
+  // Eigene Zettel nur ansehen (bearbeiten über „Zettel“), Zettel der Kollegen öffnen die Wochenansicht
+  const tag = p.me ? 'div' : 'a';
+  const href = p.me ? '' : ` href="#/team/${encodeURIComponent(p.member)}/${s.weekStart}"`;
+  return `<${tag} class="tm-z${w.now ? ' now' : ''}"${href}><span class="tm-z-bg">${under}<i class="tm-z-paper"></i><i class="tm-z-flap"></i></span>${
     w.now ? '<svg class="tm-z-clip" viewBox="0 0 14 34" aria-hidden="true"><path d="M5 11v15a2.5 2.5 0 0 0 5 0V7a4 4 0 0 0-8 0v19a5.5 5.5 0 0 0 11 0V9"/></svg>' : ''
   }<span class="tm-z-top"><small>Stundenzettel</small><b>KW ${isoWeek(w.mon)}</b><small class="tm-z-range">${w.a.getDate()}.–${w.b.getDate()}.</small></span>
     <span class="tm-z-t">${rows}</span>
-    <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></a>`;
+    <span class="tm-z-f"><small>Gesamt</small><b>${fmtDec(sheetTotal(s))} h</b></span></${tag}>`;
 }
 
 function teamSheetsHTML(members) {
   const now = new Date();
   const me = { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1) };
-  const people = [me, ...members];
+  // Die eigene Reihe steht immer ganz unten
+  const people = [...members, me];
   teamGroupSites(people);
   const weeks = teamWeeks(people);
   const nowCol = weeks.findIndex((w) => w.now);
+  // Baustelle je Person, Woche und Tag; dazu, wer in welcher KW welche Baustelle auf dem Zettel stehen hat
+  const sheetOf = (p, w) => (p.sheets || []).find((x) => x.weekStart === w.iso);
+  const shown = new Map();
+  const crew = new Map();
+  for (const p of people)
+    for (const w of weeks) {
+      const s = sheetOf(p, w);
+      if (!s) continue;
+      const sites = [0, 1, 2, 3, 4].map((i) => (sheetIsActive(s, i) && !(s.days[i].status && !holidayWork(s.days[i])) ? teamMainSite(s.days[i], sheetDate(s, i), people) : null));
+      shown.set(`${p.member}|${w.iso}`, sites);
+      for (const x of sites) if (x) crew.set(`${w.iso}|${x.id}`, (crew.get(`${w.iso}|${x.id}`) || new Set()).add(p.member));
+    }
   const cards = people
     .map((p) => {
       let total = 0;
       const slots = weeks
         .map((w, k) => {
-          const s = (p.sheets || []).find((x) => x.weekStart === w.iso);
+          const s = sheetOf(p, w);
           if (!s) return `<span class="tm-z-slot gap"></span>`;
           total += sheetTotal(s);
-          return `<span class="tm-z-slot" style="--tilt:${[-0.6, 0.4, -0.2, 0.7, -0.4, 0.3][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, people)}</span>`;
+          const shared = (id) => (crew.get(`${w.iso}|${id}`) || new Set()).size > 1;
+          return `<span class="tm-z-slot" style="--tilt:${[-0.6, 0.4, -0.2, 0.7, -0.4, 0.3][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), shared)}</span>`;
         })
         .join('');
-      const name = p.me ? `<b>Du</b>` : `<a href="#/team/${encodeURIComponent(p.member)}"><b>${escapeHtml(p.name || '?')}</b></a>`;
-      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}${name}<span>${total ? fmtH(total) : ''}</span></div>
+      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b>${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
         <div class="tm-z-scroll"><div class="tm-z-row" data-now="${nowCol}" style="--n:${weeks.length}">${slots}</div></div></div>`;
     })
     .join('');
-  return `<h2 class="section-title">${MONTHS[now.getMonth()]} ${now.getFullYear()}</h2>${cards}${members.length ? '' : '<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>'}`;
+  return `<h2 class="section-title">${MONTHS[now.getMonth()]} ${now.getFullYear()}</h2>${members.length ? '' : '<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>'}${cards}`;
 }
 
 /** Zettelreihen auf den gemerkten Stand bzw. so, dass die laufende Woche rechts zu sehen ist */
@@ -398,10 +415,10 @@ function teamPlaceRows() {
   });
 }
 
-// ───────── Pinnwand ─────────
+// ───────── Teammeeting ─────────
 
 const teamPosts = () => (teamData || (team && team.cache) || {}).posts || [];
-/** Neue Nachrichten anderer seit dem letzten Blick auf die Pinnwand (Zahl am Knopf) */
+/** Neue Nachrichten anderer seit dem letzten Blick ins Teammeeting (Zahl am Knopf) */
 const teamUnread = () => teamPosts().filter((p) => p.member !== team.member && p.created > (team.seen || 0)).length;
 
 function teamPostsHTML() {
@@ -473,7 +490,7 @@ function teamDeletePost(id) {
   }, true);
 }
 
-/** Sprechblase für den Pinnwand-Knopf (svg() kommt aus app.js, das erst nach team.js geladen wird) */
+/** Sprechblase für den Teammeeting-Knopf (svg() kommt aus app.js, das erst nach team.js geladen wird) */
 const teamChatIcon = () => svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/>', 22);
 
 function renderTeam() {
@@ -488,7 +505,7 @@ function renderTeam() {
   }
 }
 
-/** Kopf: Pinnwand-Knopf (mit Zahl neuer Nachrichten) bzw. auf der Pinnwand der Weg zurück */
+/** Kopf: Teammeeting-Knopf (mit Zahl neuer Nachrichten) bzw. im Teammeeting der Weg zurück */
 function renderTeamNav() {
   const nav = document.getElementById('team-nav');
   if (!nav) return;
@@ -497,9 +514,9 @@ function renderTeamNav() {
     team && teamPinOpen
       ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
       : `<span class="nav-btn"></span><span class="nav-title"></span>${
-          team ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Pinnwand">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
+          team ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
         }`;
-  document.getElementById('team-title').textContent = team && teamPinOpen ? 'Pinnwand' : 'Team';
+  document.getElementById('team-title').textContent = team && teamPinOpen ? 'Teammeeting' : 'Team';
 }
 
 function renderTeamBody() {
@@ -548,40 +565,6 @@ function teamFindMember(id) {
   return teamMembers().find((m) => m.member === id) || null;
 }
 
-/** Alle verfügbaren Zettel eines Kollegen (laufender Monat), neueste zuerst */
-function renderTeamPerson(id) {
-  const m = teamFindMember(id);
-  if (m === undefined) return;
-  if (!m) {
-    app.innerHTML = `${teamNav()}<p class="tm-msg muted">Nicht mehr verfügbar</p>`;
-    return;
-  }
-  const list = [...(m.sheets || [])].sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-  const total = list.reduce((t, s) => t + sheetTotal(s), 0);
-  const now = new Date();
-  const rows = list
-    .map((s) => {
-      const dots = [0, 1, 2, 3, 4]
-        .map((i) => {
-          const d = sheetIsActive(s, i) ? s.days[i] : null;
-          const cls = !d || !teamDayHasContent({ d, i }) ? '' : d.status && !holidayWork(d) ? `st-${d.status}` : 'on';
-          return `<i class="${cls}"></i>`;
-        })
-        .join('');
-      return `<a class="list-row plain tm-wrow" href="#/team/${encodeURIComponent(m.member)}/${s.weekStart}">
-        <span class="list-kw">KW ${isoWeek(parseDate(s.weekStart))}</span>
-        <span class="list-main"><span class="list-title">${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}</span><span class="tm-dots">${dots}</span></span>
-        <span class="list-hours">${fmtH(sheetTotal(s))}</span>
-        <span class="tm-chev">${ICON.chevronRight}</span>
-      </a>`;
-    })
-    .join('');
-  app.innerHTML = `${teamNav()}
-    <div class="tm-profile">${teamAvatar(m, 64)}<h1>${escapeHtml(m.name || '?')}</h1>
-      <span class="muted">${MONTHS[now.getMonth()]} ${now.getFullYear()} · ${fmtH(total)} · ${teamAgo(m.updated)}</span></div>
-    ${list.length ? `<div class="card tm-list">${rows}</div>` : `<p class="tm-msg muted">Noch keine Zettel</p>`}`;
-}
-
 /** Ein Zettel (eine Woche) eines Kollegen, nur lesen */
 function renderTeamSheet(id, weekStart) {
   const m = teamFindMember(id);
@@ -608,16 +591,14 @@ function renderTeamSheet(id, weekStart) {
 
 /** Nach dem Laden die gerade offene Team-Seite neu zeichnen */
 function teamRefreshView() {
-  // Pinnwand: nur die Nachrichten neu, damit Eingabefeld und Tastatur bleiben
+  // Teammeeting: nur die Nachrichten neu, damit Eingabefeld und Tastatur bleiben
   const list = currentView === 'team' && teamPinOpen && document.getElementById('tm-posts');
   if (list) {
     list.innerHTML = teamPostsHTML();
     teamMarkSeen();
   } else if (currentView === 'team') renderTeamBody();
-  const pm = location.hash.match(/^#\/team\/([^/]+)(?:\/(\d{4}-\d{2}-\d{2}))?$/);
-  if (!pm) return;
-  if (currentView === 'teamPerson') renderTeamPerson(decodeURIComponent(pm[1]));
-  if (currentView === 'teamSheet') renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
+  const pm = location.hash.match(/^#\/team\/([^/]+)\/(\d{4}-\d{2}-\d{2})$/);
+  if (pm && currentView === 'teamSheet') renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
 }
 
 // ───────── Ereignisse ─────────
@@ -648,13 +629,26 @@ document.addEventListener('click', (e) => {
       break;
   }
 });
-// Alle Zettelreihen wischen gemeinsam (gleiche KW bleibt untereinander); Stand merken für das nächste Zeichnen
-// (die nachgezogenen Reihen melden denselben Stand und werden dann übergangen)
+// Alle Zettelreihen wischen gemeinsam (gleiche KW bleibt untereinander); Stand merken für das nächste Zeichnen.
+// Nur die angefasste Reihe rastet ein, die anderen folgen ihr ohne eigenes Einrasten (sonst ruckeln sie)
+let teamLead = null;
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    const el = e.target instanceof Element && e.target.closest('.tm-z-scroll');
+    if (!el || el === teamLead) return;
+    if (teamLead) teamLead.classList.remove('lead');
+    teamLead = el;
+    el.classList.add('lead');
+  },
+  { passive: true, capture: true }
+);
 document.addEventListener(
   'scroll',
   (e) => {
     const el = e.target;
-    if (!(el instanceof Element) || !el.classList.contains('tm-z-scroll') || (teamX != null && Math.abs(el.scrollLeft - teamX) < 1)) return;
+    if (!(el instanceof Element) || !el.classList.contains('tm-z-scroll')) return;
+    if ((teamLead && teamLead.isConnected && el !== teamLead) || (teamX != null && Math.abs(el.scrollLeft - teamX) < 1)) return;
     teamX = el.scrollLeft;
     document.querySelectorAll('.tm-z-scroll').forEach((o) => o !== el && (o.scrollLeft = teamX));
   },
@@ -676,7 +670,7 @@ document.addEventListener('visibilitychange', () => {
   if (currentView === 'team') teamLoad();
 });
 window.addEventListener('online', () => teamQueueUpload(500));
-// Pinnwand offen und App im Vordergrund: alle 10 Sekunden nach neuen Nachrichten sehen (fast wie ein Chat)
+// Teammeeting offen und App im Vordergrund: alle 10 Sekunden nach neuen Nachrichten sehen (fast wie ein Chat)
 setInterval(() => {
   if (team && currentView === 'team' && teamPinOpen && document.visibilityState === 'visible' && navigator.onLine) teamLoad();
 }, 10000);

@@ -1733,7 +1733,7 @@ const TABS = [
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
-  ['#/team', 'Team', 'tabTeam', ['team', 'teamPerson', 'teamSheet']],
+  ['#/team', 'Team', 'tabTeam', ['team', 'teamSheet']],
   ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
@@ -1875,16 +1875,20 @@ function route() {
     window.scrollTo(0, 0);
   } else if (hash === '#/team') {
     currentView = 'team';
-    // Zurück von den Zetteln eines Kollegen: an derselben Stelle weiter (auch seitlich); sonst die laufende Woche zeigen
-    const back = prevView === 'teamPerson' || prevView === 'teamSheet';
+    // Zurück vom Zettel eines Kollegen: an derselben Stelle weiter (auch seitlich); sonst die laufende Woche zeigen
+    const back = prevView === 'teamSheet';
     if (!back) teamX = null;
     renderTeam();
     syncNav();
     window.scrollTo(0, back ? teamScroll : 0);
   } else if (pm) {
-    currentView = pm[2] ? 'teamSheet' : 'teamPerson';
-    if (pm[2]) renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
-    else renderTeamPerson(decodeURIComponent(pm[1]));
+    // Früher gab es eine Seite mit allen Zetteln eines Kollegen; alte Verweise führen zur Team-Seite
+    if (!pm[2]) {
+      location.replace('#/team');
+      return;
+    }
+    currentView = 'teamSheet';
+    renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
     syncNav();
     window.scrollTo(0, 0);
   } else if (hash === '#/anleitung') {
@@ -1937,7 +1941,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamPerson: 1, teamSheet: 2, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -2033,8 +2037,7 @@ const BACK_TARGETS = [
   [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
   [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
-  [/^#\/team\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/team\/[^/]+)\/.*$/, '$1')],
-  [/^#\/team\/[^/]+$/, '#/team'],
+  [/^#\/team\/[^/]+\/.+$/, '#/team'],
   [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];
