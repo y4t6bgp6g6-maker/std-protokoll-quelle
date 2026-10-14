@@ -5783,7 +5783,8 @@ function renameAll(value) {
 }
 
 document.addEventListener('focusin', (e) => {
-  if (e.target.matches('.txt')) showChips(e.target);
+  // Vorschläge nur für Baustelle und Arbeit (die Textfelder im Berichtsheft haben auch .txt, aber keine Vorschläge)
+  if (e.target.matches('.txt[data-f]')) showChips(e.target);
 });
 document.addEventListener('focusout', (e) => {
   if (!e.target.matches('.txt')) return;
