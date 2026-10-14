@@ -136,10 +136,14 @@ function heftMonths(h) {
 const inHeft = (h, d) => isoDate(d) >= h.start && isoDate(d) <= h.end;
 /** Tage einer Woche (0 = Mo … 5 = Sa), die im Ausbildungsjahr liegen */
 const weekDays = (h, monday) => [0, 1, 2, 3, 4, 5].filter((i) => inHeft(h, addDays(parseDate(monday), i)));
-/** Monat, zu dem eine Woche in der Liste gehört (der des Donnerstags, wie bei der KW) */
-const weekMonth = (monday) => {
+/** Monat, zu dem eine Woche in der Liste gehört (der des Donnerstags, wie bei der KW), begrenzt auf die Monate des Hefts:
+ *  beginnt die Ausbildung z. B. an einem Freitag, dem 1., liegt der Donnerstag der ersten Woche noch im Vormonat */
+const weekMonth = (h, monday) => {
   const t = addDays(parseDate(monday), 3);
-  return `${t.getFullYear()}-${pad(t.getMonth() + 1)}`;
+  const ym = `${t.getFullYear()}-${pad(t.getMonth() + 1)}`;
+  const first = h.start.slice(0, 7);
+  const last = h.end.slice(0, 7);
+  return ym < first ? first : ym > last ? last : ym;
 };
 const monthName = (ym) => `${MONTHS[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}`;
 /** Erster und letzter Werktag (Mo–Fr) eines Monats im Ausbildungsjahr */
@@ -285,6 +289,7 @@ function bhRoute(hash) {
   }
   if (m[2] === 'woche') {
     currentView = 'bhWeek';
+    bhSatOpen = false; // aufgeklappter Samstag gilt nur für die Woche, in der er geöffnet wurde
     renderBhWeek(h, m[3]);
   } else if (m[2] === 'monat') {
     currentView = 'bhMonth';
@@ -311,7 +316,7 @@ function renderHeft(h) {
   const group = (ym) => groups.get(ym) || groups.set(ym, { month: null, weeks: [] }).get(ym);
   for (const ym of heftMonths(h)) if (`${ym}-01` <= today || monthFilled(h.months[ym])) group(ym).month = ym;
   weeks.forEach((mon, i) => {
-    if (mon <= today || weekFilled(h.weeks[mon])) group(weekMonth(mon)).weeks.push({ mon, nr: i + 1 });
+    if (mon <= today || weekFilled(h.weeks[mon])) group(weekMonth(h, mon)).weeks.push({ mon, nr: i + 1 });
   });
   const keys = [...groups.keys()].filter((k) => k >= h.start.slice(0, 7) && k <= h.end.slice(0, 7)).sort().reverse();
   const weekRow = ({ mon, nr }) => {
@@ -510,7 +515,7 @@ function renderBhMonth(h, ym) {
       <p class="bh-over">${monthFitHTML(key, p)}</p>
     </section>`;
   };
-  const anyWeeks = heftWeeks(h).some((k) => weekMonth(k) === ym && weekFilled(h.weeks[k]));
+  const anyWeeks = heftWeeks(h).some((k) => weekMonth(h, k) === ym && weekFilled(h.weeks[k]));
   app.innerHTML = `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
@@ -533,7 +538,7 @@ function monthFromWeeks() {
   const { h, key } = bhEntry;
   const work = [];
   const school = [];
-  for (const mon of heftWeeks(h).filter((k) => weekMonth(k) === key)) {
+  for (const mon of heftWeeks(h).filter((k) => weekMonth(h, k) === key)) {
     for (const d of h.weeks[mon]?.days || []) {
       const lines = String(d?.text || '').split('\n').map((l) => l.replace(/^[•\-–]\s*/, '').trim()).filter(Boolean);
       const isSchool = /^berufsschule/i.test(lines[0] || '');
@@ -864,12 +869,14 @@ document.addEventListener('change', async (e) => {
     }
   } else if (t.dataset.bhImg != null && t.files?.[0]) {
     const k = t.dataset.bhImg;
+    // Das Verkleinern dauert: das Bild gehört zur Seite, auf der es gewählt wurde, auch wenn man inzwischen weiter ist
+    const { h, key } = bhEntry;
     try {
       const img = await bhImportImage(t.files[0]);
-      const mo = bhCurrent();
+      const mo = h.months[key] || (h.months[key] = emptyMonth());
       mo[k] = { ...mo[k], img };
       saveBh();
-      renderBhMonth(bhEntry.h, bhEntry.key);
+      if (currentView === 'bhMonth' && bhEntry?.h === h && bhEntry.key === key) renderBhMonth(h, key);
     } catch (err) {
       toast('Bild konnte nicht gelesen werden');
     }
@@ -891,7 +898,7 @@ function bhMerge(data) {
     if (!inc?.id || !inc.start) continue;
     const cur = findHeft(inc.id) || bh.hefte.find((h) => h.jahr === inc.jahr);
     if (!cur) {
-      bh.hefte.push(inc);
+      bh.hefte.push({ ...inc, weeks: inc.weeks || {}, months: inc.months || {} });
       n++;
       continue;
     }

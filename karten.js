@@ -34,7 +34,7 @@ function ovcFacts(year) {
         f.krank++;
         mo.krank++;
         f.krankDates.push(date);
-      } else if (d.status === 'feiertag' && i < 5) f.feiertag++;
+      } else if (d.status === 'feiertag' && i < 5 && date <= today) f.feiertag++; // wie Arbeitstage nur bis heute
       if (canWork(d)) for (const r of d.rows) if (r.site) f.sites.add(r.site.trim().toLowerCase());
       if (!d.status && date <= today && d.rows.some((r) => r.start != null && r.end != null)) {
         f.workDays++;
@@ -49,8 +49,9 @@ function ovcFacts(year) {
     for (let x = addDays(f.krankDates[k - 1], 1); x < d; x = addDays(x, 1)) if (x.getDay() % 6 && !holidayName(x)) return true;
     return false;
   }).length;
-  const worked = overtimeAccount(true).get(year) || new Map();
-  const months = overtimeAccount().get(year) || new Map();
+  const acc = overtimeAccounts();
+  const worked = acc.worked.get(year) || new Map();
+  const months = acc.ot.get(year) || new Map();
   const counted = countedOvertime(year, months);
   worked.forEach((v, k) => (f.m[k - 1].worked = v));
   counted.forEach((v, k) => Object.assign(f.m[k - 1], { ot: v, counted: true }));
@@ -284,10 +285,13 @@ function ovcFit(root) {
 
 // ───────── Animation: Zahlen zählen hoch (von 0 bzw. vom vorigen Wert) ─────────
 
-const ovcNumRe = /^(\D*?)(\d[\d.]*(?:,\d+)?)(.*)$/s;
+// Vorzeichen (+, − oder -) direkt vor der Zahl gehört zum Wert, damit z. B. „+2,00“ → „−3,00“ über null zählt
+const ovcNumRe = /^(\D*?)([+−-]?)(\d[\d.]*(?:,\d+)?)(.*)$/s;
 const ovcParse = (t) => {
   const m = t.match(ovcNumRe);
-  return m ? { pre: m[1], n: parseFloat(m[2].replace(/\./g, '').replace(',', '.')), dec: (m[2].split(',')[1] || '').length, dots: m[2].includes('.'), post: m[3] } : null;
+  if (!m) return null;
+  const n = parseFloat(m[3].replace(/\./g, '').replace(',', '.'));
+  return { pre: m[1], signed: !!m[2], n: m[2] === '−' || m[2] === '-' ? -n : n, dec: (m[3].split(',')[1] || '').length, dots: m[3].includes('.'), post: m[4] };
 };
 /** Zahl-Element hochzählen lassen; `from` = voriger Text (sonst 0). Kleine Einheiten (<small>) bleiben stehen. */
 function ovcCount(el, from, delay = 0) {
@@ -299,17 +303,21 @@ function ovcCount(el, from, delay = 0) {
   if (!b) return;
   const start0 = a ? a.n : 0;
   if (start0 === b.n) return;
+  const signed = b.signed || !!a?.signed;
+  const end = node.textContent;
   const fmt = (v) => {
-    const s = v.toFixed(b.dec);
+    const s = Math.abs(v).toFixed(b.dec);
     const [i, d] = s.split('.');
-    return b.pre + (b.dots ? Number(i).toLocaleString('de-DE') : i) + (d ? `,${d}` : '') + b.post;
+    const sign = !signed || !Number(s) ? (v < 0 && Number(s) ? '-' : '') : v > 0 ? '+' : '−';
+    return b.pre + sign + (b.dots ? Number(i).toLocaleString('de-DE') : i) + (d ? `,${d}` : '') + b.post;
   };
   node.textContent = fmt(start0);
   const t0 = performance.now() + delay;
   const dur = 700;
   const step = (now) => {
     const u = Math.max(0, Math.min(1, (now - t0) / dur));
-    node.textContent = fmt(start0 + (b.n - start0) * (1 - Math.pow(1 - u, 3)));
+    // am Ende genau der ursprüngliche Text (Schreibweise der Null, Vorzeichen)
+    node.textContent = u < 1 ? fmt(start0 + (b.n - start0) * (1 - Math.pow(1 - u, 3))) : end;
     if (u < 1 && node.isConnected) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);

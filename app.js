@@ -249,9 +249,19 @@ function absenceStats() {
  * Ergebnis: Map Jahr → Map Monat (1–12) → Saldo in Minuten; mit `worked` stattdessen das Ist (Stunden Gesamt)
  */
 function overtimeAccount(worked = false) {
-  const result = new Map();
+  return overtimeAccounts()[worked ? 'worked' : 'ot'];
+}
+/** Beide Konten in einem Durchgang: worked (gearbeitete Minuten) und ot (Saldo gegen das Soll), je Jahr → Monat */
+function overtimeAccounts() {
+  const worked = new Map();
+  const ot = new Map();
   const dailySoll = Math.round((settings.target * 60) / 5);
   const today = startOfDay(new Date());
+  const add = (acc, y, m, v) => {
+    if (!acc.has(y)) acc.set(y, new Map());
+    const months = acc.get(y);
+    months.set(m, (months.get(m) || 0) + v);
+  };
   for (const s of sheets) {
     s.days.forEach((d, i) => {
       const date = sheetDate(s, i);
@@ -260,12 +270,12 @@ function overtimeAccount(worked = false) {
       const soll = i < 5 ? dailySoll : 0;
       const y = date.getFullYear();
       const m = date.getMonth() + 1;
-      if (!result.has(y)) result.set(y, new Map());
-      const months = result.get(y);
-      months.set(m, (months.get(m) || 0) + dayTotal(d, i) - (worked ? 0 : soll));
+      const total = dayTotal(d, i);
+      add(worked, y, m, total);
+      add(ot, y, m, total - soll);
     });
   }
-  return result;
+  return { worked, ot };
 }
 
 const yearBalance = (months) => [...months.values()].reduce((a, b) => a + b, 0);
@@ -639,8 +649,9 @@ function renderMonthNoSlip(year, month) {
 /** Jahresübersicht: Jahr nach Stundenzetteln (Stunden, Tage, Lohn) und alle Abrechnungen zusammen im Vergleich */
 function renderYear(year) {
   const now = new Date();
-  const worked = overtimeAccount(true).get(year) || new Map();
-  const months = overtimeAccount().get(year) || new Map();
+  const acc = overtimeAccounts();
+  const worked = acc.worked.get(year) || new Map();
+  const months = acc.ot.get(year) || new Map();
   const st = absenceStats().get(year) || { urlaub: 0, krank: 0 };
   const isCurrent = (m) => year === now.getFullYear() && m === now.getMonth() + 1;
   // Monate wie in der Übersicht: ab Januar bis zum letzten abgeschlossenen (ohne den laufenden)
