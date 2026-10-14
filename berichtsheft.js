@@ -6,13 +6,30 @@
 const BH_KEY = 'stdprotokoll.berichtsheft.v1';
 // profile: Angaben fürs Deckblatt/Vorblatt (Datumsfelder als 'JJJJ-MM-TT')
 // sigs: gespeicherte Unterschriften { azubi, eltern, ausbilder } wie settings.signature
+// autoSign: jeder geschriebene Bericht trägt von selbst die Unterschrift des Azubis (Datum = letzte Änderung)
 // hefte: [{ id, jahr, start, end, weeks: { Montag 'JJJJ-MM-TT': Woche }, months: { 'JJJJ-MM': Monat } }]
-// Woche: { days: [{ text, hours }] × 6 (Mo–Sa), signed: { azubi, eltern, ausbilder: 'JJJJ-MM-TT' } }
+// Woche: { days: [{ lines: [{ t, h }] (bis 5 Zeilen: Tätigkeit, Einzelstunden), hours (Gesamtstunden) }] × 6 (Mo–Sa),
+//          signed: { azubi, eltern, ausbilder: 'JJJJ-MM-TT' } }
 // Monat: { taet: { text, img }, schule: { text, img }, signed } – img: { id, w, h } (Bild in IndexedDB)
 let bh = { profile: {}, sigs: {}, hefte: [] };
 try {
   Object.assign(bh, JSON.parse(localStorage.getItem(BH_KEY)) || {});
 } catch (e) {}
+
+const BH_LINES = 5; // Zeilen je Tag im Vordruck
+/** Tag eines Wochenberichts; frühere Fassung hatte statt Zeilen einen Text (jede Zeile wird eine Zeile, Überlauf in die letzte) */
+function normDay(d) {
+  if (Array.isArray(d?.lines)) return { lines: d.lines.map((l) => ({ t: String(l?.t || ''), h: String(l?.h || '') })), hours: d.hours || '' };
+  const parts = String(d?.text || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  const lines = parts.slice(0, BH_LINES - 1).map((t) => ({ t, h: '' }));
+  if (parts.length >= BH_LINES) lines.push({ t: parts.slice(BH_LINES - 1).join(', '), h: '' });
+  return { lines, hours: d?.hours || '' };
+}
+function normWeek(w) {
+  if (w) w.days = [0, 1, 2, 3, 4, 5].map((i) => normDay(w.days?.[i]));
+  return w;
+}
+for (const h of bh.hefte) Object.values(h.weeks || {}).forEach(normWeek);
 function saveBh() {
   try {
     localStorage.setItem(BH_KEY, JSON.stringify(bh));
@@ -56,7 +73,9 @@ const bhImagesReady = bhDb()
         req.onerror = () => resolve();
       })
   )
-  .catch(() => {});
+  .catch(() => {})
+  .then(() => (bhImagesLoaded = true));
+let bhImagesLoaded = false; // bis dahin fehlen Fotos in Monatsbericht und PDF
 function bhPutImage(id, data) {
   bhImages.set(id, data);
   return bhDb()
@@ -156,18 +175,18 @@ function monthSpan(h, ym) {
 }
 /** Zeitraum einer Woche fürs Blatt: Mo–Fr, mit Samstag nur wenn eingetragen; begrenzt aufs Ausbildungsjahr */
 function weekSpan(h, monday, w) {
-  const days = weekDays(h, monday).filter((i) => i < 5 || (w?.days?.[5]?.text || '').trim());
+  const days = weekDays(h, monday).filter((i) => i < 5 || dayFilled(w?.days?.[5]));
   const mon = parseDate(monday);
   return days.length ? [addDays(mon, days[0]), addDays(mon, days.at(-1))] : [mon, addDays(mon, 4)];
 }
 
 // ───────── Inhalt und Stand ─────────
 
-const emptyWeek = () => ({ days: [0, 1, 2, 3, 4, 5].map(() => ({ text: '', hours: '' })), signed: {} });
+const emptyWeek = () => ({ days: [0, 1, 2, 3, 4, 5].map(() => ({ lines: [], hours: '' })), signed: {} });
 const emptyMonth = () => ({ taet: { text: '' }, schule: { text: '' }, signed: {} });
-const weekFilled = (w) => !!w && w.days?.some((d) => (d?.text || '').trim());
+const dayFilled = (d) => !!d?.lines?.some((l) => l.t.trim());
+const weekFilled = (w) => !!w && w.days?.some(dayFilled);
 const monthFilled = (m) => !!m && ['taet', 'schule'].some((k) => (m[k]?.text || '').trim() || m[k]?.img);
-const isSigned = (e) => !!e && Object.values(e.signed || {}).some(Boolean);
 /** Stand einer Seite: leer, offen (geschrieben), azubi (vom Azubi abgezeichnet), fertig (vom Ausbilder abgezeichnet) */
 function pageState(e, filled) {
   if (!filled) return 'leer';
@@ -203,19 +222,28 @@ function bhSwitchHTML() {
   </div>`;
 }
 
-const BH_COLORS = ['#2c4a9e', '#2f7d5b', '#9c3a3a', '#6b4fa0', '#5d6670'];
 const fmtYearSpan = (h) => `${fmtShort(parseDate(h.start))} – ${fmtShort(parseDate(h.end))}`;
 
-/** Umschlag eines Hefts: farbiger Karton mit Heftrücken und Etikett */
+/** Logo der Handwerkskammer aus dem Deckblatt-Vordruck (JPEG) */
+let bhLogoUrl = null;
+const bhLogo = () => (bhLogoUrl ??= `data:image/jpeg;base64,${BH_TPL.objs.find((o) => o.d.includes('/Subtype /Image')).s}`);
+/** Umschlag eines Hefts: das Deckblatt des Vordrucks mit den Angaben */
 function heftCoverHTML(h) {
-  return `<div class="bh-cover" style="--heft:${BH_COLORS[(h.jahr - 1) % BH_COLORS.length]}">
-    <span class="bh-spine"></span>
-    <span class="bh-label">
-      <b>Ausbildungsnachweis</b>
-      <span class="bh-year">${h.jahr}. Ausbildungsjahr</span>
-      <span class="bh-name">${escapeHtml(bhName())}</span>
-    </span>
-  </div>`;
+  const p = bh.profile;
+  const f = (v, top) => `<span class="bh-dk-f" style="top:${top}%">${escapeHtml(v || '')}</span>`;
+  return `<div class="bh-dk"><img src="${bhLogo()}" alt=""><b>Ausbildungsnachweis</b><span class="bh-dk-y">${h.jahr}. Ausbildungsjahr</span>${f(
+    [p.name, p.vorname].filter(Boolean).join(', '),
+    47
+  )}${f(p.beruf, 54)}${f(p.betrieb, 61)}</div>`;
+}
+
+/** Karte zu den Angaben (gelten für alle Hefte) */
+function bhInfoCardHTML() {
+  const p = bh.profile;
+  const sub = p.beginn
+    ? escapeHtml([bhName(), p.beruf].filter(Boolean).join(' · '))
+    : '<span class="bh-missing">Ausbildungsbeginn fehlt</span>';
+  return `<a class="card bh-info-card" href="#/heft-angaben"><span class="bh-info-icon">${ICON.doc}</span><span class="list-main"><span class="list-title">Angaben</span><span class="list-sub">${sub}</span></span><span class="list-chevron">${ICON.chevronRight}</span></a>`;
 }
 
 function heftProgressHTML(h) {
@@ -229,11 +257,11 @@ function heftListHTML() {
   const list = hefteSorted();
   const add = `<button class="bh-add" data-bh="new">${ICON.plus}<span>Neues Berichtsheft</span></button>`;
   if (!list.length)
-    return `<div class="empty">
+    return `${bhInfoCardHTML()}<div class="empty">
       <div class="empty-icon">${svg('<path d="M5 3h11a3 3 0 0 1 3 3v15H8a3 3 0 0 1-3-3z"/><path d="M5 18a3 3 0 0 1 3-3h11M9 7h6"/>', 44)}</div>
       <p><b>Noch kein Berichtsheft</b></p>
     </div>${add}`;
-  return `<div class="bh-rows">${list
+  return `${bhInfoCardHTML()}<div class="bh-rows">${list
     .map(
       (h) => `<button class="card bh-row" data-bh="open" data-id="${h.id}">${heftCoverHTML(h)}
       <span class="bh-info"><b>${h.jahr}. Ausbildungsjahr</b><span class="muted">${fmtYearSpan(h)}</span>${heftProgressHTML(h)}</span></button>`
@@ -243,11 +271,7 @@ function heftListHTML() {
 
 /** Neues Heft: Ausbildungsjahr wählen (vorgeschlagen das Jahr von heute); ohne Ausbildungsbeginn erst die Angaben */
 function newHeftMenu() {
-  if (!bh.profile.beginn) {
-    toast('Zuerst den Ausbildungsbeginn eintragen');
-    location.hash = '#/heft-angaben';
-    return;
-  }
+  if (!bh.profile.beginn) return toast('Erst den Ausbildungsbeginn in den Angaben eintragen');
   const have = new Set(bh.hefte.map((h) => h.jahr));
   const years = Array.from({ length: bhYearCount() }, (_, i) => i + 1).filter((j) => !have.has(j));
   if (!years.length) return toast('Alle Ausbildungsjahre sind angelegt – bei Verlängerung das Ende der Ausbildung ändern');
@@ -345,16 +369,17 @@ function renderHeft(h) {
     <h1 class="large-title">${h.jahr}. Ausbildungsjahr</h1>
     <p class="bh-sub muted">${fmtYearSpan(h)}</p>
     <div class="card list">
-      <a class="list-row bh-r" href="#/heft-angaben"><span class="list-main"><span class="list-title">Angaben</span><span class="list-sub">${
-        bh.profile.name && bh.profile.beruf ? escapeHtml(bhName()) : 'Deckblatt und Vorblatt ausfüllen'
-      }</span></span><span class="list-chevron">${ICON.chevronRight}</span></a>
-      <button class="list-row bh-r" data-bh="pdf" data-kind="woche"><span class="list-main"><span class="list-title">Wochenheft</span><span class="list-sub">PDF mit allen Wochen</span></span><span class="bh-pdf-icon">${ICON.share}</span></button>
-      <button class="list-row bh-r" data-bh="pdf" data-kind="monat"><span class="list-main"><span class="list-title">Monatsheft</span><span class="list-sub">PDF mit allen Monaten</span></span><span class="bh-pdf-icon">${ICON.share}</span></button>
+      <button class="list-row bh-r" data-bh="pdf-all"><span class="list-main"><span class="list-title">Berichtsheft senden</span><span class="list-sub">Wochen und Monate als PDF</span></span><span class="bh-pdf-icon">${ICON.share}</span></button>
     </div>
     ${keys
       .map((ym) => {
         const g = groups.get(ym);
-        return `<h2 class="section-title month-head"><span>${monthName(ym)}</span></h2>
+        // Je Seite des Monats ein Strich in der Farbe ihres Stands
+        const states = [
+          ...(g.month ? [pageState(h.months[ym], monthFilled(h.months[ym]))] : []),
+          ...g.weeks.map(({ mon }) => pageState(h.weeks[mon], weekFilled(h.weeks[mon]))),
+        ];
+        return `<h2 class="section-title month-head"><span>${monthName(ym)}</span><span class="bh-segs">${states.map((st) => `<i class="${st}"></i>`).join('')}</span></h2>
         <div class="card list">${g.month ? monthRow(ym) : ''}${g.weeks.slice().reverse().map(weekRow).join('')}</div>`;
       })
       .join('')}
@@ -392,35 +417,41 @@ function heftMoreMenu() {
 
 // ───────── Wochenbericht ─────────
 
-const bhEditable = (e) => !isSigned(e);
-/** Zeilen, die der Text eines Tages im Vordruck belegt (5 passen hinein) */
-function dayLines(text) {
-  if (!(text || '').trim()) return 0;
+/** Zeile so lang, dass sie im Vordruck stark verkleinert würde */
+function lineLong(t) {
   const f = bhColumn(BH_FIELDS.woche, 76.2)[0];
-  return wrapText(text.replace(/\n+$/, ''), f.r[2] - f.r[0] - 4, 8).length;
+  return measureText(String(t || '').trim(), 8) > (f.r[2] - f.r[0] - 4) * 1.3;
 }
-const overHTML = (n) => (n > 5 ? `Passt nicht ganz aufs Blatt (${n} von 5 Zeilen)` : '');
+/** Einzelstunden fehlen: Zeile beschrieben, Tag hat Gesamtstunden (Urlaub, Krank usw. haben keine) */
+const lineMissing = (l, d) => !!l.t.trim() && !l.h.trim() && !!String(d.hours || '').trim();
+function lineHTML(i, k, l, d) {
+  return `<div class="bh-line"><input class="bh-lt${lineLong(l.t) ? ' long' : ''}" data-bh-lt="${i}" data-k="${k}" value="${escapeHtml(l.t)}" placeholder="${
+    k ? '' : 'Ausgeführte Arbeiten, Unterricht usw.'
+  }" enterkeyhint="done"><input class="bh-lh${lineMissing(l, d) ? ' miss' : ''}" data-bh-lh="${i}" data-k="${k}" value="${escapeHtml(l.h)}" inputmode="decimal" placeholder="Std." enterkeyhint="done"></div>`;
+}
+const addLineHTML = (i) => `<button class="bh-addline" data-bh="add-line" data-i="${i}">${ICON.plus} Zeile</button>`;
 
 function renderBhWeek(h, mon) {
   const weeks = heftWeeks(h);
   const nr = weeks.indexOf(mon) + 1;
   if (!nr) return location.replace(`#/heft/${h.id}`);
   const w = h.weeks[mon] || emptyWeek();
+  // leere Zeilen fallen weg; so bleiben die Zeilen im Blatt ohne Lücken
+  w.days.forEach((d) => (d.lines = d.lines.filter((l) => l.t.trim() || l.h.trim())));
   const [a, b] = weekSpan(h, mon, w);
-  const locked = !bhEditable(w);
   const days = weekDays(h, mon);
   const hasSheet = days.some((i) => sheetDayFor(addDays(parseDate(mon), i)));
   const dayCard = (i) => {
     const d = w.days[i];
     const date = addDays(parseDate(mon), i);
-    if (i === 5 && !(d.text || '').trim() && !bhSatOpen)
-      return `<button class="card bh-day bh-sat" data-bh="sat"${locked ? ' disabled' : ''}>${ICON.plus} Samstag ${fmtDayMonth(date)}</button>`;
+    if (i === 5 && !dayFilled(d) && !bhSatOpen)
+      return `<button class="card bh-day bh-sat" data-bh="sat">${ICON.plus} Samstag ${fmtDayMonth(date)}</button>`;
+    const lines = d.lines.length ? d.lines : [{ t: '', h: '' }];
     return `<section class="card bh-day" data-i="${i}">
       <div class="bh-day-head"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>
-        <label class="bh-hours"><input data-bh-hours="${i}" inputmode="decimal" placeholder="0,00" value="${escapeHtml(d.hours || '')}" enterkeyhint="done"${locked ? ' readonly' : ''}><span>Std.</span></label>
+        <label class="bh-hours"><input data-bh-hours="${i}" inputmode="decimal" placeholder="0,00" value="${escapeHtml(d.hours || '')}" enterkeyhint="done"><span>Std.</span></label>
       </div>
-      <textarea class="txt bh-text" data-bh-text="${i}" rows="2" placeholder="Ausgeführte Arbeiten, Unterricht usw."${locked ? ' readonly' : ''}>${escapeHtml(d.text || '')}</textarea>
-      <p class="bh-over">${overHTML(dayLines(d.text))}</p>
+      <div class="bh-lines">${lines.map((l, k) => lineHTML(i, k, l, d)).join('')}${lines.length < BH_LINES ? addLineHTML(i) : ''}</div>
     </section>`;
   };
   app.innerHTML = `
@@ -431,7 +462,7 @@ function renderBhWeek(h, mon) {
     </header>
     <h1 class="large-title">Woche Nr. ${nr}</h1>
     <p class="bh-sub muted">${fmtDayMonth(a)} – ${fmtShort(b)} · KW ${isoWeek(parseDate(mon))}</p>
-    ${hasSheet && !locked ? `<button class="bh-add bh-import" data-bh="from-sheets">${ICON.doc}<span>Aus Stundenzettel übernehmen</span></button>` : ''}
+    ${hasSheet ? `<button class="bh-add bh-import" data-bh="from-sheets">${ICON.doc}<span>Aus Stundenzettel übernehmen</span></button>` : ''}
     <div class="bh-days">${days.map(dayCard).join('')}</div>
     ${signCardHTML(w, b)}
     ${pdfThumbHTML('Bericht')}`;
@@ -450,16 +481,17 @@ function bhCurrent(create = true) {
   return store[key];
 }
 
-/** Text eines Stundenzettel-Tages fürs Berichtsheft: jede Arbeit eine Zeile; Tagesarten als Wort */
+/** Stundenzettel-Tag fürs Berichtsheft: jede Tätigkeit eine Zeile (Überlauf in die letzte), Tagesarten als Wort.
+ *  Einzelstunden bleiben leer: die Pause gehört zum ganzen Tag und lässt sich keiner Tätigkeit zuordnen. */
 function sheetDayReport(d, date) {
   if (!d) return null;
-  if (d.status && !canWork(d)) return { text: DAY_STATUS_SHORT[d.status], hours: '' };
+  if (d.status && !canWork(d)) return { lines: [DAY_STATUS_SHORT[d.status]], hours: '' };
   const parts = [];
   for (const r of d.rows) for (const p of String(r.work || '').split(',')) if (p.trim() && !parts.some((x) => sameKey(x) === sameKey(p))) parts.push(p.trim());
   const holiday = d.status === 'feiertag' ? holidayName(date) || 'Feiertag' : '';
-  if (!parts.length) return holiday ? { text: holiday, hours: '' } : null;
+  if (!parts.length) return holiday ? { lines: [holiday], hours: '' } : null;
   const net = workedNet(d);
-  return { text: [holiday, ...parts].filter(Boolean).join('\n'), hours: net ? fmtHours(net) : '' };
+  return { lines: [holiday, ...parts].filter(Boolean), hours: net ? fmtHours(net) : '' };
 }
 
 function weekFromSheets() {
@@ -471,9 +503,10 @@ function weekFromSheets() {
       const date = addDays(parseDate(key), i);
       const r = sheetDayReport(sheetDayFor(date), date);
       if (!r) continue;
-      w.days[i] = { text: r.text, hours: r.hours };
+      w.days[i] = normDay({ text: r.lines.join('\n'), hours: r.hours });
       n++;
     }
+    bhAutoSign(w, weekFilled(w));
     saveBh();
     renderBhWeek(h, key);
     toast(n ? `${n} ${n === 1 ? 'Tag' : 'Tage'} übernommen` : 'Im Stundenzettel steht für diese Woche nichts');
@@ -503,19 +536,20 @@ function renderBhMonth(h, ym) {
   if (!heftMonths(h).includes(ym)) return location.replace(`#/heft/${h.id}`);
   const mo = h.months[ym] || emptyMonth();
   const [a, b] = monthSpan(h, ym);
-  const locked = !bhEditable(mo);
+  // Fotos werden beim Start noch geladen: dann sobald sie da sind neu zeichnen
+  if (!bhImagesLoaded)
+    bhImagesReady.then(() => currentView === 'bhMonth' && bhEntry?.h === h && bhEntry.key === ym && renderBhMonth(h, ym));
   const part = ([key, title]) => {
     const p = mo[key] || {};
     const src = p.img && bhImages.get(p.img.id);
     return `<h2 class="section-title">${title}</h2>
     <section class="card bh-part" data-part="${key}">
-      <textarea class="txt bh-text bh-long" data-bh-mtext="${key}" rows="4" placeholder="${key === 'taet' ? 'Was hast du im Betrieb gemacht?' : 'Was wurde in der Schule behandelt?'}"${locked ? ' readonly' : ''}>${escapeHtml(p.text || '')}</textarea>
-      ${src ? `<div class="bh-photo"><img src="data:image/jpeg;base64,${src}" alt="">${locked ? '' : `<button class="bh-photo-del" data-bh="img-del" data-part="${key}" aria-label="Bild entfernen">${ICON.close}</button>`}</div>` : ''}
-      ${!locked && !p.img ? `<label class="link-btn bh-photo-add">${ICON.plus} Bild<input type="file" accept="image/*" data-bh-img="${key}" hidden></label>` : ''}
+      <textarea class="txt bh-text bh-long" data-bh-mtext="${key}" rows="4" placeholder="${key === 'taet' ? 'Was hast du im Betrieb gemacht?' : 'Was wurde in der Schule behandelt?'}">${escapeHtml(p.text || '')}</textarea>
+      ${src ? `<div class="bh-photo"><img src="data:image/jpeg;base64,${src}" alt=""><button class="bh-photo-del" data-bh="img-del" data-part="${key}" aria-label="Bild entfernen">${ICON.close}</button></div>` : ''}
+      ${!p.img ? `<label class="link-btn bh-photo-add">${ICON.plus} Bild<input type="file" accept="image/*" data-bh-img="${key}" hidden></label>` : ''}
       <p class="bh-over">${monthFitHTML(key, p)}</p>
     </section>`;
   };
-  const anyWeeks = heftWeeks(h).some((k) => weekMonth(h, k) === ym && weekFilled(h.weeks[k]));
   app.innerHTML = `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
@@ -524,40 +558,12 @@ function renderBhMonth(h, ym) {
     </header>
     <h1 class="large-title">${monthName(ym)}</h1>
     <p class="bh-sub muted">Monatsbericht · ${fmtDayMonth(a)} – ${fmtShort(b)}</p>
-    ${anyWeeks && !locked ? `<button class="bh-add bh-import" data-bh="from-weeks">${ICON.doc}<span>Aus den Wochen übernehmen</span></button>` : ''}
     ${BH_PARTS.map(part).join('')}
     ${signCardHTML(mo, b)}
     ${pdfThumbHTML('Bericht')}`;
   bhEntry = { kind: 'monat', h, key: ym };
   fitRowTexts();
   updatePdfThumb(true);
-}
-
-/** Stichpunkte der Wochen eines Monats als Anfang für den Monatsbericht (Berufsschul-Tage getrennt) */
-function monthFromWeeks() {
-  const { h, key } = bhEntry;
-  const work = [];
-  const school = [];
-  for (const mon of heftWeeks(h).filter((k) => weekMonth(h, k) === key)) {
-    for (const d of h.weeks[mon]?.days || []) {
-      const lines = String(d?.text || '').split('\n').map((l) => l.replace(/^[•\-–]\s*/, '').trim()).filter(Boolean);
-      const isSchool = /^berufsschule/i.test(lines[0] || '');
-      for (const l of lines) {
-        const t = l.replace(/^berufsschule:?\s*/i, '');
-        const list = isSchool ? school : work;
-        if (t && !/^(urlaub|krank|frei)$/i.test(t) && !list.some((x) => sameKey(x) === sameKey(t))) list.push(t);
-      }
-    }
-  }
-  const run = () => {
-    const mo = bhCurrent();
-    mo.taet = { ...mo.taet, text: work.map((t) => `• ${t}`).join('\n') };
-    if (school.length) mo.schule = { ...mo.schule, text: school.map((t) => `• ${t}`).join('\n') };
-    saveBh();
-    renderBhMonth(h, key);
-  };
-  if (monthFilled(h.months[key])) confirmDialog('Text ersetzen?', 'Die Stichpunkte aus den Wochen überschreiben den Text hier.', 'Ersetzen', run);
-  else run();
 }
 
 // ───────── Abzeichnen ─────────
@@ -574,18 +580,33 @@ function signCardHTML(e, lastDay) {
         ${d && bh.sigs[r] ? signatureSVG(bh.sigs[r], 30) : `<span class="bh-sign-btn">${d ? '' : 'Abzeichnen'}</span>`}
       </button>`;
     })
-    .join('')}</div>
-  ${isSigned(e) ? '<p class="footnote">Zum Ändern zuerst die Unterschriften entfernen.</p>' : ''}`;
+    .join('')}</div>`;
 }
 
-/** Gespeicherte Unterschrift der Rolle benutzen; fehlt sie, erst unterschreiben lassen */
+const settingsSig = () => (isSignature(settings.signature) ? settings.signature : null);
+/** Unterschrift für eine Rolle festlegen: der Azubi kann die aus den Einstellungen übernehmen (falls dort eine ist) */
+function pickSignature(role, done) {
+  const draw = () => signaturePad(done, BH_ROLES.find((r) => r[0] === role)[1]);
+  if (role !== 'azubi' || !settingsSig()) return draw();
+  actionSheet([
+    { label: 'Aus den Einstellungen übernehmen', run: () => done(structuredClone(settingsSig())) },
+    { label: 'Selbst unterschreiben', run: draw },
+  ]);
+}
+/** Gespeicherte Unterschrift der Rolle benutzen; fehlt sie, erst festlegen */
 function withSignature(role, then) {
   if (bh.sigs[role]) return then();
-  signaturePad((sig) => {
+  pickSignature(role, (sig) => {
     bh.sigs[role] = sig;
     saveBh();
     then();
-  }, BH_ROLES.find((r) => r[0] === role)[1]);
+  });
+}
+/** Automatische Azubi-Unterschrift: geschriebener Bericht trägt sie mit dem Tag der letzten Änderung, leerer verliert sie */
+function bhAutoSign(e, filled) {
+  if (!e || !bh.autoSign || !bh.sigs.azubi) return;
+  if (filled) e.signed = { ...e.signed, azubi: isoDate(new Date()) };
+  else if (e.signed?.azubi) delete e.signed.azubi;
 }
 
 function signTap(role) {
@@ -634,6 +655,13 @@ const BH_PROFILE_FIELDS = [
 
 function renderBhInfo() {
   const p = bh.profile;
+  // Name aus den Einstellungen vorschlagen („Max Muster“ → Vorname Max, Name Muster)
+  if (!p.name && !p.vorname && (settings.name || '').trim()) {
+    const parts = settings.name.trim().split(/\s+/);
+    p.name = parts.pop();
+    p.vorname = parts.join(' ');
+    saveBh();
+  }
   const field = ([k, label, ac]) =>
     ac === 'date'
       ? `<label class="field"><span>${label}</span><input type="date" data-bh-p="${k}" value="${escapeHtml(p[k] || '')}"></label>`
@@ -654,22 +682,28 @@ function renderBhInfo() {
       ([r, label]) => `<button class="list-row bh-r bh-sign" data-bh="sig-edit" data-role="${r}">
         <span class="list-main"><span class="list-title">${label}</span></span>
         ${bh.sigs[r] ? signatureSVG(bh.sigs[r], 30) : '<span class="bh-sign-btn">Hinzufügen</span>'}
-      </button>`
+      </button>${
+        r === 'azubi'
+          ? `<label class="list-row bh-r bh-auto"><span class="list-main"><span class="list-title">Automatisch unterschreiben</span></span><input type="checkbox" class="toggle" data-bh-auto ${
+              bh.autoSign && bh.sigs.azubi ? 'checked' : ''
+            } ${bh.sigs.azubi ? '' : 'disabled'}></label>`
+          : ''
+      }`
     ).join('')}</div>
     </div>`;
 }
 
 function editSignature(role) {
   const label = BH_ROLES.find((r) => r[0] === role)[1];
-  const draw = () =>
-    signaturePad((sig) => {
-      bh.sigs[role] = sig;
-      saveBh();
-      renderBhInfo();
-    }, label);
-  if (!bh.sigs[role]) return draw();
+  const set = (sig) => {
+    bh.sigs[role] = sig;
+    saveBh();
+    renderBhInfo();
+  };
+  if (!bh.sigs[role]) return pickSignature(role, set);
   actionSheet([
-    { label: 'Neu unterschreiben', run: draw },
+    ...(role === 'azubi' && settingsSig() ? [{ label: 'Aus den Einstellungen übernehmen', run: () => set(structuredClone(settingsSig())) }] : []),
+    { label: 'Neu unterschreiben', run: () => signaturePad(set, label) },
     {
       label: 'Unterschrift löschen',
       destructive: true,
@@ -706,7 +740,9 @@ function addWeekPage(doc, h, mon) {
   return bhWeekPage(doc, {
     nr: String(heftWeeks(h).indexOf(mon) + 1),
     head: bhHeadFor(h, a, b),
-    days: [0, 1, 2, 3, 4, 5].map((i) => (days.includes(i) && w ? { text: w.days[i]?.text || '', total: w.days[i]?.hours || '' } : null)),
+    days: [0, 1, 2, 3, 4, 5].map((i) =>
+      days.includes(i) && w ? { lines: w.days[i].lines.filter((l) => l.t.trim() || l.h.trim()), total: w.days[i].hours || '' } : null
+    ),
     sigs: bhSigsFor(w),
   });
 }
@@ -748,26 +784,28 @@ function buildHeftPdf(h, kind, page = null) {
 /** PDF der geöffneten Wochen- oder Monatsseite (für die Vorschau) */
 const bhPageFile = () => (bhEntry && findHeft(bhEntry.h.id) ? buildHeftPdf(bhEntry.h, bhEntry.kind, bhEntry.key) : null);
 
-async function shareBhPdf(file) {
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+async function shareBhPdf(files) {
+  if (navigator.canShare && navigator.canShare({ files })) {
     try {
-      await navigator.share({ files: [file] });
+      await navigator.share({ files });
     } catch (e) {
-      if (e && e.name !== 'AbortError') downloadFile(file);
+      if (e && e.name !== 'AbortError') files.forEach(downloadFile);
     }
-  } else downloadFile(file);
+  } else files.forEach(downloadFile);
 }
 
-function bhPdf(kind, page) {
+/** Eine Seite (page) oder ohne page das ganze Heft: Wochen und Monate als zwei PDFs, jedes mit seinem Deckblatt */
+async function bhPdf(page) {
   const h = currentHeft();
-  let file;
+  if (!bhImagesLoaded) await bhImagesReady;
+  let files;
   try {
-    file = buildHeftPdf(h, kind, page);
+    files = page ? [buildHeftPdf(h, bhEntry.kind, page)] : [buildHeftPdf(h, 'woche'), buildHeftPdf(h, 'monat')];
   } catch (e) {
     toast('PDF konnte nicht erstellt werden');
     return;
   }
-  shareBhPdf(file);
+  shareBhPdf(files);
 }
 
 // ───────── Ereignisse ─────────
@@ -793,23 +831,29 @@ document.addEventListener('click', (e) => {
     case 'heft-more':
       heftMoreMenu();
       break;
-    case 'pdf':
-      bhPdf(el.dataset.kind);
+    case 'pdf-all':
+      bhPdf();
       break;
     case 'pdf-page':
-      bhPdf(bhEntry.kind, bhEntry.key);
+      bhPdf(bhEntry.key);
       break;
     case 'from-sheets':
       weekFromSheets();
       break;
-    case 'from-weeks':
-      monthFromWeeks();
-      break;
     case 'sat':
       bhSatOpen = true;
       renderBhWeek(bhEntry.h, bhEntry.key);
-      document.querySelector('[data-bh-text="5"]')?.focus();
+      document.querySelector('[data-bh-lt="5"]')?.focus();
       break;
+    case 'add-line': {
+      // nur eine Eingabezeile mehr; gespeichert wird sie erst beim Schreiben
+      const box = el.closest('.bh-lines');
+      const k = box.querySelectorAll('.bh-line').length;
+      el.insertAdjacentHTML('beforebegin', lineHTML(Number(el.dataset.i), k, { t: '', h: '' }, {}));
+      if (k + 1 >= BH_LINES) el.remove();
+      box.querySelector(`[data-bh-lt][data-k="${k}"]`).focus();
+      break;
+    }
     case 'sign':
       signTap(el.dataset.role);
       break;
@@ -833,20 +877,29 @@ document.addEventListener('click', (e) => {
 
 document.addEventListener('input', (e) => {
   const t = e.target;
-  if (t.dataset.bhText != null) {
-    const i = Number(t.dataset.bhText);
-    bhCurrent().days[i].text = t.value;
+  if (t.dataset.bhLt != null || t.dataset.bhLh != null) {
+    const w = bhCurrent();
+    const d = w.days[Number(t.dataset.bhLt ?? t.dataset.bhLh)];
+    const k = Number(t.dataset.k);
+    while (d.lines.length <= k) d.lines.push({ t: '', h: '' });
+    d.lines[k][t.dataset.bhLt != null ? 't' : 'h'] = t.value;
+    const row = t.closest('.bh-line');
+    row.querySelector('.bh-lh').classList.toggle('miss', lineMissing(d.lines[k], d));
+    row.querySelector('.bh-lt').classList.toggle('long', lineLong(d.lines[k].t));
+    bhAutoSign(w, weekFilled(w));
     saveBh();
-    t.closest('.bh-day').querySelector('.bh-over').textContent = overHTML(dayLines(t.value));
     updatePdfThumb();
   } else if (t.dataset.bhHours != null) {
-    bhCurrent().days[Number(t.dataset.bhHours)].hours = t.value;
+    const d = bhCurrent().days[Number(t.dataset.bhHours)];
+    d.hours = t.value;
+    t.closest('.bh-day').querySelectorAll('.bh-lh').forEach((x) => x.classList.toggle('miss', !!d.lines[Number(x.dataset.k)] && lineMissing(d.lines[Number(x.dataset.k)], d)));
     saveBh();
     updatePdfThumb();
   } else if (t.dataset.bhMtext != null) {
     const mo = bhCurrent();
     const k = t.dataset.bhMtext;
     mo[k] = { ...mo[k], text: t.value };
+    bhAutoSign(mo, monthFilled(mo));
     saveBh();
     t.closest('.bh-part').querySelector('.bh-over').textContent = monthFitHTML(k, mo[k]);
     updatePdfThumb();
@@ -859,14 +912,25 @@ document.addEventListener('input', (e) => {
 
 document.addEventListener('change', async (e) => {
   const t = e.target;
-  if (t.dataset.bhHours != null) {
+  if (t.dataset.bhHours != null || t.dataset.bhLh != null) {
     // Stunden einheitlich schreiben: „8“ → „8,00“
     const v = t.value.trim();
     if (v && Number.isFinite(parseFloat(v.replace(',', '.')))) {
       t.value = parseNum(v).toFixed(2).replace('.', ',');
-      bhCurrent().days[Number(t.dataset.bhHours)].hours = t.value;
+      const d = bhCurrent().days[Number(t.dataset.bhHours ?? t.dataset.bhLh)];
+      if (t.dataset.bhHours != null) d.hours = t.value;
+      else d.lines[Number(t.dataset.k)].h = t.value;
       saveBh();
     }
+  } else if (t.dataset.bhAuto != null) {
+    bh.autoSign = t.checked;
+    // beim Einschalten bekommen alle schon geschriebenen Berichte ohne Azubi-Unterschrift sie sofort
+    if (t.checked)
+      for (const h of bh.hefte) {
+        Object.values(h.weeks).forEach((w) => weekFilled(w) && !w.signed?.azubi && bhAutoSign(w, true));
+        Object.values(h.months).forEach((m) => monthFilled(m) && !m.signed?.azubi && bhAutoSign(m, true));
+      }
+    saveBh();
   } else if (t.dataset.bhImg != null && t.files?.[0]) {
     const k = t.dataset.bhImg;
     // Das Verkleinern dauert: das Bild gehört zur Seite, auf der es gewählt wurde, auch wenn man inzwischen weiter ist
@@ -875,6 +939,7 @@ document.addEventListener('change', async (e) => {
       const img = await bhImportImage(t.files[0]);
       const mo = h.months[key] || (h.months[key] = emptyMonth());
       mo[k] = { ...mo[k], img };
+      bhAutoSign(mo, true);
       saveBh();
       if (currentView === 'bhMonth' && bhEntry?.h === h && bhEntry.key === key) renderBhMonth(h, key);
     } catch (err) {
@@ -894,15 +959,18 @@ function bhMerge(data) {
   let n = 0;
   for (const [k, v] of Object.entries(data.profile || {})) if (!bh.profile[k] && v) bh.profile[k] = v;
   for (const [k, v] of Object.entries(data.sigs || {})) if (!bh.sigs[k] && isSignature(v)) bh.sigs[k] = v;
+  if (bh.autoSign == null && typeof data.autoSign === 'boolean') bh.autoSign = data.autoSign;
   for (const inc of data.hefte) {
     if (!inc?.id || !inc.start) continue;
     const cur = findHeft(inc.id) || bh.hefte.find((h) => h.jahr === inc.jahr);
     if (!cur) {
-      bh.hefte.push({ ...inc, weeks: inc.weeks || {}, months: inc.months || {} });
+      const weeks = inc.weeks || {};
+      Object.values(weeks).forEach(normWeek);
+      bh.hefte.push({ ...inc, weeks, months: inc.months || {} });
       n++;
       continue;
     }
-    for (const [k, w] of Object.entries(inc.weeks || {})) if (!weekFilled(cur.weeks[k]) && weekFilled(w)) (cur.weeks[k] = w), n++;
+    for (const [k, w] of Object.entries(inc.weeks || {})) if (!weekFilled(cur.weeks[k]) && weekFilled(normWeek(w))) (cur.weeks[k] = w), n++;
     for (const [k, m] of Object.entries(inc.months || {})) if (!monthFilled(cur.months[k]) && monthFilled(m)) (cur.months[k] = m), n++;
   }
   for (const [id, img] of Object.entries(data.images || {})) if (!bhImages.has(id) && typeof img === 'string') bhPutImage(id, img);

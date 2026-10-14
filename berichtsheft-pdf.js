@@ -227,27 +227,24 @@ function bhSigns(doc, dateFields, sigs, lineY) {
   });
 }
 
-/**
- * Wochenseite. w = { nr, head, days: [{ text, total }] × 6 (Mo–Sa), sigs }
- * Ergebnis: Tage, deren Text nicht in die fünf Zeilen passt
- */
+/** Wochenseite. w = { nr, head, days: [{ lines: [{ t, h }] (bis 5), total }] × 6 (Mo–Sa), sigs } */
 function bhWeekPage(doc, w) {
   const F = BH_FIELDS.woche;
   doc.page('woche');
   doc.field(bhField(F, 'Textfeld 4_14'), w.nr);
   bhHead(doc, F, w.head);
   const lines = bhColumn(F, 76.2);
+  const einzel = bhColumn(F, 490.2);
   const totals = F.filter((f) => f.r[0] > 520).sort((a, b) => b.r[1] - a.r[1]);
-  const over = [];
   w.days.forEach((d, i) => {
     if (!d) return;
-    const rows = d.text ? wrapText(d.text.replace(/\n+$/, ''), lines[0].r[2] - lines[0].r[0] - 4, 8) : [];
-    if (rows.length > 5) over.push(i);
-    rows.slice(0, 5).forEach((t, k) => doc.field(lines[i * 5 + k], t, { size: 8 }));
+    d.lines.slice(0, 5).forEach((l, k) => {
+      doc.field(lines[i * 5 + k], l.t, { size: 8 });
+      doc.field(einzel[i * 5 + k], l.h, { center: true });
+    });
     doc.field(totals[i], d.total, { center: true });
   });
   bhSigns(doc, F.filter((f) => f.r[1] < 60), w.sigs, 57);
-  return over;
 }
 
 /** Monatsseite. m = { monat, head, taet: { text, img }, schule: { text, img }, sigs } — img = { jpeg, w, h } */

@@ -2064,7 +2064,7 @@ const BACK_TARGETS = [
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
   [/^#\/team\/[^/]+\/.+$/, '#/team'],
   [/^#\/fehler$/, '#/team'],
-  [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
+  [/^#\/heft-angaben$/, '#/'],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];
 let backTarget = null;
