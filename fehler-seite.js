@@ -76,12 +76,15 @@ function fehlerRoute(hash) {
     return true;
   }
   currentView = 'fehler';
-  renderFehler();
+  renderFehler(true);
   adminLoad();
   return true;
 }
 
-function renderFehler() {
+/** full: ganze Seite (beim Betreten); sonst nur der Inhalt unter der Überschrift, damit die Einblend-Animation
+ *  nicht ein zweites Mal läuft, wenn kurz danach die frischen Daten kommen */
+function renderFehler(full = false) {
+  const body = !full && document.getElementById('fb-body');
   const nav = `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
@@ -105,7 +108,7 @@ function renderFehler() {
               </div>`
             )
             .join('');
-  app.innerHTML = `${nav}
+  const html = `
     <div class="card fb-push">
       <span>Mitteilungen</span>
       <button class="link-btn" data-fb="${push ? 'push-off' : 'push-on'}" ${adminBusy ? 'disabled' : ''}>${push ? 'Ausschalten' : 'Einschalten'}</button>
@@ -116,6 +119,8 @@ function renderFehler() {
     ${adminTeamHTML(adminTeam)}
     <h2 class="section-title">Fehlerberichte</h2>
     <div class="fb-list">${list}</div>`;
+  if (body) body.innerHTML = html;
+  else app.innerHTML = `${nav}<div id="fb-body">${html}</div>`;
 }
 
 /** Antwortzeit beim letzten Laden: grün bis 400 ms, gelb bis 1,5 s, sonst rot */

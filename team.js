@@ -38,20 +38,19 @@ async function teamRequest(method, path, body, code = team && team.code) {
 
 // ───────── Eigene Zettel hochladen ─────────
 
-/** App-Version aus dem Offline-Cache („std-protokoll-v29“), für die Admin-Seite; höchste Nummer, falls gerade zwei da sind */
+/** App-Version („std-protokoll-v30“) für die Server-Seite: aus der aktuellen sw.js, nicht aus dem Offline-Speicher
+ *  (der hat beim ersten Start nach einem Update noch die alte Version, der Code ist aber schon neu) */
 let teamAppVersion = '';
-try {
-  caches
-    .keys()
-    .then((keys) => {
-      const v = keys.filter((k) => /^std-protokoll-v\d+$/.test(k)).sort((a, b) => Number(b.split('-v')[1]) - Number(a.split('-v')[1]))[0];
-      if (v && v !== teamAppVersion) {
-        teamAppVersion = v;
-        teamQueueUpload(1000);
-      }
-    })
-    .catch(() => {});
-} catch {}
+fetch('sw.js', { cache: 'no-store' })
+  .then((r) => r.text())
+  .then((t) => {
+    const v = (t.match(/CACHE = '(std-protokoll-v\d+)'/) || [])[1];
+    if (v && v !== teamAppVersion) {
+      teamAppVersion = v;
+      teamQueueUpload(1000);
+    }
+  })
+  .catch(() => {});
 
 /** Zettel des laufenden Monats, ohne Angaben, die nur dieses iPhone betreffen */
 function teamPayload() {

@@ -71,11 +71,11 @@
     } catch {}
   }
 
-  /** App-Version aus dem Offline-Cache („std-protokoll-v25“); höchste Nummer, falls gerade zwei da sind */
+  /** App-Version („std-protokoll-v30“) aus der aktuellen sw.js (der Offline-Speicher hinkt nach einem Update hinterher) */
   async function version() {
     try {
-      const keys = (await caches.keys()).filter((k) => /^std-protokoll-v\d+$/.test(k));
-      return keys.sort((a, b) => Number(b.split('-v')[1]) - Number(a.split('-v')[1]))[0] || '';
+      const t = await (await fetch('sw.js', { cache: 'no-store' })).text();
+      return (t.match(/CACHE = '(std-protokoll-v\d+)'/) || [])[1] || '';
     } catch {
       return '';
     }
