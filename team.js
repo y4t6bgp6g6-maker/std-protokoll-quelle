@@ -41,16 +41,14 @@ async function teamRequest(method, path, body, code = team && team.code) {
 /** App-Version („std-protokoll-v30“) für die Server-Seite: aus der aktuellen sw.js, nicht aus dem Offline-Speicher
  *  (der hat beim ersten Start nach einem Update noch die alte Version, der Code ist aber schon neu) */
 let teamAppVersion = '';
-fetch('sw.js', { cache: 'no-store' })
-  .then((r) => r.text())
-  .then((t) => {
-    const v = (t.match(/CACHE = '(std-protokoll-v\d+)'/) || [])[1];
+// window.stdAppVersion kommt aus fehlerbericht.js (lädt sw.js nur einmal)
+if (window.stdAppVersion)
+  window.stdAppVersion().then((v) => {
     if (v && v !== teamAppVersion) {
       teamAppVersion = v;
       teamQueueUpload(1000);
     }
-  })
-  .catch(() => {});
+  });
 
 /** Zettel des laufenden Monats, ohne Angaben, die nur dieses iPhone betreffen */
 function teamPayload() {

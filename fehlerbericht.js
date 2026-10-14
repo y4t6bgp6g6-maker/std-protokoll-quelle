@@ -71,31 +71,51 @@
     } catch {}
   }
 
-  /** App-Version („std-protokoll-v30“) aus der aktuellen sw.js (der Offline-Speicher hinkt nach einem Update hinterher) */
-  async function version() {
-    try {
-      const t = await (await fetch('sw.js', { cache: 'no-store' })).text();
-      return (t.match(/CACHE = '(std-protokoll-v\d+)'/) || [])[1] || '';
-    } catch {
-      return '';
-    }
+  /** App-Version („std-protokoll-v30“) aus der aktuellen sw.js (der Offline-Speicher hinkt nach einem Update hinterher).
+   *  Nur einmal geladen; nach einem Fehlschlag beim nächsten Aufruf neu. Auch für team.js (window.stdAppVersion). */
+  let ver = null;
+  function version() {
+    if (!ver)
+      ver = fetch('sw.js', { cache: 'no-store' })
+        .then((r) => r.text())
+        .then((t) => (t.match(/CACHE = '(std-protokoll-v\d+)'/) || [])[1] || '')
+        .catch(() => '');
+    return ver.then((v) => {
+      if (!v) ver = null;
+      return v;
+    });
   }
+  window.stdAppVersion = version;
 
   let busy = false;
+  let again = false;
   async function upload() {
-    if (busy || !navigator.onLine) return;
+    if (busy) {
+      again = true; // läuft gerade: danach gleich noch einmal
+      return;
+    }
+    if (!navigator.onLine) return;
     const t = team();
     let s = load();
     if (!t || !t.code || !s.queue.length) return;
     busy = true;
     try {
       const reports = s.queue.slice();
+      const body = JSON.stringify({
+        member: t.member,
+        token: t.token,
+        name: firstName(),
+        version: await version(),
+        ua: navigator.userAgent.slice(0, 200),
+        reports: reports.map(({ sig, ...r }) => r),
+      });
       const res = await fetch(URL_, {
         method: 'POST',
         headers: { 'X-Team-Code': t.code, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member: t.member, token: t.token, name: firstName(), version: await version(), ua: navigator.userAgent.slice(0, 200), reports }),
+        body,
         cache: 'no-store',
-        keepalive: true,
+        // keepalive erlaubt höchstens 64 KB, sonst scheitert der Aufruf jedes Mal
+        keepalive: body.length < 60000,
       });
       // Angenommen oder endgültig abgelehnt (falscher Code, zu viele): aus der Warteschlange nehmen
       if (res.ok || (res.status >= 400 && res.status < 500)) {
@@ -111,6 +131,10 @@
     } catch {
     } finally {
       busy = false;
+      if (again) {
+        again = false;
+        later(3000);
+      }
     }
   }
 

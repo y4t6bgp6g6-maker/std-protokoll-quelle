@@ -198,25 +198,28 @@ const adminKeyBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/
 
 /** Mitteilungen einschalten: muss direkt aus dem Antippen kommen (sonst fragt iOS nicht) */
 async function adminPushOn() {
+  if (adminBusy) return;
   if (!adminPushPossible()) return toast('Nur in der App vom Home-Bildschirm');
-  adminBusy = true;
+  adminSetBusy(true);
   try {
     if ((await Notification.requestPermission()) !== 'granted') throw Object.assign(new Error('perm'), { perm: true });
     const reg = await navigator.serviceWorker.ready;
     const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: adminKeyBytes(ADMIN_VAPID) }));
     await adminRequest('PUT', '/push', sub.toJSON());
-    admin.push = true;
-    saveAdmin();
+    if (admin) {
+      admin.push = true;
+      saveAdmin();
+    }
     haptic();
   } catch (e) {
     toast(e.perm ? 'Mitteilungen nicht erlaubt' : 'Keine Verbindung');
   }
-  adminBusy = false;
-  renderFehler();
+  adminSetBusy(false);
 }
 
 async function adminPushOff() {
-  adminBusy = true;
+  if (adminBusy) return;
+  adminSetBusy(true);
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
@@ -224,13 +227,20 @@ async function adminPushOff() {
       await adminRequest('DELETE', '/push', { endpoint: sub.endpoint });
       await sub.unsubscribe();
     }
-    admin.push = false;
-    saveAdmin();
+    if (admin) {
+      admin.push = false;
+      saveAdmin();
+    }
   } catch {
     toast('Keine Verbindung');
   }
-  adminBusy = false;
-  renderFehler();
+  adminSetBusy(false);
+}
+
+/** Knopf sperren bzw. freigeben; neu zeichnen nur, wenn die Seite noch offen ist (man kann währenddessen zurückgehen) */
+function adminSetBusy(on) {
+  adminBusy = on;
+  if (currentView === 'fehler' && admin) renderFehler();
 }
 
 document.addEventListener('click', (e) => {
@@ -245,8 +255,10 @@ document.addEventListener('click', (e) => {
       break;
   }
 });
-// Mitteilung angetippt, App war schon offen: der Service Worker schickt die Seite
+// Mitteilung angetippt, App war schon offen: der Service Worker schickt die Seite (ist sie schon offen, neu laden)
 if ('serviceWorker' in navigator)
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data && e.data.go === '#/fehler') location.hash = '#/fehler';
+    if (!e.data || e.data.go !== '#/fehler') return;
+    if (location.hash === '#/fehler' && currentView === 'fehler') adminLoad();
+    else location.hash = '#/fehler';
   });
