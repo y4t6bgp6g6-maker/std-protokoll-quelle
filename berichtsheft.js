@@ -227,11 +227,19 @@ const fmtYearSpan = (h) => `${fmtShort(parseDate(h.start))} – ${fmtShort(parse
 /** Logo der Handwerkskammer aus dem Deckblatt-Vordruck (JPEG) */
 let bhLogoUrl = null;
 const bhLogo = () => (bhLogoUrl ??= `data:image/jpeg;base64,${BH_TPL.objs.find((o) => o.d.includes('/Subtype /Image')).s}`);
-/** Umschlag eines Hefts: das Deckblatt des Vordrucks mit den Angaben */
+/** Seiten hinter dem Deckblatt: je weiter hinten, desto weiter rechts und kürzer (2–7 Blätter, je nach Füllstand) */
+function heftPagesShadow(h) {
+  const g = heftProgress(h);
+  const n = 2 + Math.round((5 * (g.weeksDone + g.monthsDone)) / Math.max(1, g.weeks + g.months));
+  const s = [];
+  for (let i = 1; i <= n; i++) s.push(`${(i * 1.6).toFixed(1)}px 0 0 -${(i * 0.7).toFixed(1)}px ${i % 2 ? '#d9d6ce' : '#fbfaf6'}`);
+  return [...s, `${(n * 1.6).toFixed(1)}px 4px 12px rgba(0, 0, 0, 0.3)`].join(', ');
+}
+/** Umschlag eines Hefts: das Deckblatt des Vordrucks mit den Angaben, geheftet */
 function heftCoverHTML(h) {
   const p = bh.profile;
   const f = (v, top) => `<span class="bh-dk-f" style="top:${top}%">${escapeHtml(v || '')}</span>`;
-  return `<div class="bh-dk"><img src="${bhLogo()}" alt=""><b>Ausbildungsnachweis</b><span class="bh-dk-y">${h.jahr}. Ausbildungsjahr</span>${f(
+  return `<div class="bh-dk" style="box-shadow:${heftPagesShadow(h)}"><img src="${bhLogo()}" alt=""><b>Ausbildungsnachweis</b><span class="bh-dk-y">${h.jahr}. Ausbildungsjahr</span>${f(
     [p.name, p.vorname].filter(Boolean).join(', '),
     47
   )}${f(p.beruf, 54)}${f(p.betrieb, 61)}</div>`;
@@ -665,7 +673,7 @@ function renderBhInfo() {
   const field = ([k, label, ac]) =>
     ac === 'date'
       ? `<label class="field"><span>${label}</span><input type="date" data-bh-p="${k}" value="${escapeHtml(p[k] || '')}"></label>`
-      : `<label class="field"><span>${label}</span><input data-bh-p="${k}" value="${escapeHtml(p[k] || '')}" ${ac ? `autocomplete="${ac}"` : ''} enterkeyhint="done"></label>`;
+      : `<label class="field bh-tf"><span>${label}</span><textarea data-bh-p="${k}" rows="1" ${ac ? `autocomplete="${ac}"` : ''} enterkeyhint="done">${escapeHtml(p[k] || '')}</textarea></label>`;
   app.innerHTML = `
     <header class="nav">
       <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
@@ -691,6 +699,17 @@ function renderBhInfo() {
       }`
     ).join('')}</div>
     </div>`;
+  app.querySelectorAll('.bh-tf textarea').forEach(bhFitField);
+}
+
+/** Langer Wert: Bezeichnung klein darüber, Wert darunter mit Umbruch – so ist immer alles zu sehen */
+function bhFitField(ta) {
+  const row = ta.closest('.bh-tf');
+  row.classList.remove('stack');
+  ta.style.height = 'auto';
+  if (ta.scrollHeight > parseFloat(getComputedStyle(ta).lineHeight) * 1.5 + 24) row.classList.add('stack');
+  ta.style.height = 'auto';
+  ta.style.height = `${ta.scrollHeight}px`;
 }
 
 function editSignature(role) {
@@ -904,9 +923,21 @@ document.addEventListener('input', (e) => {
     t.closest('.bh-part').querySelector('.bh-over').textContent = monthFitHTML(k, mo[k]);
     updatePdfThumb();
   } else if (t.dataset.bhP != null) {
+    if (t.tagName === 'TEXTAREA') {
+      t.value = t.value.replace(/\n/g, ' ');
+      bhFitField(t);
+    }
     bh.profile[t.dataset.bhP] = t.value.trim();
     if (t.dataset.bhP === 'beginn' || t.dataset.bhP === 'ende') bhRecalcYears();
     saveBh();
+  }
+});
+
+// Angaben: Eingabetaste schließt das Feld (kein Zeilenumbruch)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches?.('.bh-tf textarea')) {
+    e.preventDefault();
+    e.target.blur();
   }
 });
 
