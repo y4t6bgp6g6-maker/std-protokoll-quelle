@@ -1870,7 +1870,7 @@ function route() {
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
-  } else if (bhRoute(hash)) {
+  } else if (bhRoute(hash) || fehlerRoute(hash)) {
     syncNav();
     window.scrollTo(0, 0);
   } else if (hash === '#/team') {
@@ -2038,6 +2038,7 @@ const BACK_TARGETS = [
   [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
   [/^#\/team\/[^/]+\/.+$/, '#/team'],
+  [/^#\/fehler$/, '#/team'],
   [/^#\/heft-angaben$/, () => (bhHeftId && findHeft(bhHeftId) ? `#/heft/${bhHeftId}` : '#/')],
   [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
 ];

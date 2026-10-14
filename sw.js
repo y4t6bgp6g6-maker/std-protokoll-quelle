@@ -1,11 +1,12 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v26';
+const CACHE = 'std-protokoll-v27';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
   'app.js',
   'fehlerbericht.js',
+  'fehler-seite.js',
   'pdf.js',
   'berichtsheft-vorlagen.js',
   'berichtsheft-pdf.js',
@@ -51,6 +52,29 @@ self.addEventListener('fetch', (event) => {
       } catch {
         return (await cache.match(req, { ignoreSearch: true })) || (await cache.match('./'));
       }
+    })
+  );
+});
+
+// Mitteilungen über neue Fehlerberichte (nur Admin-Geräte sind beim Server angemeldet)
+self.addEventListener('push', (event) => {
+  let d = {};
+  try {
+    d = event.data ? event.data.json() : {};
+  } catch {}
+  event.waitUntil(self.registration.showNotification(d.title || 'Fehlerbericht', { body: d.body || '', tag: 'fehler', renotify: true }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      const win = list[0];
+      if (win) {
+        win.postMessage({ go: '#/fehler' });
+        return win.focus();
+      }
+      return self.clients.openWindow(new URL('./#/fehler', self.registration.scope).href);
     })
   );
 });

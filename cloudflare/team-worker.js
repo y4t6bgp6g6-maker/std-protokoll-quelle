@@ -17,7 +17,13 @@
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
 //   POST   /error  ← { member, token, name, version, ua, reports: [{ message, stack, view, count, first, last }] }
 //                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
-//                    ERROR_DAYS Tagen gelöscht und nur im Cloudflare-Dashboard bzw. per D1-Abfrage gelesen
+//                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
+//                    höchstens alle PUSH_GAP Minuten
+// Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE):
+//   GET    /errors → { errors: [...] }                         die letzten Fehlerberichte
+//   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
+//   DELETE /push   ← { endpoint }                              abmelden
+// Web Push: Secret VAPID_JWK (privater Schlüssel als JWK), öffentlicher Schlüssel steht in fehler-seite.js
 
 const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
 const MAX_BODY = 1_000_000;
@@ -25,6 +31,8 @@ const MAX_TEXT = 500;
 const MAX_POSTS = 300; // je Person und Monat
 const MAX_ERRORS = 30; // Fehlerberichte je Gerät und Tag
 const ERROR_DAYS = 180;
+const PUSH_GAP = 10;
+const VAPID_SUB = 'https://y4t6bgp6g6-maker.github.io/std-protokoll/';
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -53,7 +61,7 @@ function cors(req) {
     ? {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code, X-Admin-Code',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
       }
@@ -71,8 +79,73 @@ async function readBody(req) {
   return JSON.parse(text);
 }
 
+// ───────── Web Push (RFC 8291 Verschlüsselung, RFC 8292 VAPID) ─────────
+
+const enc = (s) => new TextEncoder().encode(s);
+const b64u = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+function concat(...parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let i = 0;
+  for (const p of parts) out.set(p, (i += p.length) - p.length);
+  return out;
+}
+async function hkdf(salt, ikm, info, len) {
+  const key = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, key, len * 8));
+}
+
+/** Nachricht für ein Gerät verschlüsseln (aes128gcm, ein Datensatz) */
+async function pushBody(sub, text) {
+  const uaPublic = unb64u(sub.p256dh);
+  const local = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey('raw', local.publicKey));
+  const uaKey = await crypto.subtle.importKey('raw', uaPublic, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+  const secret = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: uaKey }, local.privateKey, 256));
+  const ikm = await hkdf(unb64u(sub.auth), secret, concat(enc('WebPush: info\0'), uaPublic, asPublic), 32);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const cek = await crypto.subtle.importKey('raw', await hkdf(salt, ikm, enc('Content-Encoding: aes128gcm\0'), 16), 'AES-GCM', false, ['encrypt']);
+  const nonce = await hkdf(salt, ikm, enc('Content-Encoding: nonce\0'), 12);
+  const data = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cek, concat(enc(text), new Uint8Array([2]))));
+  const head = new Uint8Array(21);
+  head.set(salt);
+  new DataView(head.buffer).setUint32(16, 4096);
+  head[20] = asPublic.length;
+  return concat(head, asPublic, data);
+}
+
+/** Anmeldung beim Push-Dienst (Apple, Google …) per signiertem Token */
+async function vapid(endpoint, env) {
+  const jwk = JSON.parse(env.VAPID_JWK);
+  const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const head = b64u(enc(JSON.stringify({ typ: 'JWT', alg: 'ES256' })));
+  const claims = b64u(enc(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: VAPID_SUB })));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, enc(`${head}.${claims}`));
+  const pub = concat(new Uint8Array([4]), unb64u(jwk.x), unb64u(jwk.y));
+  return `vapid t=${head}.${claims}.${b64u(sig)}, k=${b64u(pub)}`;
+}
+
+/** Alle Admin-Geräte benachrichtigen; abgelaufene Anmeldungen löschen */
+async function notifyAdmins(db, env, payload) {
+  if (!env.VAPID_JWK) return;
+  await db.exec('CREATE TABLE IF NOT EXISTS push (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL, sent INTEGER)');
+  const { results } = await db.prepare('SELECT endpoint, p256dh, auth, sent FROM push').all();
+  for (const sub of results) {
+    if (sub.sent && Date.now() - sub.sent < PUSH_GAP * 60000) continue;
+    try {
+      const res = await fetch(sub.endpoint, {
+        method: 'POST',
+        headers: { Authorization: await vapid(sub.endpoint, env), TTL: '86400', Urgency: 'normal', 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream' },
+        body: await pushBody(sub, JSON.stringify(payload)),
+      });
+      if (res.status === 404 || res.status === 410) await db.prepare('DELETE FROM push WHERE endpoint = ?').bind(sub.endpoint).run();
+      else if (res.ok) await db.prepare('UPDATE push SET sent = ? WHERE endpoint = ?').bind(Date.now(), sub.endpoint).run();
+    } catch {}
+  }
+}
+
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const h = cors(req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
 
@@ -141,7 +214,39 @@ export default {
               .bind(body.member, me ? me.name : str(body.name, 40), str(body.version, 40), str(body.ua, 200), str(r && r.view, 60), str(r && r.message, 300) || '?', str(r && r.stack, 2000), Math.max(1, Math.min(1e6, num(r && r.count) || 1)), num(r && r.first), num(r && r.last), now)
           )
         );
+        const who = (me ? me.name : str(body.name, 40)) || 'Jemand';
+        ctx.waitUntil(notifyAdmins(db, env, { title: 'Fehlerbericht', body: `${who}: ${str(reports[0] && reports[0].message, 120)}${reports.length > 1 ? ` (+${reports.length - 1})` : ''}` }));
         return json({ ok: true }, 200, h);
+      }
+
+      if (path === '/errors' || path === '/push') {
+        // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
+        if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
+          await new Promise((r) => setTimeout(r, 400));
+          return json({ error: 'admin' }, 403, h);
+        }
+        if (path === '/errors' && req.method === 'GET') {
+          await db.exec('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)');
+          const { results } = await db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50').all();
+          return json({ errors: results }, 200, h);
+        }
+        if (path === '/push' && (req.method === 'PUT' || req.method === 'DELETE')) {
+          const body = await readBody(req);
+          const endpoint = String(body.endpoint ?? '');
+          if (!/^https:\/\/[^\s]{10,1000}$/.test(endpoint)) return json({ error: 'endpoint' }, 400, h);
+          await db.exec('CREATE TABLE IF NOT EXISTS push (endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL, sent INTEGER)');
+          if (req.method === 'DELETE') {
+            await db.prepare('DELETE FROM push WHERE endpoint = ?').bind(endpoint).run();
+            return json({ ok: true }, 200, h);
+          }
+          const keys = body.keys || {};
+          if (typeof keys.p256dh !== 'string' || typeof keys.auth !== 'string') return json({ error: 'keys' }, 400, h);
+          await db
+            .prepare('INSERT INTO push (endpoint, p256dh, auth, created) VALUES (?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth')
+            .bind(endpoint, keys.p256dh.slice(0, 200), keys.auth.slice(0, 100), Date.now())
+            .run();
+          return json({ ok: true }, 200, h);
+        }
       }
 
       if (path === '/me' && (req.method === 'PUT' || req.method === 'DELETE')) {
