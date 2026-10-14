@@ -29,6 +29,13 @@ const rand = (n) => crypto.getRandomValues(new Uint8Array(n));
 const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const unb64 = (s) => Uint8Array.from(atob(s), (ch) => ch.charCodeAt(0));
 
+/** Nicht mehr benutzten Passkey aus den Passwörtern entfernen lassen (iOS 26; ältere Versionen ignorieren es still) */
+function forgetLockKey(id) {
+  if (!id || !window.PublicKeyCredential?.signalUnknownCredential) return;
+  const credentialId = id.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); // Base64url
+  PublicKeyCredential.signalUnknownCredential({ rpId: location.hostname, credentialId }).catch(() => {});
+}
+
 /** Neuen Passkey anlegen; Face ID bzw. iPhone-Code bestätigt dabei, dass du es bist */
 async function createLockKey() {
   const cred = await navigator.credentials.create({
@@ -44,8 +51,10 @@ async function createLockKey() {
       timeout: 60000,
     },
   });
+  const old = lockStore?.id;
   lockStore = { id: b64u(cred.rawId) };
   saveLock();
+  forgetLockKey(old); // „Neu einrichten“ auf dem Sperrbildschirm ersetzt den alten
 }
 
 /** Face ID abfragen; true, wenn bestätigt. Eine noch offene Abfrage wird abgebrochen (sonst hängt ein neuer Tipp). */
@@ -117,6 +126,7 @@ document.addEventListener('visibilitychange', () => {
 /** Schalter in den Einstellungen */
 async function toggleLock(input, rerender) {
   if (!input.checked) {
+    forgetLockKey(lockStore?.id);
     lockStore = null;
     saveLock();
     rerender();
