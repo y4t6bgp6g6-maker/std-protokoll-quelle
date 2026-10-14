@@ -1,5 +1,6 @@
 // Std-Protokoll – Fehlerberichte lesen und Mitteilungen dazu (nur für den Admin).
-// Seite #/fehler: erreichbar per langem Drücken auf die Überschrift „Team“ oder über eine Mitteilung.
+// Der Admin tritt mit dem Admin-Code statt dem Team-Code bei (der Server nimmt beide an); danach prüft die App still,
+// ob der Code ein Admin-Code ist. Nur dann zeigt die Team-Seite oben links ein Symbol zur Seite #/fehler.
 // Ohne Admin-Code (Secret ADMIN_CODE im Worker) liefert der Server nichts; nur angemeldete Geräte bekommen Mitteilungen.
 //
 // Eigener Speicher (nicht in der Sicherung): { code, push } – push: dieses Gerät ist für Mitteilungen angemeldet
@@ -37,11 +38,42 @@ async function adminRequest(method, path, body, code = admin && admin.code) {
 
 const adminPushPossible = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
+/** Nach dem Beitreten: ist der Code auch ein Admin-Code? Für alle anderen still ohne Folgen */
+async function adminCheck(code) {
+  try {
+    adminErrors = (await adminRequest('GET', '/errors', null, code)).errors || [];
+    admin = { code, push: false };
+    saveAdmin();
+    if (currentView === 'team') renderTeamNav();
+  } catch {}
+}
+
+/** Team verlassen: Admin-Rechte und Mitteilungen auf diesem Gerät beenden (der Server löscht die Anmeldung beim nächsten Versand) */
+function adminForget() {
+  if (!admin) return;
+  if (admin.push && adminPushPossible())
+    navigator.serviceWorker.ready
+      .then((reg) => reg.pushManager.getSubscription())
+      .then((sub) => sub && sub.unsubscribe())
+      .catch(() => {});
+  admin = null;
+  adminErrors = null;
+  saveAdmin();
+}
+
+/** Symbol oben links auf der Team-Seite (Liste mit Warnzeichen) */
+const adminIcon = () => svg('<path d="M12 3.8 2.6 20h18.8z"/><path d="M12 10v4.6"/><path d="M12 17.4v.1"/>', 22);
+
 function fehlerRoute(hash) {
   if (hash !== '#/fehler') return false;
+  // Ohne Admin-Code gibt es hier nichts zu sehen
+  if (!admin || !team) {
+    location.replace('#/team');
+    return true;
+  }
   currentView = 'fehler';
   renderFehler();
-  if (admin && team) adminLoad();
+  adminLoad();
   return true;
 }
 
@@ -53,18 +85,6 @@ function renderFehler() {
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">Fehlerberichte</h1>`;
-  if (!team) {
-    app.innerHTML = `${nav}<p class="tm-msg muted">Erst dem Team beitreten</p>`;
-    return;
-  }
-  if (!admin) {
-    app.innerHTML = `${nav}
-      <div class="tm-join-form">
-        <div class="card tm-join"><input data-fb="code" type="password" placeholder="Admin-Code" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go"></div>
-        <button class="primary tm-join-btn" data-fb="login" ${adminBusy ? 'disabled' : ''}>Weiter</button>
-      </div>`;
-    return;
-  }
   const push = admin.push && adminPushPossible() && Notification.permission === 'granted';
   const list =
     adminErrors == null
@@ -87,8 +107,7 @@ function renderFehler() {
       <button class="link-btn" data-fb="${push ? 'push-off' : 'push-on'}" ${adminBusy ? 'disabled' : ''}>${push ? 'Ausschalten' : 'Einschalten'}</button>
     </div>
     ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
-    <div class="fb-list">${list}</div>
-    <div class="center"><button class="link-btn tm-leave" data-fb="logout">Abmelden</button></div>`;
+    <div class="fb-list">${list}</div>`;
 }
 
 async function adminLoad() {
@@ -96,27 +115,12 @@ async function adminLoad() {
     adminErrors = (await adminRequest('GET', '/errors')).errors || [];
   } catch (e) {
     if (e.status === 403) {
-      admin = null;
-      saveAdmin();
-      toast('Admin-Code ungültig');
-    } else if (adminErrors == null) adminErrors = [];
+      adminForget();
+      if (currentView === 'fehler') location.replace('#/team');
+      return;
+    }
+    if (adminErrors == null) adminErrors = [];
   }
-  if (currentView === 'fehler') renderFehler();
-}
-
-async function adminLogin(code) {
-  code = String(code || '').trim();
-  if (!code || adminBusy) return;
-  adminBusy = true;
-  try {
-    adminErrors = (await adminRequest('GET', '/errors', null, code)).errors || [];
-    admin = { code, push: false };
-    saveAdmin();
-    haptic();
-  } catch (e) {
-    toast(e.status === 403 ? 'Falscher Code' : 'Keine Verbindung');
-  }
-  adminBusy = false;
   if (currentView === 'fehler') renderFehler();
 }
 
@@ -159,54 +163,18 @@ async function adminPushOff() {
   renderFehler();
 }
 
-function adminLogout() {
-  confirmDialog('Abmelden?', '', 'Abmelden', async () => {
-    if (admin && admin.push) await adminPushOff();
-    admin = null;
-    adminErrors = null;
-    saveAdmin();
-    renderFehler();
-  }, true);
-}
-
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-fb]');
   if (!el || layer.contains(el)) return;
   switch (el.dataset.fb) {
-    case 'login':
-      adminLogin(app.querySelector('[data-fb="code"]').value);
-      break;
     case 'push-on':
       adminPushOn();
       break;
     case 'push-off':
       adminPushOff();
       break;
-    case 'logout':
-      adminLogout();
-      break;
   }
 });
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.matches('[data-fb="code"]')) adminLogin(e.target.value);
-});
-
-// Langes Drücken auf die Überschrift „Team“ öffnet die Seite
-let adminPress = 0;
-document.addEventListener(
-  'touchstart',
-  (e) => {
-    if (!(e.target instanceof Element) || !e.target.closest('#team-title')) return;
-    clearTimeout(adminPress);
-    adminPress = setTimeout(() => {
-      haptic();
-      location.hash = '#/fehler';
-    }, 800);
-  },
-  { passive: true }
-);
-['touchend', 'touchmove', 'touchcancel'].forEach((t) => document.addEventListener(t, () => clearTimeout(adminPress), { passive: true }));
-
 // Mitteilung angetippt, App war schon offen: der Service Worker schickt die Seite
 if ('serviceWorker' in navigator)
   navigator.serviceWorker.addEventListener('message', (e) => {

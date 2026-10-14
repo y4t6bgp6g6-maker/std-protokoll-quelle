@@ -19,7 +19,7 @@
 //                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
-// Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE):
+// Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
 //   GET    /errors → { errors: [...] }                         die letzten Fehlerberichte
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
 //   DELETE /push   ← { endpoint }                              abmelden
@@ -149,7 +149,9 @@ export default {
     const h = cors(req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
 
-    if (!sameCode(req.headers.get('X-Team-Code'), env.TEAM_CODE)) {
+    // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei)
+    const teamCode = req.headers.get('X-Team-Code');
+    if (!sameCode(teamCode, env.TEAM_CODE) && !sameCode(teamCode, env.ADMIN_CODE)) {
       // kurze Pause erschwert das Durchprobieren von Codes
       await new Promise((r) => setTimeout(r, 400));
       return json({ error: 'code' }, 401, h);

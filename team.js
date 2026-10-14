@@ -101,6 +101,7 @@ async function joinTeam(code) {
     haptic();
     renderTeamBody();
     teamLoad();
+    adminCheck(code);
   } catch (e) {
     team = prev;
     toast(e.status === 401 ? 'Falscher Team-Code' : 'Keine Verbindung');
@@ -109,6 +110,7 @@ async function joinTeam(code) {
 }
 
 function leaveTeamLocal(message) {
+  adminForget();
   team = null;
   saveTeam();
   teamData = null;
@@ -566,7 +568,7 @@ function renderTeamNav() {
   nav.innerHTML =
     team && teamPinOpen
       ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
-      : `<span class="nav-btn"></span><span class="nav-title"></span>${
+      : `${team && admin ? `<button class="nav-btn" data-team="fehler" aria-label="Fehlerberichte">${adminIcon()}</button>` : '<span class="nav-btn"></span>'}<span class="nav-title"></span>${
           team ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
         }`;
   document.getElementById('team-title').textContent = team && teamPinOpen ? 'Teammeeting' : 'Team';
@@ -691,6 +693,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'leave':
       leaveTeam();
+      break;
+    case 'fehler':
+      location.hash = '#/fehler';
       break;
   }
 });
