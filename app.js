@@ -1826,17 +1826,30 @@ let currentView = '';
 let searchQuery = null;
 
 let routedHash = null;
+let routedLen = 0; // history.length beim letzten Seitenwechsel
+let routeSkip = false; // nächster Seitenwechsel ist nur der Schritt zurück zum Zettel
 function route() {
+  if (routeSkip && location.hash === routedHash) {
+    routeSkip = false;
+    return;
+  }
+  routeSkip = false;
   // Zettel mit ungespeicherten Änderungen auf einem anderen Weg verlassen (Menü, Arbeitsschein …): erst fragen
   if (currentView === 'editor' && editorPending() && !backTarget && location.hash !== routedHash) {
     const target = location.hash;
-    history.replaceState(history.state, '', routedHash);
+    // Neuer Verlaufseintrag: wieder zurückgehen. Mit replaceState stünde der Zettel doppelt im Verlauf, und das
+    // nächste Zurück bliebe auf dem doppelten Eintrag hängen (ohne hashchange, backTarget bliebe gesetzt).
+    if (history.length > routedLen) {
+      routeSkip = true;
+      history.back();
+    } else history.replaceState(history.state, '', routedHash);
     updateTabbar();
     confirmLeave(() => (location.hash = target));
     return;
   }
   const prevView = currentView;
   routedHash = location.hash;
+  routedLen = history.length;
   if (backTarget) {
     const here = location.hash || '#/';
     if (here !== backTarget && history.state !== 'root') {
@@ -2826,6 +2839,11 @@ function changeWeek() {
     s.year = n.year;
     s.month = n.month;
     markHolidays(s);
+    // Die neue Woche gilt sofort, also auch ihre Feiertage im gespeicherten Stand (sonst stünden sie als ungespeichert da)
+    if (editorSaved && editorSaved.id === s.id) {
+      markHolidays({ ...s, days: editorSaved.days });
+      editorSaved.dayJson = editorSaved.days.map((d) => JSON.stringify(d));
+    }
     saveSheets(s);
     refreshAll();
   });
