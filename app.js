@@ -2922,7 +2922,9 @@ function updatePdfThumb(now = false) {
     // Abrechnung ohne Reisetage: noch keine Vorschau
     img.closest('.pv-thumb').hidden = !file;
     if (!file) return;
-    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    // Alte Vorschau erst später freigeben: lädt sie noch, gäbe es sonst einen Ladefehler
+    const old = pdfUrl;
+    if (old) setTimeout(() => URL.revokeObjectURL(old), 10000);
     pdfUrl = URL.createObjectURL(file);
     img.src = pdfUrl;
   };

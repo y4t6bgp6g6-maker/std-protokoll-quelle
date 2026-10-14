@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v36';
+const CACHE = 'std-protokoll-v37';
 const ASSETS = [
   './',
   'index.html',
@@ -40,18 +40,37 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+let slowUntil = 0;
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  // Netz zuerst, bei schlechtem Empfang aber höchstens 2 s warten, dann die gespeicherte Version.
+  // Kommt die Antwort später doch noch, landet sie trotzdem im Cache (gilt dann beim nächsten Start).
+  let put = Promise.resolve();
+  const net = fetch(req, { cache: 'no-cache' }).then((res) => {
+    if (res.ok) {
+      const copy = res.clone();
+      put = caches.open(CACHE).then((c) => c.put(req, copy));
+    }
+    return res;
+  });
+  event.waitUntil(net.then(() => put).catch(() => {}));
+  const cached = () => caches.open(CACHE).then(async (c) => (await c.match(req, { ignoreSearch: true })) || (await c.match('./')));
   event.respondWith(
-    caches.open(CACHE).then(async (cache) => {
-      try {
-        const res = await fetch(req, { cache: 'no-cache' });
-        if (res.ok) cache.put(req, res.clone());
-        return res;
-      } catch {
-        return (await cache.match(req, { ignoreSearch: true })) || (await cache.match('./'));
-      }
+    new Promise((resolve, reject) => {
+      let done = false;
+      const finish = (res) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        res ? resolve(res) : reject(new Error('offline'));
+      };
+      // Ohne gespeicherte Version weiter aufs Netz warten. War das Netz eben zu langsam, nicht erneut 2 s warten.
+      const timer = setTimeout(() => {
+        slowUntil = Date.now() + 10000;
+        cached().then((res) => res && finish(res));
+      }, Date.now() < slowUntil ? 0 : 2000);
+      net.then(finish, () => cached().then(finish, () => finish(null)));
     })
   );
 });
