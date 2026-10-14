@@ -17,13 +17,15 @@ try {
 } catch (e) {}
 
 const BH_LINES = 5; // Zeilen je Tag im Vordruck
-/** Tag eines Wochenberichts; frühere Fassung hatte statt Zeilen einen Text (jede Zeile wird eine Zeile, Überlauf in die letzte) */
+/** Höchstens 5 Zeilen: was darüber hinausgeht, kommt mit Komma in die letzte */
+const capLines = (lines) =>
+  lines.length <= BH_LINES ? lines : [...lines.slice(0, BH_LINES - 1), { t: lines.slice(BH_LINES - 1).map((l) => l.t).join(', '), h: '' }];
+/** Tag eines Wochenberichts; frühere Fassung hatte statt Zeilen einen Text (jede Textzeile wird eine Zeile) */
 function normDay(d) {
-  if (Array.isArray(d?.lines)) return { lines: d.lines.map((l) => ({ t: String(l?.t || ''), h: String(l?.h || '') })), hours: d.hours || '' };
-  const parts = String(d?.text || '').split('\n').map((s) => s.trim()).filter(Boolean);
-  const lines = parts.slice(0, BH_LINES - 1).map((t) => ({ t, h: '' }));
-  if (parts.length >= BH_LINES) lines.push({ t: parts.slice(BH_LINES - 1).join(', '), h: '' });
-  return { lines, hours: d?.hours || '' };
+  const lines = Array.isArray(d?.lines)
+    ? d.lines.map((l) => ({ t: String(l?.t || ''), h: String(l?.h || '') }))
+    : String(d?.text || '').split('\n').map((s) => s.trim()).filter(Boolean).map((t) => ({ t, h: '' }));
+  return { lines: capLines(lines), hours: d?.hours || '' };
 }
 function normWeek(w) {
   if (w) w.days = [0, 1, 2, 3, 4, 5].map((i) => normDay(w.days?.[i]));
@@ -227,22 +229,20 @@ const fmtYearSpan = (h) => `${fmtShort(parseDate(h.start))} – ${fmtShort(parse
 /** Logo der Handwerkskammer aus dem Deckblatt-Vordruck (JPEG) */
 let bhLogoUrl = null;
 const bhLogo = () => (bhLogoUrl ??= `data:image/jpeg;base64,${BH_TPL.objs.find((o) => o.d.includes('/Subtype /Image')).s}`);
-/** Seiten hinter dem Deckblatt: je weiter hinten, desto weiter rechts und kürzer (2–7 Blätter, je nach Füllstand) */
-function heftPagesShadow(h) {
-  const g = heftProgress(h);
+/** Seiten hinter dem Deckblatt: je weiter hinten, desto weiter rechts und kürzer (2–7 Blätter, je nach Füllstand g) */
+function heftPagesShadow(g) {
   const n = 2 + Math.round((5 * (g.weeksDone + g.monthsDone)) / Math.max(1, g.weeks + g.months));
   const s = [];
   for (let i = 1; i <= n; i++) s.push(`${(i * 1.6).toFixed(1)}px 0 0 -${(i * 0.7).toFixed(1)}px ${i % 2 ? '#d9d6ce' : '#fbfaf6'}`);
   return [...s, `${(n * 1.6).toFixed(1)}px 4px 12px rgba(0, 0, 0, 0.3)`].join(', ');
 }
 /** Umschlag eines Hefts: das Deckblatt des Vordrucks mit den Angaben, geheftet */
-function heftCoverHTML(h) {
+function heftCoverHTML(h, g) {
   const p = bh.profile;
   const f = (v, top) => `<span class="bh-dk-f" style="top:${top}%">${escapeHtml(v || '')}</span>`;
-  return `<div class="bh-dk" style="box-shadow:${heftPagesShadow(h)}"><img src="${bhLogo()}" alt=""><b>Ausbildungsnachweis</b><span class="bh-dk-y">${h.jahr}. Ausbildungsjahr</span>${f(
-    [p.name, p.vorname].filter(Boolean).join(', '),
-    47
-  )}${f(p.beruf, 54)}${f(p.betrieb, 61)}</div>`;
+  return `<div class="bh-dk" style="box-shadow:${heftPagesShadow(g)}"><img src="${bhLogo()}" alt=""><b>Ausbildungsnachweis</b><span class="bh-dk-y">${
+    h.jahr
+  }. Ausbildungsjahr</span>${f(bhFullName(p), 47)}${f(p.beruf, 54)}${f(p.betrieb, 61)}</div>`;
 }
 
 /** Karte zu den Angaben (gelten für alle Hefte) */
@@ -254,8 +254,7 @@ function bhInfoCardHTML() {
   return `<a class="card bh-info-card" href="#/heft-angaben"><span class="bh-info-icon">${ICON.doc}</span><span class="list-main"><span class="list-title">Angaben</span><span class="list-sub">${sub}</span></span><span class="list-chevron">${ICON.chevronRight}</span></a>`;
 }
 
-function heftProgressHTML(h) {
-  const g = heftProgress(h);
+function heftProgressHTML(g) {
   const bar = (done, all) => `<span class="bh-bar"><i style="width:${all ? (100 * done) / all : 0}%"></i></span>`;
   return `<span class="bh-prog"><span>Wochen</span>${bar(g.weeksDone, g.weeks)}<span class="num">${g.weeksDone}/${g.weeks}</span></span>
     <span class="bh-prog"><span>Monate</span>${bar(g.monthsDone, g.months)}<span class="num">${g.monthsDone}/${g.months}</span></span>`;
@@ -270,10 +269,11 @@ function heftListHTML() {
       <p><b>Noch kein Berichtsheft</b></p>
     </div>${add}`;
   return `${bhInfoCardHTML()}<div class="bh-rows">${list
-    .map(
-      (h) => `<button class="card bh-row" data-bh="open" data-id="${h.id}">${heftCoverHTML(h)}
-      <span class="bh-info"><b>${h.jahr}. Ausbildungsjahr</b><span class="muted">${fmtYearSpan(h)}</span>${heftProgressHTML(h)}</span></button>`
-    )
+    .map((h) => {
+      const g = heftProgress(h);
+      return `<button class="card bh-row" data-bh="open" data-id="${h.id}">${heftCoverHTML(h, g)}
+      <span class="bh-info"><b>${h.jahr}. Ausbildungsjahr</b><span class="muted">${fmtYearSpan(h)}</span>${heftProgressHTML(g)}</span></button>`;
+    })
     .join('')}</div>${add}`;
 }
 
@@ -511,7 +511,7 @@ function weekFromSheets() {
       const date = addDays(parseDate(key), i);
       const r = sheetDayReport(sheetDayFor(date), date);
       if (!r) continue;
-      w.days[i] = normDay({ text: r.lines.join('\n'), hours: r.hours });
+      w.days[i] = { lines: capLines(r.lines.map((t) => ({ t, h: '' }))), hours: r.hours };
       n++;
     }
     bhAutoSign(w, weekFilled(w));
@@ -610,9 +610,10 @@ function withSignature(role, then) {
     then();
   });
 }
-/** Automatische Azubi-Unterschrift: geschriebener Bericht trägt sie mit dem Tag der letzten Änderung, leerer verliert sie */
+/** Automatische Azubi-Unterschrift: geschriebener Bericht trägt sie mit dem Tag der letzten Änderung, leerer verliert sie.
+ *  Nach der Abzeichnung des Ausbilders bleibt sie, wie sie ist (sonst stünde das Azubi-Datum nach dem des Ausbilders). */
 function bhAutoSign(e, filled) {
-  if (!e || !bh.autoSign || !bh.sigs.azubi) return;
+  if (!e || !bh.autoSign || !bh.sigs.azubi || e.signed?.ausbilder) return;
   if (filled) e.signed = { ...e.signed, azubi: isoDate(new Date()) };
   else if (e.signed?.azubi) delete e.signed.azubi;
 }
@@ -663,8 +664,9 @@ const BH_PROFILE_FIELDS = [
 
 function renderBhInfo() {
   const p = bh.profile;
-  // Name aus den Einstellungen vorschlagen („Max Muster“ → Vorname Max, Name Muster)
-  if (!p.name && !p.vorname && (settings.name || '').trim()) {
+  // Name aus den Einstellungen vorschlagen („Max Muster“ → Vorname Max, Name Muster) – nur solange beide nie eingetragen
+  // waren; selbst geleerte Felder bleiben leer
+  if (p.name == null && p.vorname == null && (settings.name || '').trim()) {
     const parts = settings.name.trim().split(/\s+/);
     p.name = parts.pop();
     p.vorname = parts.join(' ');
@@ -886,6 +888,7 @@ document.addEventListener('click', (e) => {
       confirmDialog('Bild entfernen?', '', 'Entfernen', () => {
         bhDeleteImage(p.img.id);
         delete p.img;
+        bhAutoSign(mo, monthFilled(mo));
         saveBh();
         renderBhMonth(bhEntry.h, bhEntry.key);
       }, true);
@@ -952,6 +955,7 @@ document.addEventListener('change', async (e) => {
       if (t.dataset.bhHours != null) d.hours = t.value;
       else d.lines[Number(t.dataset.k)].h = t.value;
       saveBh();
+      updatePdfThumb();
     }
   } else if (t.dataset.bhAuto != null) {
     bh.autoSign = t.checked;

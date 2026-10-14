@@ -38,6 +38,12 @@ class BhPdf {
       s = Math.max(5, (s * w) / tw);
       tw = measureText(t, s, bold);
     }
+    // passt auch klein nicht: kürzen statt über das Feld hinaus zu schreiben
+    if (tw > w) {
+      while (t.length > 1 && measureText(`${t}…`, s, bold) > w) t = t.slice(0, -1);
+      t = `${t.trimEnd()}…`;
+      tw = measureText(t, s, bold);
+    }
     const x = center ? x1 + (x2 - x1 - tw) / 2 : x1 + 2;
     this.text(t, x, y1 + (y2 - y1 - s * 0.7) / 2, s, bold);
   }
@@ -172,6 +178,9 @@ function wrapText(text, width, size, bold = false) {
 
 // ───────── Seiten des Berichtshefts ─────────
 
+/** „Name, Vorname“ wie auf Deckblatt und Vorblatt */
+const bhFullName = (p) => [p.name, p.vorname].filter(Boolean).join(', ');
+
 const bhField = (list, name) => list.find((f) => f.n === name);
 /** Felder einer Spalte (gleiches x) von oben nach unten */
 const bhColumn = (list, x) => list.filter((f) => Math.abs(f.r[0] - x) < 1).sort((a, b) => b.r[1] - a.r[1]);
@@ -181,7 +190,7 @@ const BH_SIG_COLS = [[42, 196], [201, 369], [374, 553]];
 function bhDeckblatt(doc, monthly, p) {
   const F = monthly ? BH_FIELDS.deckM : BH_FIELDS.deck;
   doc.page(monthly ? 'deckM' : 'deckW');
-  doc.field(bhField(F, 'Textfeld 4'), [p.name, p.vorname].filter(Boolean).join(', '));
+  doc.field(bhField(F, 'Textfeld 4'), bhFullName(p));
   doc.field(bhField(F, 'Textfeld 4_2'), p.beruf);
   doc.field(bhField(F, 'Textfeld 4_3'), p.betrieb);
 }
@@ -190,7 +199,7 @@ function bhVorblatt(doc, monthly, p, heftNr) {
   const F = monthly ? BH_FIELDS.vorM : BH_FIELDS.vor;
   doc.page(monthly ? 'vorM' : 'vorW');
   const vals = {
-    'Textfeld 4_4': [p.name, p.vorname].filter(Boolean).join(', '),
+    'Textfeld 4_4': bhFullName(p),
     'Textfeld 4_13': p.geboren,
     'Textfeld 4_5': p.wohnort,
     'Textfeld 4_6': p.strasse,
@@ -236,9 +245,13 @@ function bhWeekPage(doc, w) {
   const lines = bhColumn(F, 76.2);
   const einzel = bhColumn(F, 490.2);
   const totals = F.filter((f) => f.r[0] > 520).sort((a, b) => b.r[1] - a.r[1]);
+  const width = lines[0].r[2] - lines[0].r[0] - 4;
   w.days.forEach((d, i) => {
     if (!d) return;
-    d.lines.slice(0, 5).forEach((l, k) => {
+    // Zu lange Zeilen laufen in die nächsten freien Zeilen weiter (Einzelstunden bleiben bei der ersten);
+    // reicht der Platz dafür nicht, werden sie im Feld verkleinert bzw. gekürzt
+    const rows = d.lines.flatMap((l) => wrapText(l.t, width, 8).map((t, n) => ({ t, h: n ? '' : l.h })));
+    (rows.length <= 5 ? rows : d.lines.slice(0, 5)).forEach((l, k) => {
       doc.field(lines[i * 5 + k], l.t, { size: 8 });
       doc.field(einzel[i * 5 + k], l.h, { center: true });
     });
