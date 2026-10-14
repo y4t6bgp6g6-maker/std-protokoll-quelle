@@ -38,6 +38,21 @@ async function teamRequest(method, path, body, code = team && team.code) {
 
 // ───────── Eigene Zettel hochladen ─────────
 
+/** App-Version aus dem Offline-Cache („std-protokoll-v29“), für die Admin-Seite; höchste Nummer, falls gerade zwei da sind */
+let teamAppVersion = '';
+try {
+  caches
+    .keys()
+    .then((keys) => {
+      const v = keys.filter((k) => /^std-protokoll-v\d+$/.test(k)).sort((a, b) => Number(b.split('-v')[1]) - Number(a.split('-v')[1]))[0];
+      if (v && v !== teamAppVersion) {
+        teamAppVersion = v;
+        teamQueueUpload(1000);
+      }
+    })
+    .catch(() => {});
+} catch {}
+
 /** Zettel des laufenden Monats, ohne Angaben, die nur dieses iPhone betreffen */
 function teamPayload() {
   const now = new Date();
@@ -46,6 +61,7 @@ function teamPayload() {
     token: team.token,
     name: teamFirstName(settings.name),
     month: teamMonth(now),
+    version: teamAppVersion,
     sheets: savedSheets()
       .filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1)
       .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days })),

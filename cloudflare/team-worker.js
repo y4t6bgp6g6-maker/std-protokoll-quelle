@@ -11,7 +11,7 @@
 //
 // Anfragen (Code im Header X-Team-Code):
 //   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }] }
-//   PUT    /me     ← { member, token, name, month, sheets }   eigener Eintrag
+//   PUT    /me     ← { member, token, name, month, sheets, version }   eigener Eintrag (version: App-Version für die Admin-Seite)
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
@@ -20,7 +20,7 @@
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
-//   GET    /errors → { errors: [...] }                         die letzten Fehlerberichte
+//   GET    /errors → { errors, storage, team }                die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
 //   DELETE /push   ← { endpoint }                              abmelden
 // Web Push: Secret VAPID_JWK (privater Schlüssel als JWK), öffentlicher Schlüssel steht in fehler-seite.js
@@ -33,6 +33,17 @@ const MAX_ERRORS = 30; // Fehlerberichte je Gerät und Tag
 const ERROR_DAYS = 180;
 const PUSH_GAP = 10;
 const VAPID_SUB = 'https://y4t6bgp6g6-maker.github.io/std-protokoll/';
+const STORAGE_LIMIT = 500 * 1024 * 1024; // D1 im kostenlosen Tarif: 500 MB je Datenbank
+
+/** Spalte version nachträglich anlegen (ältere Tabelle ohne sie); einmal je Worker-Instanz */
+let versionColumn = false;
+async function ensureVersionColumn(db) {
+  if (versionColumn) return;
+  try {
+    await db.exec('ALTER TABLE members ADD COLUMN version TEXT');
+  } catch {}
+  versionColumn = true;
+}
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -229,8 +240,23 @@ export default {
         }
         if (path === '/errors' && req.method === 'GET') {
           await db.exec('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)');
+          await ensureVersionColumn(db);
           const { results } = await db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50').all();
-          return json({ errors: results }, 200, h);
+          // Speicher: Größe der ganzen Datenbank (meta.size_after) und Bytes je Inhalt; der Rest ist die Datenbank selbst
+          const bytes = (cols) => cols.map((c) => `COALESCE(LENGTH(CAST(${c} AS BLOB)), 0)`).join(' + ');
+          const size = await db
+            .prepare(
+              `SELECT (SELECT COALESCE(SUM(${bytes(['member', 'token', 'name', 'month', 'data', 'version'])}), 0) FROM members) AS sheets, ` +
+                `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'text'])}), 0) FROM posts) AS posts, ` +
+                `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors`
+            )
+            .all();
+          const s = size.results[0];
+          const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors };
+          // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
+          const people = (await db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month).all()).results;
+          const { n: postCount } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month).first();
+          return json({ errors: results, storage, team: { month, people, posts: postCount } }, 200, h);
         }
         if (path === '/push' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);
@@ -266,12 +292,14 @@ export default {
         if (body.month !== month) return json({ error: 'month', month }, 409, h);
         if (!Array.isArray(body.sheets)) return json({ error: 'sheets' }, 400, h);
         const name = String(body.name ?? '').slice(0, 80);
+        const version = String(body.version ?? '').slice(0, 40) || null;
+        await ensureVersionColumn(db);
         await db
           .prepare(
-            'INSERT INTO members (member, token, name, month, data, updated) VALUES (?, ?, ?, ?, ?, ?) ' +
-              'ON CONFLICT(member) DO UPDATE SET name = excluded.name, month = excluded.month, data = excluded.data, updated = excluded.updated'
+            'INSERT INTO members (member, token, name, month, data, updated, version) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+              'ON CONFLICT(member) DO UPDATE SET name = excluded.name, month = excluded.month, data = excluded.data, updated = excluded.updated, version = excluded.version'
           )
-          .bind(body.member, token, name, month, JSON.stringify(body.sheets), Date.now())
+          .bind(body.member, token, name, month, JSON.stringify(body.sheets), Date.now(), version)
           .run();
         return json({ ok: true }, 200, h);
       }

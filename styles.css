@@ -1852,7 +1852,15 @@ a.s-row:active { background: var(--fill); }
 }
 
 /* Fehlerberichte (nur Admin) */
-.fb-push { display: flex; align-items: center; justify-content: space-between; margin: 0 16px; padding: 14px 16px; }
+.fb-push, .fb-row { display: flex; align-items: center; justify-content: space-between; margin: 0 16px; padding: 14px 16px; }
+.fb-row { margin-top: 16px; }
+.fb-ping { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.fb-ping i { width: 9px; height: 9px; border-radius: 50%; }
+.fb-count { display: flex; gap: 16px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
+.fb-count b { color: var(--text); font-size: 17px; margin-right: 3px; }
+.fb-person { display: grid; grid-template-columns: 1fr auto 92px; gap: 10px; padding: 8px 0 0; font-size: 14px; border-top: 0.5px solid var(--sep); margin-top: 8px; }
+.fb-person span:last-child { text-align: right; }
+.fb-old { color: var(--warning); font-weight: 600; }
 .fb-list { margin: 16px 16px 0; display: grid; gap: 10px; }
 .fb-item { padding: 12px 14px; }
 .fb-h { display: flex; justify-content: space-between; gap: 8px; }
@@ -1860,3 +1868,11 @@ a.s-row:active { background: var(--fill); }
 .fb-msg { margin: 4px 0 2px; overflow-wrap: anywhere; }
 .fb-stack summary { color: var(--accent); font-size: 13px; margin-top: 6px; }
 .fb-stack pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); margin: 6px 0 0; }
+.fb-store { margin: 16px 16px 0; padding: 14px 16px; }
+.fb-store-h { display: flex; justify-content: space-between; gap: 8px; }
+.fb-bar { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--fill); margin-top: 8px; }
+.fb-bar i { display: block; height: 100%; }
+.fb-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; margin-top: 12px; font-size: 13px; }
+.fb-legend span { display: flex; align-items: center; gap: 6px; }
+.fb-legend i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.fb-legend b { margin-left: auto; font-weight: 500; color: var(--muted); }

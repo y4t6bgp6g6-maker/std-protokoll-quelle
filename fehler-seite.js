@@ -20,8 +20,12 @@ const saveAdmin = () => {
   } catch {}
 };
 
-/** Zuletzt geladene Berichte (null = noch nicht geladen) */
+/** Zuletzt geladene Berichte (null = noch nicht geladen) und Speicherbelegung des Servers */
 let adminErrors = null;
+let adminStorage = null;
+/** Team diesen Monat ({ month, people: [{ name, version, updated, sheets }], posts }) und Antwortzeit des Servers in ms */
+let adminTeam = null;
+let adminPing = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -84,7 +88,7 @@ function renderFehler() {
       <span class="nav-title"></span>
       <span class="nav-btn"></span>
     </header>
-    <h1 class="large-title">Fehlerberichte</h1>`;
+    <h1 class="large-title">Server</h1>`;
   const push = admin.push && adminPushPossible() && Notification.permission === 'granted';
   const list =
     adminErrors == null
@@ -107,12 +111,73 @@ function renderFehler() {
       <button class="link-btn" data-fb="${push ? 'push-off' : 'push-on'}" ${adminBusy ? 'disabled' : ''}>${push ? 'Ausschalten' : 'Einschalten'}</button>
     </div>
     ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
+    ${adminServerHTML()}
+    ${adminStorageHTML(adminStorage)}
+    ${adminTeamHTML(adminTeam)}
+    <h2 class="section-title">Fehlerberichte</h2>
     <div class="fb-list">${list}</div>`;
+}
+
+/** Antwortzeit beim letzten Laden: grün bis 400 ms, gelb bis 1,5 s, sonst rot */
+function adminServerHTML() {
+  if (adminPing == null) return '';
+  const c = adminPing <= 400 ? 'var(--success)' : adminPing <= 1500 ? 'var(--warning)' : 'var(--danger)';
+  return `<div class="card fb-row"><span>Antwortzeit</span><span class="fb-ping"><i style="background:${c}"></i>${adminPing.toLocaleString('de-DE')} ms</span></div>`;
+}
+
+/** Nummer aus „std-protokoll-v29“ (0 = unbekannt) */
+const adminVer = (v) => Number(String(v || '').split('-v')[1]) || 0;
+
+/** Team diesen Monat: Zahlen, Tag der Löschung, je Person App-Version (veraltete gelb) und letzter Upload */
+function adminTeamHTML(tm) {
+  if (!tm) return '';
+  const people = tm.people || [];
+  const sheets = people.reduce((n, p) => n + (p.sheets || 0), 0);
+  const newest = Math.max(adminVer(teamAppVersion), ...people.map((p) => adminVer(p.version)));
+  const [y, m] = String(tm.month).split('-').map(Number);
+  const cleanup = y && m ? fmtDayMonth(new Date(y, m, 1)) : '';
+  const rows = people
+    .map((p) => {
+      const v = adminVer(p.version);
+      return `<div class="fb-person"><b>${escapeHtml(p.name || '?')}</b><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
+    })
+    .join('');
+  return `<div class="card fb-store">
+      <div class="fb-store-h"><span>Team diesen Monat</span><span class="muted">Löschung am ${cleanup}</span></div>
+      <div class="fb-count"><span><b>${people.length}</b> ${people.length === 1 ? 'Person' : 'Personen'}</span><span><b>${sheets}</b> Zettel</span><span><b>${tm.posts || 0}</b> ${tm.posts === 1 ? 'Nachricht' : 'Nachrichten'}</span></div>
+      ${rows}
+    </div>`;
+}
+
+const adminBytes = (n) =>
+  n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toLocaleString('de-DE', { maximumFractionDigits: n < 10240 ? 1 : 0 })} KB` : `${(n / 1048576).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB`;
+
+/** Speicher des Servers: wie voll, und was ihn belegt (Zettel, Teammeeting, Fehlerberichte, Rest = Datenbank selbst) */
+function adminStorageHTML(s) {
+  if (!s || !s.total) return '';
+  const parts = [
+    ['Zettel', s.sheets, 'var(--accent)'],
+    ['Teammeeting', s.posts, 'var(--success)'],
+    ['Fehlerberichte', s.errors, 'var(--danger)'],
+    ['Datenbank', Math.max(0, s.total - s.sheets - s.posts - s.errors), 'var(--muted)'],
+  ];
+  const legend = `<div class="fb-legend">${parts.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n}<b>${adminBytes(v)}</b></span>`).join('')}</div>`;
+  // Balken bis zum Limit; jeder belegte Teil mindestens 3 px breit, damit man ihn sieht
+  return `<div class="card fb-store">
+      <div class="fb-store-h"><span>Speicher</span><span class="muted">${adminBytes(s.total)} von ${adminBytes(s.limit)}</span></div>
+      <div class="fb-bar">${parts.map(([, v, c]) => (v ? `<i style="width:max(3px, ${(v / s.limit) * 100}%);background:${c}"></i>` : '')).join('')}</div>
+      ${legend}
+    </div>`;
 }
 
 async function adminLoad() {
   try {
-    adminErrors = (await adminRequest('GET', '/errors')).errors || [];
+    const t0 = performance.now();
+    const data = await adminRequest('GET', '/errors');
+    adminPing = Math.round(performance.now() - t0);
+    adminErrors = data.errors || [];
+    adminStorage = data.storage || null;
+    adminTeam = data.team || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
