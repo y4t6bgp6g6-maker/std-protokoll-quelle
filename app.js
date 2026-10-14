@@ -1887,6 +1887,7 @@ function route() {
     if (!editorSaved || editorSaved.id !== id || prevView !== 'editor') editorSaved = editorSnapshot(findSheet(id));
     renderEditor(id);
     fetchReports();
+    teamLoadForEditor();
     syncNav();
     window.scrollTo(0, 0);
   } else if (/^#\/einstellungen(\/[a-z]+)?$/.test(hash)) {
@@ -2574,7 +2575,7 @@ function dayHTML(s, i) {
   const day = s.days[i];
   const date = sheetDate(s, i);
   const head = `<div class="day-head">
-      <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}</div>
+      <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}${teamDayChipHTML(s, i)}</div>
       ${i < 5 ? `<div class="day-actions">
         <button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>
       </div>` : ''}
@@ -2604,7 +2605,7 @@ function dayHTML(s, i) {
           : `<button class="link-btn expand-btn" data-act="expand">${ICON.plus} Arbeit eintragen (z. B. Notdienst)</button>`;
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
-        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
+        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${teamDayChipHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
         ${i < 5
           ? `<button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))} ▾</button>`
           : `<span class="chip-btn status-btn set status-tag">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))}</span>`}
@@ -5502,6 +5503,11 @@ document.addEventListener('click', (e) => {
     case 'report':
       pickReport(el);
       break;
+    case 'team-day': {
+      const { s, dayIndex } = rowContext(el);
+      teamDayWindow(isoDate(sheetDate(s, dayIndex)));
+      break;
+    }
     case 'reports-open':
       location.hash = '#/arbeitsscheine';
       break;

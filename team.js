@@ -677,8 +677,112 @@ function teamRefreshView() {
     list.innerHTML = teamPostsHTML();
     teamMarkSeen();
   } else if (currentView === 'team') renderTeamBody();
+  teamChipsRefresh();
   const pm = location.hash.match(/^#\/team\/([^/]+)\/(\d{4}-\d{2}-\d{2})$/);
   if (pm && currentView === 'teamSheet') renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
+}
+
+// ───────── Im Zettel: Kapsel je Tag mit den Einträgen der Kollegen (Fenster, keine eigene Seite) ─────────
+
+/** Tag eines Kollegen zu einem Datum (nur Zettel des laufenden Monats liegen auf dem Server) */
+function teamDayOf(m, iso) {
+  for (const s of m.sheets || []) {
+    const i = Math.round((parseDate(iso) - parseDate(s.weekStart)) / 86400000);
+    if (i >= 0 && i < 7 && sheetIsActive(s, i)) return { s, i, d: s.days[i] };
+  }
+  return null;
+}
+/** Hat jemand zu dem Tag etwas geschrieben? Arbeit oder eine Tagesart wie Urlaub; ein von selbst eingetragener Feiertag zählt nicht */
+const teamDayWritten = (d) => !!d && (teamDayRows(d).length > 0 || (!!d.status && d.status !== 'feiertag'));
+/** Kollegen mit einem Eintrag an diesem Tag */
+const teamOnDay = (iso) => (team ? teamMembers().filter((m) => teamDayWritten(teamDayOf(m, iso)?.d)) : []);
+
+function teamDayChipHTML(s, i) {
+  if (!team) return '';
+  const people = teamOnDay(isoDate(sheetDate(s, i)));
+  if (!people.length) return '';
+  return `<button class="ws-chip tm-chip" data-act="team-day" aria-label="Einträge im Team">${ICON.tabTeam}<b>${people.length}</b></button>`;
+}
+
+/** Eine Zeile je Kollege: Baustelle bzw. Tagesart und Stunden */
+function teamDaySummary(t) {
+  const { d, i } = t;
+  if (teamDayOff(d)) return { text: DAY_STATUS_SHORT[d.status] || '', hours: '' };
+  const rows = teamDayRows(d);
+  const sites = [...new Set(rows.map((r) => r.site.trim()).filter(Boolean))];
+  return { text: sites.join(', ') || rows.map((r) => r.work).filter(Boolean).join(', '), hours: fmtH(dayTotal(d, i)) };
+}
+
+/** Fenster: Liste der Kollegen mit Eintrag an dem Tag; Antippen zeigt im selben Fenster ihre Einträge */
+function teamDayWindow(iso) {
+  const date = parseDate(iso);
+  const title = `${WEEKDAYS[(date.getDay() + 6) % 7]}, ${fmtDayMonth(date)}`;
+  const modal = openModal(`<div class="tm-dw"></div>`, 'sheet tm-dw-sheet');
+  const body = modal.querySelector('.tm-dw');
+  const head = (left, center) => `<div class="modal-head">${left}<b>${center}</b><button class="modal-btn strong tm-dw-close" data-m="close">Fertig</button></div>`;
+  const list = () => {
+    const people = teamOnDay(iso);
+    body.innerHTML = `${head('<span></span>', title)}
+      <div class="tm-dw-body"><div class="card list">${people
+        .map((m) => {
+          const sum = teamDaySummary(teamDayOf(m, iso));
+          return `<button class="list-row tm-dw-person" data-p="${escapeHtml(m.member)}">${teamAvatar(m, 34)}
+            <span class="list-main"><span class="list-title">${escapeHtml(m.name || '?')}</span>${sum.text ? `<span class="list-sub">${escapeHtml(sum.text)}</span>` : ''}</span>
+            ${sum.hours ? `<span class="tm-dw-h">${sum.hours}</span>` : ''}<span class="list-chevron">${ICON.chevronRight}</span></button>`;
+        })
+        .join('')}</div></div>`;
+  };
+  const person = (id) => {
+    const m = teamMembers().find((x) => x.member === id);
+    const t = m && teamDayOf(m, iso);
+    if (!t) return list();
+    const { d, i } = t;
+    const time = (v) => (v == null ? '–' : fmtTime(v));
+    const rows = teamDayRows(d);
+    const status = d.status ? `<span class="tm-w-st status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>` : '';
+    const main = teamDayOff(d)
+      ? status
+      : `${status}${rows
+          .map((r) => `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(r.work)}</span></span></div>`)
+          .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
+    body.innerHTML = `${head(`<button class="modal-btn tm-dw-back" data-m="back">${ICON.back}</button>`, title)}
+      <div class="tm-dw-body">
+        <div class="tm-dw-who">${teamAvatar(m, 36)}<b>${escapeHtml(m.name || '?')}</b></div>
+        <div class="card tm-dw-day">${main}</div>
+      </div>`;
+  };
+  list();
+  modal.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-p],[data-m]');
+    if (!b) return;
+    if (b.dataset.p) person(b.dataset.p);
+    else if (b.dataset.m === 'back') list();
+    else closeModal();
+  });
+}
+
+/** Kapseln im offenen Zettel nach dem Laden auffrischen, ohne die Eingabefelder neu zu zeichnen */
+function teamChipsRefresh() {
+  if (currentView !== 'editor') return;
+  const s = currentSheet();
+  if (!s) return;
+  for (const el of document.querySelectorAll('#days .day')) {
+    const i = Number(el.dataset.day);
+    const where = el.querySelector('.day-when, .status-day-line');
+    if (!where) continue;
+    const html = teamDayChipHTML(s, i);
+    const old = where.querySelector('.tm-chip');
+    if (old && old.outerHTML === html) continue;
+    old?.remove();
+    if (html) where.insertAdjacentHTML('beforeend', html);
+  }
+}
+
+/** Im Zettel: Kollegen-Einträge höchstens jede Minute neu holen */
+function teamLoadForEditor() {
+  if (!team) return;
+  if (team.cache && team.cache.at && Date.now() - team.cache.at < 60000) return;
+  teamLoad();
 }
 
 // ───────── Ereignisse ─────────
