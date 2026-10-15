@@ -189,6 +189,30 @@ const emptyMonth = () => ({ taet: { text: '' }, schule: { text: '' }, signed: {}
 const dayFilled = (d) => !!d?.lines?.some((l) => l.t.trim());
 const weekFilled = (w) => !!w && w.days?.some(dayFilled);
 const monthFilled = (m) => !!m && ['taet', 'schule'].some((k) => (m[k]?.text || '').trim() || m[k]?.img);
+/** Tag eines Wochenberichts fertig: eine Zeile mit mindestens 3 Wörtern oder 10 Zeichen und Gesamtstunden.
+ *  Andere Tagesarten (Zeile beginnt mit Urlaub, Krank, Frei, Feiertag) und gesetzliche Feiertage brauchen beides nicht. */
+function dayComplete(d, date) {
+  if (holidayName(date)) return true;
+  const texts = (d?.lines || []).map((l) => l.t.trim()).filter(Boolean);
+  const types = Object.values(DAY_STATUS_SHORT).map((t) => t.toLowerCase());
+  if (texts.some((t) => types.includes(t.split(/[\s,.(]+/)[0].toLowerCase()))) return true;
+  return texts.some((t) => t.length >= 10 || t.split(/\s+/).length >= 3) && parseNum(d.hours) > 0;
+}
+/** Woche fertig: jeder Werktag im Heft (Samstag nur, wenn dort etwas steht) */
+function weekComplete(h, mon, w) {
+  if (!weekFilled(w)) return false;
+  const mo = parseDate(mon);
+  return weekDays(h, mon)
+    .filter((i) => i < 5 || dayFilled(w.days[5]))
+    .every((i) => dayComplete(w.days[i], addDays(mo, i)));
+}
+/** Stand einer Woche: ein Haken erst, wenn sie fertig ist und der Azubi unterschrieben hat */
+function weekState(h, mon) {
+  const w = h.weeks[mon];
+  if (!weekFilled(w)) return 'leer';
+  if (w.signed?.ausbilder) return 'fertig';
+  return w.signed?.azubi && weekComplete(h, mon, w) ? 'azubi' : 'offen';
+}
 /** Stand einer Seite: leer, offen (geschrieben), azubi (vom Azubi abgezeichnet), fertig (vom Ausbilder abgezeichnet) */
 function pageState(e, filled) {
   if (!filled) return 'leer';
@@ -341,6 +365,7 @@ function stateHTML(state) {
 }
 
 function renderHeft(h) {
+  bhAutoSignAll();
   const today = isoDate(new Date());
   const weeks = heftWeeks(h);
   // Seiten bis heute (und spätere, falls schon etwas eingetragen ist), neueste zuerst wie in der Zettel-Liste
@@ -357,7 +382,7 @@ function renderHeft(h) {
     return `<a class="list-row bh-r bh-page" href="#/heft/${h.id}/woche/${mon}">
       <span class="list-kw">Nr. ${nr}</span>
       <span class="list-main"><span class="list-title">${fmtDayMonth(a)} – ${fmtDayMonth(b)}</span></span>
-      ${stateHTML(pageState(w, weekFilled(w)))}
+      ${stateHTML(weekState(h, mon))}
     </a>`;
   };
   const monthRow = (ym) => {
@@ -385,7 +410,7 @@ function renderHeft(h) {
         // Je Seite des Monats ein Strich in der Farbe ihres Stands
         const states = [
           ...(g.month ? [pageState(h.months[ym], monthFilled(h.months[ym]))] : []),
-          ...g.weeks.map(({ mon }) => pageState(h.weeks[mon], weekFilled(h.weeks[mon]))),
+          ...g.weeks.map(({ mon }) => weekState(h, mon)),
         ];
         return `<h2 class="section-title month-head"><span>${monthName(ym)}</span><span class="bh-segs">${states.map((st) => `<i class="${st}"></i>`).join('')}</span></h2>
         <div class="card list">${g.month ? monthRow(ym) : ''}${g.weeks.slice().reverse().map(weekRow).join('')}</div>`;
@@ -397,7 +422,7 @@ function renderHeft(h) {
 function heftMoreMenu() {
   const h = currentHeft();
   const open = [
-    ...heftWeeks(h).filter((k) => h.weeks[k]?.signed?.azubi && !h.weeks[k].signed.ausbilder).map((k) => h.weeks[k]),
+    ...heftWeeks(h).filter((k) => weekState(h, k) === 'azubi').map((k) => h.weeks[k]),
     ...heftMonths(h).filter((k) => h.months[k]?.signed?.azubi && !h.months[k].signed.ausbilder).map((k) => h.months[k]),
   ];
   actionSheet([
@@ -440,6 +465,7 @@ function lineHTML(i, k, l, d) {
 const addLineHTML = (i) => `<button class="bh-addline" data-bh="add-line" data-i="${i}">${ICON.plus} Zeile</button>`;
 
 function renderBhWeek(h, mon) {
+  if (bhEntry?.key !== mon) bhUnlocked = null;
   const weeks = heftWeeks(h);
   const nr = weeks.indexOf(mon) + 1;
   if (!nr) return location.replace(`#/heft/${h.id}`);
@@ -449,6 +475,8 @@ function renderBhWeek(h, mon) {
   const [a, b] = weekSpan(h, mon, w);
   const days = weekDays(h, mon);
   const hasSheet = days.some((i) => sheetDayFor(addDays(parseDate(mon), i)));
+  // vom Ausbilder abgezeichnet: nur lesen, bis der Azubi die Warnung bestätigt
+  const locked = !!w.signed?.ausbilder && bhUnlocked !== mon;
   const dayCard = (i) => {
     const d = w.days[i];
     const date = addDays(parseDate(mon), i);
@@ -470,16 +498,50 @@ function renderBhWeek(h, mon) {
     </header>
     <h1 class="large-title">Woche Nr. ${nr}</h1>
     <p class="bh-sub muted">${fmtDayMonth(a)} – ${fmtShort(b)} · KW ${isoWeek(parseDate(mon))}</p>
-    ${hasSheet ? `<button class="bh-add bh-import" data-bh="from-sheets">${ICON.doc}<span>Aus Stundenzettel übernehmen</span></button>` : ''}
-    <div class="bh-days">${days.map(dayCard).join('')}</div>
+    <div class="${locked ? 'bh-locked' : ''}">
+      ${hasSheet ? `<button class="bh-add bh-import" data-bh="from-sheets">${ICON.doc}<span>Aus Stundenzettel übernehmen</span></button>` : ''}
+      <div class="bh-days">${days.map(dayCard).join('')}</div>
+    </div>
     ${signCardHTML(w, b)}
     ${pdfThumbHTML('Bericht')}`;
   bhEntry = { kind: 'woche', h, key: mon };
+  if (locked) app.querySelectorAll('.bh-locked input').forEach((x) => (x.readOnly = true));
   fitRowTexts();
   updatePdfThumb(true);
 }
 let bhSatOpen = false;
 let bhEntry = null; // { kind, h, key } der geöffneten Seite
+let bhUnlocked = null; // Montag der abgezeichneten Woche, die der Azubi trotzdem ändern will
+
+/** Abgezeichnete Woche antippen: warnen; nach der Bestätigung lässt sie sich ändern */
+function bhUnlockAsk() {
+  const { h, key } = bhEntry;
+  confirmDialog('Woche ist abgezeichnet', 'Eine Änderung entfernt die Unterschrift des Ausbilders. Er muss dann noch einmal unterschreiben.', 'Trotzdem ändern', () => {
+    bhUnlocked = key;
+    renderBhWeek(h, key);
+  });
+}
+/** Erste Änderung an einer abgezeichneten Woche: Unterschrift des Ausbilders fällt weg */
+function bhBreakSeal(w) {
+  if (!w.signed?.ausbilder) return;
+  delete w.signed.ausbilder;
+  bhRefreshSigns();
+}
+/** Woche geändert: automatische Unterschrift nach dem neuen Stand, Abzeichnen-Karte aktualisieren */
+function bhWeekChanged(w) {
+  const before = JSON.stringify(w.signed || {});
+  bhAutoSign(w, weekComplete(bhEntry.h, bhEntry.key, w));
+  if (JSON.stringify(w.signed || {}) !== before) bhRefreshSigns();
+}
+/** Abzeichnen-Karte neu zeichnen, ohne die Seite (und den Fokus im Feld) zu verlieren */
+function bhRefreshSigns() {
+  const el = document.querySelector('.bh-signs');
+  if (!el || bhEntry?.kind !== 'woche') return;
+  const w = bhCurrent(false);
+  const tmp = document.createElement('div');
+  tmp.innerHTML = signCardHTML(w, weekSpan(bhEntry.h, bhEntry.key, w)[1]);
+  el.replaceWith(tmp.querySelector('.bh-signs'));
+}
 
 /** Eintrag der geöffneten Seite (legt ihn beim ersten Schreiben an) */
 function bhCurrent(create = true) {
@@ -514,7 +576,8 @@ function weekFromSheets() {
       w.days[i] = { lines: capLines(r.lines.map((t) => ({ t, h: '' }))), hours: r.hours };
       n++;
     }
-    bhAutoSign(w, weekFilled(w));
+    if (n) bhBreakSeal(w);
+    bhAutoSign(w, weekComplete(h, key, w));
     saveBh();
     renderBhWeek(h, key);
     toast(n ? `${n} ${n === 1 ? 'Tag' : 'Tage'} übernommen` : 'Im Stundenzettel steht für diese Woche nichts');
@@ -610,12 +673,31 @@ function withSignature(role, then) {
     then();
   });
 }
-/** Automatische Azubi-Unterschrift: geschriebener Bericht trägt sie mit dem Tag der letzten Änderung, leerer verliert sie.
+/** Automatische Azubi-Unterschrift: fertiger Bericht (Woche: jeder Tag ausgefüllt, siehe weekComplete) trägt sie mit dem Tag
+ *  der letzten Änderung, unfertiger verliert sie.
  *  Nach der Abzeichnung des Ausbilders bleibt sie, wie sie ist (sonst stünde das Azubi-Datum nach dem des Ausbilders). */
 function bhAutoSign(e, filled) {
   if (!e || !bh.autoSign || !bh.sigs.azubi || e.signed?.ausbilder) return;
   if (filled) e.signed = { ...e.signed, azubi: isoDate(new Date()) };
   else if (e.signed?.azubi) delete e.signed.azubi;
+}
+
+/** Automatische Unterschrift für alle Seiten nach den Regeln von heute (einmal je Start, ältere Wochen bekamen sie schon
+ *  beim ersten Wort) bzw. beim Einschalten des Schalters */
+let bhAutoChecked = false;
+function bhAutoSignAll(force = false) {
+  if ((bhAutoChecked && !force) || !bh.autoSign) return;
+  bhAutoChecked = true;
+  let changed = false;
+  for (const h of bh.hefte) {
+    // nur fehlende ergänzen bzw. unfertigen wegnehmen; vorhandene behalten ihr Datum
+    for (const [mon, w] of Object.entries(h.weeks)) {
+      const done = weekComplete(h, mon, w);
+      if (done !== !!w.signed?.azubi && !w.signed?.ausbilder) bhAutoSign(w, done), (changed = true);
+    }
+    for (const m of Object.values(h.months)) if (monthFilled(m) && !m.signed?.azubi) bhAutoSign(m, true), (changed = true);
+  }
+  if (changed) saveBh();
 }
 
 function signTap(role) {
@@ -638,6 +720,7 @@ function signTap(role) {
     return;
   }
   if (!filled) return toast('Erst den Bericht schreiben');
+  if (kind === 'woche' && !weekComplete(h, key, e)) return toast('Erst jeden Tag ausfüllen');
   withSignature(role, () => {
     const cur = bhCurrent();
     cur.signed = { ...cur.signed, [role]: isoDate(new Date()) };
@@ -831,6 +914,19 @@ async function bhPdf(page) {
 
 // ───────── Ereignisse ─────────
 
+// Abgezeichnete Woche: Antippen warnt erst (Felder sind nur lesbar)
+document.addEventListener(
+  'click',
+  (e) => {
+    if (!e.target.closest?.('.bh-locked')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    document.activeElement?.blur();
+    bhUnlockAsk();
+  },
+  true
+);
+
 document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-bh]');
   if (!el || layer.contains(el)) return;
@@ -908,12 +1004,16 @@ document.addEventListener('input', (e) => {
     const row = t.closest('.bh-line');
     row.querySelector('.bh-lh').classList.toggle('miss', lineMissing(d.lines[k], d));
     row.querySelector('.bh-lt').classList.toggle('long', lineLong(d.lines[k].t));
-    bhAutoSign(w, weekFilled(w));
+    bhBreakSeal(w);
+    bhWeekChanged(w);
     saveBh();
     updatePdfThumb();
   } else if (t.dataset.bhHours != null) {
-    const d = bhCurrent().days[Number(t.dataset.bhHours)];
+    const w = bhCurrent();
+    const d = w.days[Number(t.dataset.bhHours)];
     d.hours = t.value;
+    bhBreakSeal(w);
+    bhWeekChanged(w);
     t.closest('.bh-day').querySelectorAll('.bh-lh').forEach((x) => x.classList.toggle('miss', !!d.lines[Number(x.dataset.k)] && lineMissing(d.lines[Number(x.dataset.k)], d)));
     saveBh();
     updatePdfThumb();
@@ -959,12 +1059,8 @@ document.addEventListener('change', async (e) => {
     }
   } else if (t.dataset.bhAuto != null) {
     bh.autoSign = t.checked;
-    // beim Einschalten bekommen alle schon geschriebenen Berichte ohne Azubi-Unterschrift sie sofort
-    if (t.checked)
-      for (const h of bh.hefte) {
-        Object.values(h.weeks).forEach((w) => weekFilled(w) && !w.signed?.azubi && bhAutoSign(w, true));
-        Object.values(h.months).forEach((m) => monthFilled(m) && !m.signed?.azubi && bhAutoSign(m, true));
-      }
+    // beim Einschalten bekommen alle fertigen Berichte ohne Azubi-Unterschrift sie sofort
+    bhAutoSignAll(true);
     saveBh();
   } else if (t.dataset.bhImg != null && t.files?.[0]) {
     const k = t.dataset.bhImg;
