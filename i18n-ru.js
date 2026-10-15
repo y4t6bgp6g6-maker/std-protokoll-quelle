@@ -334,7 +334,7 @@ if (LANG === 'ru') {
     exact: {
       'Der Vergleich zählt nur vollständige Monate mit Stundenzetteln und Lohnabrechnung. Unter „Nach Stundenzetteln“ zählen Überstunden und Lohn nur vollständige Monate.':
         'Сравнение учитывает только полные месяцы с табелями и расчётным листом. В разделе «По табелям» переработка и зарплата учитываются только за полные месяцы.',
-      Korrektur: 'Исправление', 'Korrektur an': 'исправление вкл.', 'Korrektur aus': 'исправление выкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
+      Korrektur: 'Исправление', Unterschrift: 'Подпись', 'Korrektur an': 'исправление вкл.', 'Korrektur aus': 'исправление выкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
       Seite: 'Страница', Seiten: 'Страницы', 'Mit den Stunden der Abrechnung rechnet die App dasselbe Netto.': 'С часами из расчёта приложение получает то же нетто.',
       netto: 'нетто', davon: 'из них', 'von Hand': 'вручную', verschlüsselt: 'зашифровано', '5 oder mehr': '5 или больше',
       'Sicherung einlesen …': 'Загрузить резервную копию …', 'Ur.': 'Отп.', 'Kr.': 'Бол.', 'Fe.': 'Пр.', 'Fr.': 'Вых.',
@@ -354,25 +354,22 @@ if (LANG === 'ru') {
       '. Dann': '. Затем', Bei: 'В поле', auf: 'нажмите', 'tippen.': '.', 'schreiben.': '.', 'Bereitstellungen verwalten': 'Управление развертываниями',
       '→ Stift': '→ карандаш', '. Die Adresse bleibt gleich.': '. Адрес остаётся прежним.', 'Neue Version': 'Новая версия',
     },
-    parts: { 'ohne Eintrag': 'без записи', 'liegt vor Beginn': 'раньше начала', 'Ende': 'Конец', 'Beginn': 'Начало', 'Art der Arbeit': 'Вид работ', Baustelle: 'Объект', Montag: 'Понедельник', Dienstag: 'Вторник', Mittwoch: 'Среда', Donnerstag: 'Четверг', Freitag: 'Пятница', Samstag: 'Суббота', Sonntag: 'Воскресенье' },
+    parts: { Unterschrift: 'подпись', heute: 'сегодня', verschlüsselt: 'зашифровано', 'von Hand': 'вручную', 'ohne Eintrag': 'без записи', 'liegt vor Beginn': 'раньше начала', 'Ende': 'Конец', 'Beginn': 'Начало', 'Art der Arbeit': 'Вид работ', Baustelle: 'Объект', Montag: 'Понедельник', Dienstag: 'Вторник', Mittwoch: 'Среда', Donnerstag: 'Четверг', Freitag: 'Пятница', Samstag: 'Суббота', Sonntag: 'Воскресенье' },
     patterns: [
       [/^(⚠️|ℹ️) (.+)$/, (m, i, x) => `${i} ${tr(x)}`],
       [/^Ohne Stundenzettel: (.+)$/, (m, x) => `Без табеля: ${tr(x).replace(/ und /g, ' и ')}`],
       [/^Ohne Lohnabrechnung: (.+)$/, (m, x) => `Без расчётного листа: ${tr(x).replace(/ und /g, ' и ')}`],
       [/^Unvollständig: (.+)$/, (m, x) => `Неполные: ${tr(x).replace(/ und /g, ' и ')}`],
-      [/^Gesamt (.+)$/, 'Итого $1'],
+      [/^Gesamt ([\d−+–].*)$/, 'Итого $1'],
       [/^Mit den Stunden der Abrechnung rechnet die App (.+) Netto anders\.$/, 'С часами из расчёта приложение получает нетто, отличающееся на $1.'],
       [/^„(.+)“ erscheint nicht mehr in der Leiste\. .*$/, '«$1» больше не появляется в подсказках. Ваши табели не изменятся. Восстановить можно в настройках.'],
       [/^Name in (\d+) Stundenzetteln?(?: und (\d+) Abrechnung(?:en)?)? geändert$/, (m, n, t) =>
         `Имя изменено в ${n} ${pl(n, 'табеле', 'табелях', 'табелях')}${t ? ` и ${t} ${pl(t, 'отчёте', 'отчётах', 'отчётах')}` : ''}`],
       [/^(\d+) (Seite|Seiten) abgezeichnet$/, (m, n) => `${n} ${pl(n, 'страница подписана', 'страницы подписаны', 'страниц подписано')}`],
       [/^Name bei (.+) auf „(.+)“ geändert$/, 'имя в $1 изменено на «$2»'],
-      [/^(.+) (fehlt|fehlen)$/, (m, a) => `нет: ${a.split(', ').map(tr).join(', ')}`],
-      // Hinweise vor dem Senden: „Montag, Zeile 2, Art der Arbeit: …“
-      [/^([^:]+?): (.+)$/, (m, a, b) => `${a.split(', ').map((x) => (/^Zeile \d+$/.test(x) ? `строка ${x.slice(6)}` : tr(x))).join(', ')}: ${tr(b)}`],
-      [/^Pause (.+)$/, 'Перерыв $1'],
-      [/^ab (.+)$/, 'от $1'],
-      [/^von (.+)$/, 'из $1'],
+      [/^Pause ([\d–].*)$/, 'Перерыв $1'],
+      [/^ab (\d.*)$/, 'от $1'],
+      [/^von (\d.*)$/, 'из $1'],
       [/^(\d+) Meldungen?$/, (m, n) => `${n} ${pl(n, 'уведомление', 'уведомления', 'уведомлений')}`],
       [/^(\d+) Arbeitsscheine?$/, (m, n) => `${n} ${pl(n, 'наряд', 'наряда', 'нарядов')}`],
       [/^(\d+) Stundenzettel gespeichert$/, (m, n) => `${n} ${pl(n, 'табель сохранён', 'табеля сохранено', 'табелей сохранено')}`],
@@ -381,6 +378,17 @@ if (LANG === 'ru') {
       [/^Anspruch (.+)$/, (m, x) => `Право ${tr(x)}`],
       [/^Lücke von (.+) bis (.+)$/, 'промежуток с $1 до $2'],
       [/^(\d\d:\d\d)–(\d\d:\d\d) und (\d\d:\d\d)–(\d\d:\d\d) überschneiden sich$/, '$1–$2 и $3–$4 пересекаются'],
+      [/^(.+) · Fehler: (.+)$/, (m, a, b) => `${tr(a)} · ошибка: ${tr(b)}`],
+      // allgemeine Muster zuletzt, damit genauere vorher greifen
+      // „Baustelle, Art der Arbeit fehlen“ – nur bekannte Feldnamen, kein Doppelpunkt (sonst greift „X: Y“)
+      [/^([^:]+) (fehlt|fehlen)$/, (m, a) => (a.split(', ').every((x) => I18N.exact.has(x)) ? `нет: ${a.split(', ').map(tr).join(', ')}` : m)],
+      // Hinweise vor dem Senden: „Montag, Zeile 2, Art der Arbeit: …“
+      // nur, wenn jeder Teil vor dem Doppelpunkt bekannt ist (Wochentag, „Zeile 2“, Feldname); sonst bleibt der Text
+      [/^([^:]+?): (.+)$/, (m, a, b) => {
+        const known = (x) => /^Zeile \d+$/.test(x) || I18N.exact.has(x);
+        if (!a.split(', ').every(known)) return m;
+        return `${a.split(', ').map((x) => (/^Zeile \d+$/.test(x) ? `строка ${x.slice(6)}` : tr(x))).join(', ')}: ${tr(b)}`;
+      }],
     ],
   });
 }

@@ -943,7 +943,7 @@ function addMonthPage(doc, h, ym) {
 function buildHeftPdf(h, kind, page = null) {
   // Kyrillisches deutsch (soweit schon übersetzt; sonst vorab anstoßen)
   pdfTranslateKick({ w: page ? (kind === 'monat' ? h.months[page] : h.weeks[page]) : h, p: bh.profile });
-  h = { ...h, weeks: deDeep(h.weeks), months: deDeep(h.months) };
+  h = { ...h, weeks: pdfDe(h.weeks), months: pdfDe(h.months) };
   const doc = new BhPdf();
   const monthly = kind === 'monat';
   const today = isoDate(new Date());

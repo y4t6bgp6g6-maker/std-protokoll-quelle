@@ -1600,8 +1600,9 @@ html.locked, html.locked body { background: #0b1d4a; }
 .s-row + .s-row { border-top: 0.5px solid var(--sep); }
 .s-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
 .s-ico svg { width: 19px; height: 19px; }
-.s-label { flex: 1; min-width: 0; }
-.s-val { color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48%; }
+/* Bezeichnung immer ganz (auch lange russische Wörter wie „Командировочные“), der Wert daneben wird notfalls gekürzt */
+.s-label { flex: 1 0 auto; max-width: 100%; }
+.s-val { flex: 0 1 auto; min-width: 0; color: var(--muted); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 48%; }
 .s-chev { display: flex; color: var(--sep); flex: none; }
 .s-chev svg { width: 16px; height: 16px; }
 a.s-row:active { background: var(--fill); }

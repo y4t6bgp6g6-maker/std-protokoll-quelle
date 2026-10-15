@@ -131,13 +131,33 @@ function aiSitesRequest(names) {
 /** Übersetzung nötig? Ins Deutsche nur Kyrillisches, ins Russische nur lateinisch Geschriebenes (Zahlen allein nie) */
 const aiTrNorm = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 1000);
 const aiTrNeeded = (t, to) => (to === 'de' ? hasCyrillic(t) : /[A-Za-zÄÖÜäöüß]/.test(t) && !hasCyrillic(t));
+/** Ein Text in Stücke, die einzeln übersetzt werden: je Zeile, lange Zeilen satzweise bis 900 Zeichen
+ *  (der Server nimmt höchstens 1000; so bleiben Zeilenumbrüche und lange Monatsberichte ganz) */
+function aiTrPieces(t) {
+  const out = [];
+  for (const line of String(t ?? '').split('\n')) {
+    let cur = '';
+    for (const s of line.match(/[^.!?]+[.!?]*\s*/g) || [line]) {
+      if (cur && (cur + s).length > 900) out.push(cur), (cur = '');
+      cur += s;
+    }
+    out.push(cur);
+  }
+  return out;
+}
 const aiTrBusy = new Set();
+/** Was die KI nicht übersetzt hat, erst nach 10 min wieder fragen (sonst bei jedem Laden des Teams erneut) */
+const aiTrFailed = new Map();
+const AI_TR_RETRY = 10 * 60000;
 /** Einträge übersetzen lassen (to: 'de' oder 'ru'), was noch nicht gemerkt ist; Ergebnis: true = neue Übersetzungen da */
 async function aiTranslate(items, to) {
   if (!aiReady()) return false;
   aiStore.tr = aiStore.tr || {};
   const store = (aiStore.tr[to] = aiStore.tr[to] || {});
-  const todo = [...new Set(items.map(aiTrNorm))].filter((t) => t && aiTrNeeded(t, to) && !(t in store) && !aiTrBusy.has(`${to}|${t}`));
+  const now = Date.now();
+  const todo = [...new Set(items.flatMap(aiTrPieces).map(aiTrNorm))].filter(
+    (t) => t && aiTrNeeded(t, to) && !(t in store) && !aiTrBusy.has(`${to}|${t}`) && !(now - (aiTrFailed.get(`${to}|${t}`) || 0) < AI_TR_RETRY)
+  );
   if (!todo.length) return false;
   todo.forEach((t) => aiTrBusy.add(`${to}|${t}`));
   let fresh = false;
@@ -148,7 +168,10 @@ async function aiTranslate(items, to) {
     }
   } catch {
   } finally {
-    todo.forEach((t) => aiTrBusy.delete(`${to}|${t}`));
+    todo.forEach((t) => {
+      aiTrBusy.delete(`${to}|${t}`);
+      if (!(t in store)) aiTrFailed.set(`${to}|${t}`, Date.now());
+    });
   }
   // Speicher begrenzen: die ältesten zuerst raus
   const keys = Object.keys(store);
@@ -156,11 +179,26 @@ async function aiTranslate(items, to) {
   if (fresh) saveAi();
   return fresh;
 }
-/** Gemerkte Übersetzung (sonst der Text selbst) */
+/** Gemerkte Übersetzung (sonst der Text selbst); zusammengesetzt aus den Stücken, nur wenn alle übersetzt sind */
 function aiTr(t, to) {
-  const k = aiTrNorm(t);
-  if (!k || !aiTrNeeded(k, to)) return t;
-  return (aiStore.tr && aiStore.tr[to] && aiStore.tr[to][k]) || t;
+  if (!t || !aiTrNeeded(String(t), to)) return t;
+  const store = (aiStore.tr && aiStore.tr[to]) || {};
+  const lines = [];
+  let line = [];
+  let missing = false;
+  const pieces = aiTrPieces(t);
+  // Stücke wieder zu Zeilen: aiTrPieces trennt Zeilen immer, Sätze nur bei langen Zeilen
+  for (const line0 of String(t).split('\n')) {
+    const n = aiTrPieces(line0).length;
+    line = pieces.splice(0, n).map((p) => {
+      const k = aiTrNorm(p);
+      if (!k || !aiTrNeeded(k, to)) return p.trim();
+      if (!store[k]) missing = true;
+      return store[k] || p.trim();
+    });
+    lines.push(line.join(' '));
+  }
+  return missing ? t : lines.join('\n');
 }
 /** Kopie mit deutschen Texten fürs PDF (Kyrillisch im PDF wäre „?“; übersetzt, soweit schon gemerkt) */
 function deDeep(v) {
@@ -182,9 +220,12 @@ function aiTranslateDeep(v, to = 'de') {
     } else if (Array.isArray(x)) x.forEach(walk);
     else if (x && typeof x === 'object') Object.values(x).forEach(walk);
   };
+  if (to === 'de' && !hasCyrillic(JSON.stringify(v))) return Promise.resolve(false);
   walk(v);
   return texts.length ? aiTranslate(texts, to) : Promise.resolve(false);
 }
+/** Für den PDF-Bau: nur kopieren/übersetzen, wenn überhaupt Kyrillisch vorkommt; sonst unverändert */
+const pdfDe = (v) => (hasCyrillic(JSON.stringify(v)) ? deDeep(v) : v);
 /** Text eines Kollegen in der eingestellten Sprache */
 const teamTr = (t) => aiTr(t, LANG);
 /** Einträge und Nachrichten der Kollegen in die eingestellte Sprache übersetzen lassen; danach neu zeichnen */
@@ -556,7 +597,7 @@ function teamPaperHTML(p, s, w, sites, marker) {
       const d = s.days[i];
       if (teamDayOff(d)) return `<i class="st-${d.status}">${day}<span><em>${DAY_STATUS_SHORT[d.status] || ''}</em></span></i>`;
       const site = sites[i];
-      const name = site ? escapeHtml(site.name) : '';
+      const name = site ? `<span translate="no">${escapeHtml(site.name)}</span>` : '';
       const mk = site && marker(i, site.id);
       return `<i>${day}<span>${mk ? `<mark style="--mk:${mk}">${name}</mark>` : name}</span></i>`;
     })
@@ -643,7 +684,7 @@ function teamSheetsHTML(members) {
           return `<span class="tm-z-slot" style="--tilt:${[-0.3, 0.2, -0.1, 0.35, -0.2, 0.15][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), marker)}</span>`;
         })
         .join('');
-      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b>${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
+      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b translate="no">${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
         <div class="tm-z-scroll"><div class="tm-z-row" data-now="${nowCol}" style="--n:${weeks.length}">${slots}</div></div></div>`;
     })
     .join('');
@@ -847,7 +888,7 @@ function renderTeamSheet(id, weekStart) {
     })
     .join('');
   app.innerHTML = `${teamNav(`${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}`)}
-    <div class="tm-w-who">${teamAvatar(m, 36)}<div><b>${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
+    <div class="tm-w-who">${teamAvatar(m, 36)}<div><b translate="no">${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
     <div class="card tm-w">${blocks}</div>`;
 }
 
@@ -929,7 +970,7 @@ function teamDayWindow(iso) {
           .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
     body.innerHTML = `${head(`<button class="modal-btn tm-dw-back" data-m="back">${ICON.back}</button>`, title)}
       <div class="tm-dw-body">
-        <div class="tm-dw-who">${teamAvatar(m, 36)}<b>${escapeHtml(m.name || '?')}</b></div>
+        <div class="tm-dw-who">${teamAvatar(m, 36)}<b translate="no">${escapeHtml(m.name || '?')}</b></div>
         <div class="card tm-dw-day">${main}</div>
       </div>`;
   };

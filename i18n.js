@@ -18,7 +18,7 @@ document.documentElement.lang = LANG;
 /** Russische Mehrzahl: 1 день, 2 дня, 5 дней (one, few, many) */
 function ruPlural(n, one, few, many) {
   const a = Math.abs(Math.trunc(Number(String(n).replace(',', '.'))));
-  if (String(n).includes(',') || String(n).includes('.')) return few; // Dezimalzahl: „2,5 часа“
+  if (/[,.]\d{1,2}$/.test(String(n))) return few; // Dezimalzahl: „2,5 часа“ (nicht „1.000“ mit Tausenderpunkt)
   const d = a % 10;
   const h = a % 100;
   if (d === 1 && h !== 11) return one;
@@ -54,8 +54,11 @@ function tr(text) {
   let out = I18N.exact.get(core);
   if (out == null)
     for (const [re, rep] of I18N.patterns) {
-      if (re.test(core)) {
-        out = core.replace(re, rep);
+      if (!re.test(core)) continue;
+      // ein Muster, das nichts ändert (z. B. „X: Y“ mit unbekanntem X), überlässt den Text den nächsten
+      const r = core.replace(re, rep);
+      if (r !== core) {
+        out = r;
         break;
       }
     }
@@ -71,6 +74,14 @@ function tr(text) {
 }
 
 const I18N_ATTRS = ['placeholder', 'aria-label', 'title', 'alt'];
+/** Nur ein geändertes Attribut übersetzen (nicht den ganzen Teilbaum) */
+function i18nAttr(el, a) {
+  if (!el || el.nodeType !== 1 || i18nSkipAttrs(el)) return;
+  const v = el.getAttribute(a);
+  if (!v) return;
+  const t = tr(v);
+  if (t !== v) el.setAttribute(a, t);
+}
 /** Nicht übersetzen: Inhalt von Eingaben und alles mit translate="no" (z. B. Einträge, Namen); Platzhalter von Eingaben schon */
 const i18nSkip = (el) => !el || el.closest('textarea, script, style, [translate="no"], [contenteditable]');
 const i18nSkipAttrs = (el) => !el || el.closest('[translate="no"]');
@@ -116,7 +127,7 @@ if (LANG !== 'de') {
   const observer = new MutationObserver((list) => {
     for (const m of list) {
       if (m.type === 'characterData') i18nNode(m.target);
-      else if (m.type === 'attributes') i18nNode(m.target.nodeType === 1 ? m.target : m.target.parentElement);
+      else if (m.type === 'attributes') i18nAttr(m.target, m.attributeName);
       else m.addedNodes.forEach(i18nNode);
     }
   });

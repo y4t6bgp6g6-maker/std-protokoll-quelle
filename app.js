@@ -1537,8 +1537,8 @@ function reportRowHTML(rep) {
   return `<a draggable="false" class="list-row plain" href="#/arbeitsschein/${encodeURIComponent(rep.id)}">
     <span class="status ${done ? 'sent' : 'ws-open'}">${done ? ICON.check : ''}</span>
     <span class="list-main">
-      <span class="list-title">${escapeHtml(shortCustomer(rep.customer))}</span>
-      <span class="list-sub">${fmtWeekday(parseDate(rep.date))}${reportTimes(rep) ? ` · ${reportTimes(rep)}` : ''}${rep.city ? ` · ${escapeHtml(rep.city)}` : ''}</span>
+      <span class="list-title" translate="no">${escapeHtml(shortCustomer(rep.customer))}</span>
+      <span class="list-sub">${fmtWeekday(parseDate(rep.date))}${reportTimes(rep) ? ` · ${reportTimes(rep)}` : ''}${rep.city ? ` · <span translate="no">${escapeHtml(rep.city)}</span>` : ''}</span>
     </span>
     <span class="list-hours">${onSite != null ? fmtH(onSite) : ''}</span>
     <span class="list-chevron">${ICON.chevronRight}</span>
@@ -1563,8 +1563,8 @@ function renderReport(id) {
       <span class="nav-title"></span>
       <span class="nav-btn"></span>
     </header>
-    <h1 class="large-title ws-title">${escapeHtml(rep.customer)}</h1>
-    <p class="ws-sub">${escapeHtml([rep.street, [rep.zip, rep.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}${
+    <h1 class="large-title ws-title" translate="no">${escapeHtml(rep.customer)}</h1>
+    <p class="ws-sub" translate="no">${escapeHtml([rep.street, [rep.zip, rep.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}${
       rep.email ? `<br>${escapeHtml(rep.email)}` : ''
     }</p>
 
@@ -1581,7 +1581,7 @@ function renderReport(id) {
     </div>
 
     <h2 class="section-title">Durchgeführte Arbeiten</h2>
-    <div class="card ws-work">${lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('') || '<p class="muted">–</p>'}</div>
+    <div class="card ws-work" translate="no">${lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('') || '<p class="muted">–</p>'}</div>
 
     ${
       rep.flat && rep.flat.length
@@ -1658,15 +1658,15 @@ function openReport(id, draft = null) {
     </div>
     <div class="ws-body">
       <div class="ws-card">
-        <div class="ws-cust">${escapeHtml(rep.customer)}</div>
-        <div class="ws-addr">${escapeHtml([rep.street, [rep.zip, rep.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}</div>
+        <div class="ws-cust" translate="no">${escapeHtml(rep.customer)}</div>
+        <div class="ws-addr" translate="no">${escapeHtml([rep.street, [rep.zip, rep.city].filter(Boolean).join(' ')].filter(Boolean).join(', '))}</div>
         <div class="ws-facts">
           ${rep.start != null ? fact('Vor Ort', `${fmtTime(rep.start)} – ${rep.end != null ? fmtTime(rep.end) : '?'}${onSite != null ? ` · ${fmtH(onSite)}` : ''}`) : ''}
           ${fact('Pause', rep.pause ? fmtH(rep.pause) : '')}
-          ${fact('Mit', escapeHtml(others.join(', ')))}
+          ${fact('Mit', `<span translate="no">${escapeHtml(others.join(', '))}</span>`)}
         </div>
         <div class="ws-label">Durchgeführte Arbeiten</div>
-        <div class="ws-text">${escapeHtml(rep.work) || '–'}</div>
+        <div class="ws-text" translate="no">${escapeHtml(rep.work) || '–'}</div>
         <div class="ws-no">Nr. ${escapeHtml(rep.no)}</div>
       </div>
       <div class="ws-label sec">${done ? `<span class="ws-done">${ICON.check} Schon eingetragen</span>` : 'Eintragen als'}</div>
@@ -1677,7 +1677,7 @@ function openReport(id, draft = null) {
         ${
           options.length > 1
             ? `<div class="ws-opts">${options
-                .map((o) => `<button class="ws-opt ${o === draft.work ? 'sel' : ''}" data-o="${escapeHtml(o)}">${escapeHtml(o)}</button>`)
+                .map((o) => `<button class="ws-opt ${o === draft.work ? 'sel' : ''}" translate="no" data-o="${escapeHtml(o)}">${escapeHtml(o)}</button>`)
                 .join('')}</div>`
             : ''
         }
@@ -2894,7 +2894,7 @@ function askDelete(id, leave, onCancel = null) {
 const pdfTranslateKick = (v) => aiTranslateDeep(v).then((fresh) => fresh && updatePdfThumb(true));
 function pdfFileFor(s) {
   pdfTranslateKick(s);
-  const blob = buildTimesheetPdf(deDeep(s), sheetTarget(s));
+  const blob = buildTimesheetPdf(pdfDe(s), sheetTarget(s));
   return new File([blob], `${sheetTitle(s)}.pdf`, { type: 'application/pdf' });
 }
 
@@ -3458,7 +3458,7 @@ function tripRowHTML(t) {
         <span class="status ${sent ? 'sent' : 'open'}">${sent ? ICON.check : ''}</span>
         <span class="list-main">
           <span class="list-title">${fmtShort(tripFirstDate(t))} – ${fmtShort(tripLastDate(t))}</span>
-          <span class="list-sub trip-sites">${sent ? 'gesendet' : 'offen'}${sites ? ` · ${escapeHtml(sites)}` : ''}</span>
+          <span class="list-sub trip-sites">${sent ? 'gesendet' : 'offen'}${sites ? ` · <span translate="no">${escapeHtml(sites)}</span>` : ''}</span>
         </span>
         <span class="list-hours">${fmtEuro(tripTotal(rows))}</span>
         <span class="list-chevron">${ICON.chevronRight}</span>
@@ -3529,7 +3529,7 @@ function tripBodyHTML(t) {
     picks.push(`<button class="trip-pick ${selected.has(iso) ? 'on' : ''}" data-act="trip-toggle" data-date="${iso}">
         <span class="trip-check">${selected.has(iso) ? ICON.check : ''}</span>
         <span class="trip-pick-day">${WEEKDAYS_SHORT[(d.getDay() + 6) % 7]} ${fmtDayMonth(d)}</span>
-        <span class="trip-pick-info muted">${escapeHtml(info) || '–'}</span>
+        <span class="trip-pick-info muted" translate="no">${escapeHtml(info) || '–'}</span>
       </button>`);
   }
   const sig = settings.signature && settings.signature.strokes && settings.signature.strokes.length;
@@ -3738,7 +3738,7 @@ function tripPdfFile(t) {
   const rows = tripRows(t);
   const sorted = rows.map((r) => r.date);
   pdfTranslateKick({ t, rows, name: settings.name });
-  const blob = buildTravelPdf(deDeep({
+  const blob = buildTravelPdf(pdfDe({
     title: tripTitle(t),
     name: t.name || settings.name,
     from: fmtShort(sorted[0]),
@@ -4046,7 +4046,7 @@ function hiddenSuggestionsHTML() {
       items.length
         ? `<div class="card form">${items
             .map(
-              ({ field, value }) => `<div class="field"><span class="hidden-sugg"><span class="field-icon-inline">${field === 'site' ? ICON.pin : ICON.tool}</span>${escapeHtml(value)}</span>
+              ({ field, value }) => `<div class="field"><span class="hidden-sugg"><span class="field-icon-inline">${field === 'site' ? ICON.pin : ICON.tool}</span><span translate="no">${escapeHtml(value)}</span></span>
           <button class="link-btn" data-act="unhide" data-field="${field}" data-value="${escapeHtml(value)}">Wiederherstellen</button></div>`
             )
             .join('')}</div>`
