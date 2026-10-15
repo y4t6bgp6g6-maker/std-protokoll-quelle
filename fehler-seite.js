@@ -246,9 +246,14 @@ async function adminDictChange(method, word) {
 
 async function adminLoad() {
   try {
+    // Antwortzeit an einer kleinen Anfrage wie die der Kollegen messen, nicht am großen Abruf hier
     const t0 = performance.now();
+    const ping = adminRequest('GET', '/ping').then(
+      () => (adminPing = Math.round(performance.now() - t0)),
+      () => {}
+    );
     const data = await adminRequest('GET', '/errors');
-    adminPing = Math.round(performance.now() - t0);
+    await ping;
     adminErrors = data.errors || [];
     adminStorage = data.storage || null;
     adminTeam = data.team || null;

@@ -11,6 +11,7 @@
 // Die Tabelle legt der Worker selbst an.
 //
 // Anfragen (Code im Header X-Team-Code):
+//   GET    /ping   → { ok }   nur zum Messen der Antwortzeit
 //   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }], spellV }
 //                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
 //   PUT    /me     ← { member, token, name, month, sheets, version }   eigener Eintrag (version: App-Version für die Admin-Seite)
@@ -336,13 +337,18 @@ export default {
 
     const db = env.DB;
     const month = currentMonth();
-    await db.exec('CREATE TABLE IF NOT EXISTS members (member TEXT PRIMARY KEY, token TEXT NOT NULL, name TEXT, month TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)');
-    await db.exec('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)');
-    await db.prepare('DELETE FROM members WHERE month <> ?').bind(month).run();
-    await db.prepare('DELETE FROM posts WHERE month <> ?').bind(month).run();
+    // in einem Rutsch (eine Verbindung zur Datenbank statt vier nacheinander)
+    await db.batch([
+      db.prepare('CREATE TABLE IF NOT EXISTS members (member TEXT PRIMARY KEY, token TEXT NOT NULL, name TEXT, month TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)'),
+      db.prepare('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)'),
+      db.prepare('DELETE FROM members WHERE month <> ?').bind(month),
+      db.prepare('DELETE FROM posts WHERE month <> ?').bind(month),
+    ]);
 
     const path = new URL(req.url).pathname;
     try {
+      // Antwortzeit für die Server-Seite: so viel Arbeit wie jede Team-Anfrage, ohne Inhalt
+      if (path === '/ping' && req.method === 'GET') return json({ ok: true }, 200, h);
       if (path === '/team' && req.method === 'GET') {
         const { results } = await db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month).all();
         const members = results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
@@ -511,25 +517,29 @@ export default {
           return json({ error: 'admin' }, 403, h);
         }
         if (path === '/errors' && req.method === 'GET') {
-          await db.exec('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)');
+          // Zahlen von Cloudflare dauern am längsten: gleich anfragen, die Datenbank läuft währenddessen
+          const usage = cfUsage(env);
           await ensureVersionColumn(db);
-          const { results } = await db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50').all();
           // Speicher: Größe der ganzen Datenbank (meta.size_after) und Bytes je Inhalt; der Rest ist die Datenbank selbst
           const bytes = (cols) => cols.map((c) => `COALESCE(LENGTH(CAST(${c} AS BLOB)), 0)`).join(' + ');
-          const size = await db
-            .prepare(
+          const [, , errors, size, people, posts, dict] = await db.batch([
+            db.prepare('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)'),
+            db.prepare('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)'),
+            db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50'),
+            db.prepare(
               `SELECT (SELECT COALESCE(SUM(${bytes(['member', 'token', 'name', 'month', 'data', 'version'])}), 0) FROM members) AS sheets, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'text'])}), 0) FROM posts) AS posts, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors`
-            )
-            .all();
+            ),
+            // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
+            db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month),
+            db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
+            db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
+          ]);
           const s = size.results[0];
           const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors };
-          // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
-          const people = (await db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month).all()).results;
-          const { n: postCount } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month).first();
-          const dict = (await loadDict(db)).map((d) => d.word);
-          return json({ errors: results, storage, team: { month, people, posts: postCount }, dict, usage: await cfUsage(env) }, 200, h);
+          const team = { month, people: people.results, posts: posts.results[0].n };
+          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), usage: await usage }, 200, h);
         }
         if (path === '/dict' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);
