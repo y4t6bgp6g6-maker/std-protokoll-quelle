@@ -104,7 +104,7 @@ if (LANG === 'ru') {
       'Team diesen Monat': 'Команда в этом месяце',
       // ── Konto ──
       Konto: 'Аккаунт', 'Nicht angemeldet': 'Не выполнен вход', Benutzername: 'Имя пользователя', Passwort: 'Пароль', Anmelden: 'Войти',
-      'Konto erstellen': 'Создать аккаунт', 'Fürs Team nötig, Sicherungen werden damit verschlüsselt.': 'Нужен для команды, копии будут зашифрованы.',
+      'Konto erstellen': 'Создать аккаунт', 'Noch kein Konto? Konto erstellen': 'Нет аккаунта? Создать', 'Schon ein Konto? Anmelden': 'Уже есть аккаунт? Войти', 'Fürs Team nötig, Sicherungen werden damit verschlüsselt.': 'Нужен для команды, копии будут зашифрованы.',
       'Fehler auf dem Server': 'Ошибка на сервере', 'Nicht gesichert': 'Не сохранено',
       'Passwort fehlt – unter Einstellungen → Konto anmelden.': 'Нет пароля – войдите: Настройки → Аккаунт.',
       Status: 'Статус', Angemeldet: 'Вход выполнен', 'Wird beim Beitreten ins Team geprüft': 'Проверяется при вступлении в команду',

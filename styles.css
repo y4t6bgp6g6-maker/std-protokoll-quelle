@@ -1380,6 +1380,9 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-join { margin: 22px 0 12px; padding: 0 16px; }
 .tm-join input { width: 100%; padding: 14px 0; font-size: 17px; border: 0; background: none; color: var(--text); text-align: center; letter-spacing: 0.05em; outline: none; }
 .tm-join-btn { background: var(--accent-fill); color: var(--on-accent); }
+.acc-submit { width: 100%; margin-top: 16px; }
+.acc-switch { margin-top: 14px; }
+.acc-switch + .footnote { margin-top: 18px; }
 .tm-join-btn:disabled { opacity: 0.5; }
 .tm-msg { text-align: center; margin: 24px 16px; }
 .tm-leave { margin-top: 8px; color: var(--danger); }

@@ -96,15 +96,11 @@ async function accountLink() {
 }
 
 /** Konto einrichten: neu anlegen oder anmelden. Im Team gleich beim Server, sonst beim Beitreten */
-async function accountSetup(user, pw, mode) {
+async function accountSetup(user, pw, mode, again) {
   user = accountUser(user);
   if (!user) return toast('Benutzername: mindestens 3 Zeichen, nur Buchstaben, Ziffern, . - _');
   if (pw.length < 6) return toast('Passwort: mindestens 6 Zeichen');
-  if (mode === 'create') {
-    const again = await askPassword('Passwort wiederholen', 'Ohne Passwort lässt sich keine Sicherung öffnen.');
-    if (again == null) return;
-    if (again !== pw) return toast('Die beiden Passwörter sind verschieden.');
-  }
+  if (mode === 'create' && again !== pw) return toast('Die beiden Passwörter sind verschieden.');
   toast('Wird eingerichtet …', 10000);
   const { auth, key, salt } = await accountDerive(user, pw);
   const prev = account;
@@ -327,18 +323,23 @@ async function accountPickRestore() {
 
 // ───────── Einstellungen → Konto ─────────
 
+/** Ohne Konto: Anmelden (Vorgabe) oder – über den Link darunter – neues Konto mit wiederholtem Passwort */
+let kontoCreate = false;
 function kontoPageHTML() {
-  if (!account)
+  if (!account) {
+    const pwAttrs = `type="password" placeholder="Passwort" autocomplete="${kontoCreate ? 'new-password' : 'current-password'}"`;
     return `
-    <form class="card form" data-acc-form>
-      <label class="field"><span>Benutzername</span><input name="user" data-acc="user" placeholder="z. B. max.muster" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
-      <label class="field"><span>Passwort</span><input name="pw" type="password" data-acc="pw" placeholder="Passwort" autocomplete="current-password" enterkeyhint="go"></label>
+    <form data-acc-form>
+      <div class="card form">
+        <label class="field"><span>Benutzername</span><input name="user" data-acc="user" placeholder="z. B. max.muster" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
+        <label class="field"><span>Passwort</span><input name="pw" data-acc="pw" ${pwAttrs} enterkeyhint="${kontoCreate ? 'next' : 'go'}"></label>
+        ${kontoCreate ? `<label class="field"><span>Wiederholen</span><input name="pw2" data-acc="pw2" ${pwAttrs} enterkeyhint="go"></label>` : ''}
+      </div>
+      <button type="submit" class="primary tm-join-btn acc-submit">${kontoCreate ? 'Konto erstellen' : 'Anmelden'}</button>
     </form>
-    <div class="card list">
-      <button class="list-btn" data-acc="login">Anmelden</button>
-      <button class="list-btn" data-acc="create">Konto erstellen</button>
-    </div>
-    <p class="footnote">Fürs Team nötig, Sicherungen werden damit verschlüsselt.</p>`;
+    <div class="center acc-switch"><button class="link-btn" data-acc="switch">${kontoCreate ? 'Schon ein Konto? Anmelden' : 'Noch kein Konto? Konto erstellen'}</button></div>
+    <p class="footnote center">Fürs Team nötig, Sicherungen werden damit verschlüsselt.</p>`;
+  }
   const ok = accountOk();
   return `
     <div class="card form">
@@ -371,17 +372,18 @@ function accountRerender() {
 document.addEventListener('click', (e) => {
   const el = e.target.closest('button[data-acc]');
   if (!el || layer.contains(el)) return;
-  const form = () => {
-    const f = document.querySelector('[data-acc-form]');
-    return [f.querySelector('[data-acc="user"]').value, f.querySelector('[data-acc="pw"]').value];
-  };
   switch (el.dataset.acc) {
-    case 'login':
-      accountSetup(...form(), 'login');
+    case 'switch': {
+      // Eingaben behalten, nur die Art wechseln
+      const f = document.querySelector('[data-acc-form]');
+      const user = f.querySelector('[data-acc="user"]').value;
+      const pw = f.querySelector('[data-acc="pw"]').value;
+      kontoCreate = !kontoCreate;
+      accountRerender();
+      document.querySelector('[data-acc="user"]').value = user;
+      document.querySelector('[data-acc="pw"]').value = pw;
       break;
-    case 'create':
-      accountSetup(...form(), 'create');
-      break;
+    }
     case 'logout':
       accountLogout();
       break;
@@ -400,10 +402,11 @@ document.addEventListener('click', (e) => {
       break;
   }
 });
-// Return im Passwortfeld = Anmelden
+// Knopf oder Return im letzten Feld (ein echtes Formular, damit das iPhone das Passwort speichern kann)
 document.addEventListener('submit', (e) => {
   if (!e.target.matches('[data-acc-form]')) return;
   e.preventDefault();
   const f = e.target;
-  accountSetup(f.querySelector('[data-acc="user"]').value, f.querySelector('[data-acc="pw"]').value, 'login');
+  const val = (k) => (f.querySelector(`[data-acc="${k}"]`) || {}).value || '';
+  accountSetup(val('user'), val('pw'), kontoCreate ? 'create' : 'login', val('pw2'));
 });
