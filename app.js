@@ -2863,6 +2863,7 @@ function moreMenu() {
 }
 
 function sendWithCheck(s) {
+  aiTranslateDeep(s);
   const problems = sheetProblems(s);
   if (!problems.length) return sharePdf(s, true);
   // „Trotzdem senden“ ist ein eigenes Antippen – nötig für Zwischenablage und Teilen-Menü
@@ -2889,8 +2890,11 @@ function askDelete(id, leave, onCancel = null) {
 
 // ───────────────────────── PDF & Senden ─────────────────────────
 
+/** Kyrillische Texte einer Seite vorab übersetzen lassen; kommt Neues, die Vorschau neu zeichnen */
+const pdfTranslateKick = (v) => aiTranslateDeep(v).then((fresh) => fresh && updatePdfThumb(true));
 function pdfFileFor(s) {
-  const blob = buildTimesheetPdf(s, sheetTarget(s));
+  pdfTranslateKick(s);
+  const blob = buildTimesheetPdf(deDeep(s), sheetTarget(s));
   return new File([blob], `${sheetTitle(s)}.pdf`, { type: 'application/pdf' });
 }
 
@@ -3733,7 +3737,8 @@ function sendTripWithCheck(t) {
 function tripPdfFile(t) {
   const rows = tripRows(t);
   const sorted = rows.map((r) => r.date);
-  const blob = buildTravelPdf({
+  pdfTranslateKick({ t, rows, name: settings.name });
+  const blob = buildTravelPdf(deDeep({
     title: tripTitle(t),
     name: t.name || settings.name,
     from: fmtShort(sorted[0]),
@@ -3743,7 +3748,7 @@ function tripPdfFile(t) {
     place: (t.place || '').trim(),
     signDate: t.signDate ? fmtShort(parseDate(t.signDate)) : '',
     signature: settings.signature,
-  });
+  }));
   return new File([blob], `${tripTitle(t)}.pdf`, { type: 'application/pdf' });
 }
 
@@ -3876,6 +3881,7 @@ const SET_ICON = {
   doc: '<path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm6 1.5V9h4.5"/>',
   cloud: '<path d="M7 19a5 5 0 0 1-.6-9.96A6.5 6.5 0 0 1 19 10.5a4.25 4.25 0 0 1-.5 8.5z"/>',
   book: '<path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5a1.5 1.5 0 0 0 0 3H19M8 7h7" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
+  globe: '<circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="1.8"/><path d="M4 12h16M12 4c2.5 2.3 2.5 13.7 0 16M12 4c-2.5 2.3-2.5 13.7 0 16" fill="none" stroke="#fff" stroke-width="1.6"/>',
 };
 const SET_COLOR = { indigo: '#5856d6', green: '#34c759', blue: '#2f6bff', orange: '#ff9500', teal: '#30b0c7', purple: '#af52de', gray: '#8e8e93' };
 const setIcon = (name, color) => `<span class="s-ico" style="background:${SET_COLOR[color]}"><svg viewBox="0 0 24 24" fill="#fff">${SET_ICON[name]}</svg></span>`;
@@ -3937,6 +3943,10 @@ function renderSettings() {
         <span class="s-seg">${[['light', 'Hell'], ['dark', 'Dunkel']]
           .map(([v, l]) => `<button data-act="theme-set" data-v="${v}" class="${(isDarkTheme() ? 'dark' : 'light') === v ? 'on' : ''}">${l}</button>`)
           .join('')}</span></div>
+      <div class="s-row">${setIcon('globe', 'blue')}<span class="s-label">Sprache</span>
+        <span class="s-seg" translate="no">${[['de', 'Deutsch'], ['ru', 'Русский']]
+          .map(([v, l]) => `<button data-act="lang-set" data-v="${v}" class="${LANG === v ? 'on' : ''}">${l}</button>`)
+          .join('')}</span></div>
       ${lockAvailable() ? setToggle('face', 'green', 'Mit Face ID sperren', `data-lock-switch ${lockOn() ? 'checked' : ''}`) : ''}
     </div>
     <div class="card s-group">
@@ -3948,7 +3958,6 @@ function renderSettings() {
     <div class="card s-group">
       ${setLink('#/einstellungen/scheine', 'doc', 'purple', 'Arbeitsscheine', sum.scheine)}
       ${setLink('#/einstellungen/sicherung', 'cloud', 'blue', 'Datensicherung', sum.sicherung)}
-      ${setLink('#/anleitung', 'book', 'gray', 'Anleitung')}
     </div>
     ${settings.encryptBackup && !cryptStore ? '<p class="footnote warn">Passwort für die Sicherung fehlt – unter Datensicherung neu festlegen.</p>' : ''}`;
 }
@@ -4044,10 +4053,16 @@ function hiddenSuggestionsHTML() {
         : ''
     }
     <p class="footnote">Lange drücken blendet einen Vorschlag aus.</p>
-    <div class="card form">
-      <label class="field"><span>Korrekturvorschläge</span><input type="checkbox" class="toggle" data-s="typoHints" ${settings.typoHints !== false ? 'checked' : ''}></label>
+    <div class="card form typo-demo-card">
+      <label class="field"><span>Korrektur</span><input type="checkbox" class="toggle" data-s="typoHints" ${settings.typoHints !== false ? 'checked' : ''}></label>
+      ${typoDemoHTML()}
     </div>`;
 }
+/** Beispiel für den Schalter „Korrektur“: ein Eintrag mit Tippfehler und der Hinweis darunter, wie im Zettel */
+const typoDemoHTML = () => `<div class="typo-demo" aria-hidden="true">
+      <div class="typo-demo-field"><span class="field-icon-inline">${ICON.tool}</span><span translate="no">Heizkörper montirt</span></div>
+      <div class="typo-hint"><span class="typo-text">Meintest du <b class="typo-demo-fix" translate="no">„Heizkörper montiert“</b>?</span><span class="typo-x">✕</span></div>
+    </div>`;
 
 const backupJson = (indent) =>
   JSON.stringify({ app: 'stundenzettel', version: 1, exportedAt: new Date().toISOString(), sheets: savedSheets(), trips, settings, payslips, reports: reports(), berichtsheft: bhBackup() }, null, indent);
@@ -5057,7 +5072,8 @@ function aiTypoFor(field, row) {
 /** Feld verlassen: Einträge von der KI prüfen lassen und den Hinweis zeigen, sobald die Antwort da ist */
 function aiCheckField(input) {
   if (settings.typoHints === false) return;
-  const parts = input.dataset.f === 'work' ? input.value.split(',') : [input.value];
+  // die Prüfung ist deutsch: kyrillisch geschriebene Teile nicht
+  const parts = (input.dataset.f === 'work' ? input.value.split(',') : [input.value]).filter((p) => !hasCyrillic(p));
   aiSpellCheck(parts).then((fresh) => {
     if (fresh && input.isConnected && document.activeElement !== input && currentSheet()) refreshTypoHint(input);
   });
@@ -5074,7 +5090,8 @@ function sameStem(a, b) {
 }
 /** Hinweis, wenn ein Text Zeichen enthält, die im PDF als „?“ erscheinen; sonst '' */
 function pdfCharHint(text) {
-  const miss = pdfMissingChars(text);
+  // Kyrillisch übersetzt die KI fürs PDF ins Deutsche (siehe deDeep); erst ohne Übersetzung bleibt der Hinweis
+  const miss = pdfMissingChars(hasCyrillic(text) ? aiTr(text, 'de') : text);
   if (!miss.length) return '';
   if (miss.some((ch) => /\p{Script=Cyrillic}/u.test(ch))) return 'Kyrillisch wird im PDF zu „?“';
   return `„${miss.join(' ')}“ ${miss.length > 1 ? 'werden' : 'wird'} im PDF zu „?“`;
@@ -5642,6 +5659,13 @@ document.addEventListener('click', (e) => {
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
       break;
     }
+    case 'lang-set':
+      // Sprache gilt ab dem nächsten Start der Seite (i18n.js liest sie vor allem anderen)
+      if (el.dataset.v === LANG) break;
+      settings.lang = el.dataset.v;
+      saveSettings();
+      location.reload();
+      break;
     case 'theme-set': {
       settings.theme = el.dataset.v;
       saveSettings();
@@ -5885,6 +5909,18 @@ document.addEventListener('focusout', (e) => {
     refreshTypoHint(e.target);
     aiCheckField(e.target);
   }
+});
+// Kyrillisch eingetragen (Zettel, Berichtsheft, Reisekosten, Name …): gleich fürs PDF ins Deutsche übersetzen lassen
+document.addEventListener('focusout', (e) => {
+  const t = e.target;
+  if (!t.matches || !t.matches('input, textarea') || t.matches('[data-team], [data-fb-word], [data-search]') || !hasCyrillic(t.value)) return;
+  aiTranslate([t.value], 'de').then((fresh) => {
+    if (!fresh) return;
+    updatePdfThumb(true);
+    if (!t.isConnected || document.activeElement === t) return;
+    if (t.dataset.f && currentSheet()) refreshTypoHint(t);
+    else if (t.matches('textarea.trip-text, [data-tp="place"], [data-s="name"]')) refreshPdfHint(t);
+  });
 });
 document.addEventListener('focusout', (e) => {
   if (e.target.matches('textarea.trip-text, [data-tp="place"], [data-s="name"]')) refreshPdfHint(e.target);

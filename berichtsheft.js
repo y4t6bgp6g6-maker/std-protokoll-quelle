@@ -903,12 +903,12 @@ function bhRecalcYears() {
 
 const fmtLong = (iso) => (iso ? `${pad(parseDate(iso).getDate())}.${pad(parseDate(iso).getMonth() + 1)}.${parseDate(iso).getFullYear()}` : '');
 function bhHeadFor(h, a, b) {
-  const p = bh.profile;
+  const p = deDeep(bh.profile);
   return { name: p.name, vorname: p.vorname, beruf: p.beruf, abteilung: p.abteilung, von: fmtShort(a), bis: fmtShort(b), jahr: String(h.jahr) };
 }
 const bhSigsFor = (e) =>
   BH_ROLES.map(([r]) => (e?.signed?.[r] ? { sig: bh.sigs[r], date: fmtShort(parseDate(e.signed[r])) } : null));
-const bhProfileForPdf = () => ({ ...bh.profile, geboren: fmtLong(bh.profile.geboren), beginn: fmtLong(bh.profile.beginn), ende: fmtLong(bh.profile.ende) });
+const bhProfileForPdf = () => ({ ...deDeep(bh.profile), geboren: fmtLong(bh.profile.geboren), beginn: fmtLong(bh.profile.beginn), ende: fmtLong(bh.profile.ende) });
 
 function addWeekPage(doc, h, mon) {
   const w = h.weeks[mon];
@@ -941,6 +941,9 @@ function addMonthPage(doc, h, ym) {
 
 /** Ganzes Heft (kind 'woche'/'monat'): Deckblatt, Vorblatt, Erläuterungen und alle Seiten bis heute; page: nur diese Seite */
 function buildHeftPdf(h, kind, page = null) {
+  // Kyrillisches deutsch (soweit schon übersetzt; sonst vorab anstoßen)
+  pdfTranslateKick({ w: page ? (kind === 'monat' ? h.months[page] : h.weeks[page]) : h, p: bh.profile });
+  h = { ...h, weeks: deDeep(h.weeks), months: deDeep(h.months) };
   const doc = new BhPdf();
   const monthly = kind === 'monat';
   const today = isoDate(new Date());

@@ -722,6 +722,8 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .status-day.has-work .status-head { border-bottom: 0.5px solid var(--sep); }
 .status-when { min-width: 0; }
 .status-day-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Russisch: „Понедельник“ ist fast doppelt so lang wie „Montag“ – lieber umbrechen als Datum und Team-Kapsel abschneiden */
+html[lang="ru"] .status-day-line { white-space: normal; }
 /* Name des Feiertags in eigener Zeile, damit er ganz zu sehen ist */
 .status-sub { white-space: normal; font-size: 13px; color: color-mix(in srgb, var(--status) 72%, var(--text)); margin-top: 1px; }
 .status-btn.set.status-tag {
@@ -1011,6 +1013,12 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .typo-text { flex: 1; min-width: 0; }
 .typo-hint [data-act="typo-fix"] { color: var(--accent); font-weight: 600; text-align: left; }
 .typo-x { margin-left: auto; padding: 4px 6px; color: var(--muted); font-size: 13px; }
+/* Beispiel unter dem Schalter „Korrektur“ in den Einstellungen */
+.typo-demo { padding: 10px 14px 8px; pointer-events: none; }
+.typo-demo-card .field + .typo-demo { border-top: 0.5px solid var(--sep); }
+.typo-demo-field { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--fill); font-size: 15px; }
+.typo-demo .typo-hint { margin: 6px 0 0 30px; }
+.typo-demo-fix { color: var(--accent); font-weight: 600; }
 .pdf-hint { display: block; }
 .card.form > .pdf-hint, .trip-day .pdf-hint { margin: 0 16px 8px; }
 .trip-issue { font-size: 13px; margin: 6px 0 0; color: var(--warning); }
@@ -1430,6 +1438,8 @@ body.tabs #app { padding-bottom: calc(var(--tab-h) + 28px); }
 .tm-z-top small, .tm-z-f small { font-size: 6.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--print); font-weight: 700; }
 .tm-z-top small { grid-column: 1 / -1; }
 .tm-z-top b { font-size: 12px; font-weight: 800; letter-spacing: 0.02em; white-space: nowrap; }
+/* Russisch: „Нед. 42“ ist breiter als „KW 42“ – sonst wird der Zeitraum daneben abgeschnitten */
+html[lang="ru"] .tm-z-top b { font-size: 11px; letter-spacing: 0; }
 .tm-z-top .tm-z-range { grid-column: auto; font-size: 8px; letter-spacing: 0; text-transform: none; font-weight: 600; text-align: right; padding-right: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tm-z-t { display: flex; flex-direction: column; }
 .tm-z-t i { display: grid; grid-template-columns: 17px minmax(0, 1fr); align-items: center; height: 21px; font-style: normal; border-bottom: 0.5px solid var(--rule); }

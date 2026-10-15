@@ -38,10 +38,11 @@ async function teamRequest(method, path, body, code = team && team.code) {
 
 // ───────── KI (Workers AI über den Team-Server, nur im Team) ─────────
 // Speicher (nicht in der Sicherung): spell: { Eintrag: Ergebnis (KI, danach Wörterbuch des Servers) }, spellV: Stand des
-// Wörterbuchs (ändert er sich, wird neu geprüft), sites: { key, groups: [[Schreibweisen]] }
+// Wörterbuchs (ändert er sich, wird neu geprüft), sites: { key, groups: [[Schreibweisen]] },
+// tr: { de: { Text: Übersetzung }, ru: { … } } – Einträge russisch schreibender Kollegen fürs PDF bzw. die Anzeige
 
 const AI_KEY = 'stdprotokoll.ai.v1';
-let aiStore = { spell: {}, sites: null };
+let aiStore = { spell: {}, sites: null, tr: { de: {}, ru: {} } };
 try {
   Object.assign(aiStore, JSON.parse(localStorage.getItem(AI_KEY) || '{}'));
 } catch {}
@@ -125,6 +126,73 @@ function aiSitesRequest(names) {
       // beim nächsten Mal wieder fragen (z. B. schlechter Empfang)
       if (aiSitesAsked === key) aiSitesAsked = '';
     });
+}
+
+/** Übersetzung nötig? Ins Deutsche nur Kyrillisches, ins Russische nur lateinisch Geschriebenes (Zahlen allein nie) */
+const aiTrNorm = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+const aiTrNeeded = (t, to) => (to === 'de' ? hasCyrillic(t) : /[A-Za-zÄÖÜäöüß]/.test(t) && !hasCyrillic(t));
+const aiTrBusy = new Set();
+/** Einträge übersetzen lassen (to: 'de' oder 'ru'), was noch nicht gemerkt ist; Ergebnis: true = neue Übersetzungen da */
+async function aiTranslate(items, to) {
+  if (!aiReady()) return false;
+  aiStore.tr = aiStore.tr || {};
+  const store = (aiStore.tr[to] = aiStore.tr[to] || {});
+  const todo = [...new Set(items.map(aiTrNorm))].filter((t) => t && aiTrNeeded(t, to) && !(t in store) && !aiTrBusy.has(`${to}|${t}`));
+  if (!todo.length) return false;
+  todo.forEach((t) => aiTrBusy.add(`${to}|${t}`));
+  let fresh = false;
+  try {
+    for (let i = 0; i < todo.length; i += 20) {
+      const { out } = await teamAi('tr', { to, items: todo.slice(i, i + 20) });
+      for (const [t, x] of out || []) if (typeof x === 'string' && x.trim()) (store[t] = x), (fresh = true);
+    }
+  } catch {
+  } finally {
+    todo.forEach((t) => aiTrBusy.delete(`${to}|${t}`));
+  }
+  // Speicher begrenzen: die ältesten zuerst raus
+  const keys = Object.keys(store);
+  for (const k of keys.slice(0, Math.max(0, keys.length - 3000))) delete store[k];
+  if (fresh) saveAi();
+  return fresh;
+}
+/** Gemerkte Übersetzung (sonst der Text selbst) */
+function aiTr(t, to) {
+  const k = aiTrNorm(t);
+  if (!k || !aiTrNeeded(k, to)) return t;
+  return (aiStore.tr && aiStore.tr[to] && aiStore.tr[to][k]) || t;
+}
+/** Kopie mit deutschen Texten fürs PDF (Kyrillisch im PDF wäre „?“; übersetzt, soweit schon gemerkt) */
+function deDeep(v) {
+  if (typeof v === 'string') return hasCyrillic(v) ? aiTr(v, 'de') : v;
+  if (Array.isArray(v)) return v.map(deDeep);
+  if (v && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype) {
+    const o = {};
+    for (const [k, x] of Object.entries(v)) o[k] = deDeep(x);
+    return o;
+  }
+  return v;
+}
+/** Alle kyrillischen Texte einer Seite (Zettel, Woche, Abrechnung …) vorab übersetzen lassen */
+function aiTranslateDeep(v, to = 'de') {
+  const texts = [];
+  const walk = (x) => {
+    if (typeof x === 'string') {
+      if (aiTrNeeded(x, to)) texts.push(x);
+    } else if (Array.isArray(x)) x.forEach(walk);
+    else if (x && typeof x === 'object') Object.values(x).forEach(walk);
+  };
+  walk(v);
+  return texts.length ? aiTranslate(texts, to) : Promise.resolve(false);
+}
+/** Text eines Kollegen in der eingestellten Sprache */
+const teamTr = (t) => aiTr(t, LANG);
+/** Einträge und Nachrichten der Kollegen in die eingestellte Sprache übersetzen lassen; danach neu zeichnen */
+function teamTranslateAll() {
+  const texts = [];
+  for (const m of teamMembers()) for (const s of m.sheets || []) for (const d of s.days || []) for (const r of d.rows || []) if (r.work) texts.push(r.work);
+  for (const p of teamPosts()) texts.push(p.text);
+  aiTranslate(texts, LANG).then((fresh) => fresh && teamRefreshView());
 }
 
 // ───────── Eigene Zettel hochladen ─────────
@@ -310,6 +378,8 @@ async function teamLoad() {
     }
     saveTeam();
     teamData = team.cache;
+    // Einträge der Kollegen in der eingestellten Sprache (russisch bzw. deutsch geschriebene)
+    teamTranslateAll();
   } catch (e) {
     if (!team) return;
     if (e.status === 401) {
@@ -607,7 +677,7 @@ function teamPostsHTML() {
   return posts
     .map((p) => {
       const me = p.member === team.member;
-      return `<div class="tm-post${me ? ' me' : ''}">${me ? '' : teamAvatar(p, 30)}<div class="tm-bubble"${me ? ` data-team="post-del" data-id="${p.id}"` : ''}><div class="tm-post-h"><b>${me ? 'Du' : escapeHtml(p.name || '?')}</b><span>${teamAgo(p.created)}</span></div>${escapeHtml(p.text)}</div></div>`;
+      return `<div class="tm-post${me ? ' me' : ''}">${me ? '' : teamAvatar(p, 30)}<div class="tm-bubble"${me ? ` data-team="post-del" data-id="${p.id}"` : ''}><div class="tm-post-h"><b${me ? '' : ' translate="no"'}>${me ? 'Du' : escapeHtml(p.name || '?')}</b><span>${teamAgo(p.created)}</span></div><span translate="no">${escapeHtml(me ? p.text : teamTr(p.text))}</span></div></div>`;
     })
     .join('');
 }
@@ -770,7 +840,7 @@ function renderTeamSheet(id, weekStart) {
         main = `${status}${rows
           .map(
             (r) =>
-              `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(r.work)}</span></span></div>`
+              `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text" translate="no"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(teamTr(r.work))}</span></span></div>`
           )
           .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
       return `<div class="tm-w-day"><div class="tm-w-date"><b>${WEEKDAYS_SHORT[i]}</b><span>${fmtDayMonth(sheetDate(s, i))}</span></div><div class="tm-w-main">${main}</div></div>`;
@@ -822,7 +892,7 @@ function teamDaySummary(t) {
   if (teamDayOff(d)) return { text: DAY_STATUS_SHORT[d.status] || '', hours: '' };
   const rows = teamDayRows(d);
   const sites = [...new Set(rows.map((r) => r.site.trim()).filter(Boolean))];
-  return { text: sites.join(', ') || rows.map((r) => r.work).filter(Boolean).join(', '), hours: fmtH(dayTotal(d, i)) };
+  return { text: sites.join(', ') || rows.map((r) => teamTr(r.work)).filter(Boolean).join(', '), hours: fmtH(dayTotal(d, i)), user: true };
 }
 
 /** Fenster: Liste der Kollegen mit Eintrag an dem Tag; Antippen zeigt im selben Fenster ihre Einträge */
@@ -839,7 +909,7 @@ function teamDayWindow(iso) {
         .map((m) => {
           const sum = teamDaySummary(teamDayOf(m, iso));
           return `<button class="list-row tm-dw-person" data-p="${escapeHtml(m.member)}">${teamAvatar(m, 34)}
-            <span class="list-main"><span class="list-title">${escapeHtml(m.name || '?')}</span>${sum.text ? `<span class="list-sub">${escapeHtml(sum.text)}</span>` : ''}</span>
+            <span class="list-main"><span class="list-title" translate="no">${escapeHtml(m.name || '?')}</span>${sum.text ? `<span class="list-sub"${sum.user ? ' translate="no"' : ''}>${escapeHtml(sum.text)}</span>` : ''}</span>
             ${sum.hours ? `<span class="tm-dw-h">${sum.hours}</span>` : ''}<span class="list-chevron">${ICON.chevronRight}</span></button>`;
         })
         .join('')}</div></div>`;
@@ -855,7 +925,7 @@ function teamDayWindow(iso) {
     const main = teamDayOff(d)
       ? status
       : `${status}${rows
-          .map((r) => `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(r.work)}</span></span></div>`)
+          .map((r) => `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text" translate="no"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(teamTr(r.work))}</span></span></div>`)
           .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
     body.innerHTML = `${head(`<button class="modal-btn tm-dw-back" data-m="back">${ICON.back}</button>`, title)}
       <div class="tm-dw-body">
