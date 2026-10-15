@@ -1235,9 +1235,22 @@ async function readWorkReportFile(buf) {
 let reportFetching = false;
 async function fetchReports(manual = false) {
   const url = (settings.reportUrl || '').trim();
-  if (!url || reportFetching || (!manual && Date.now() - reportStore.at < 5 * 60e3)) return;
+  if (reportFetching || (!manual && Date.now() - reportStore.at < 5 * 60e3)) return;
+  // Scheine aus der Arbeitsschein-App über den Team-Server (konto.js); die Abholadresse (Google) läuft daneben weiter
+  if (!url) {
+    if (!team || !accountOk()) return;
+    reportFetching = true;
+    const n = await accountFetchReports();
+    reportStore.at = Date.now();
+    saveReports();
+    reportFetching = false;
+    if (manual) toast(n ? `${n} neue${n === 1 ? 'r' : ''} Arbeitsschein${n === 1 ? '' : 'e'}` : 'Keine neuen Arbeitsscheine');
+    if (n && currentView === 'reports') renderReportList();
+    else if (n && currentView === 'editor' && !typingField() && !layer.classList.contains('open')) refreshAll();
+    return;
+  }
   reportFetching = true;
-  let n = 0;
+  let n = await accountFetchReports();
   try {
     const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}since=${reportStore.since || 0}`);
     const data = await res.json();
@@ -1574,7 +1587,7 @@ function renderReport(id) {
     </div>
 
     <h2 class="section-title">Durchgeführte Arbeiten</h2>
-    <div class="card ws-work" translate="no">${lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('') || '<p class="muted">–</p>'}</div>
+    <div class="card ws-work" translate="no">${lines.map((l) => `<p>${escapeHtml(l).replace(/\n/g, '<br>')}</p>`).join('') || '<p class="muted">–</p>'}</div>
 
     ${
       rep.flat && rep.flat.length

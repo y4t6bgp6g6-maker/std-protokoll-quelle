@@ -242,6 +242,81 @@ const accountStatusText = () => {
   return account.error ? `${when} · ${account.error}` : when;
 };
 
+// ───────── Arbeitsscheine vom Team-Server ─────────
+// Eine Arbeitsschein-App schickt Scheine (Format „arbeitsschein/1“) an den Worker; jeder Mitarbeiter auf dem Schein
+// bekommt ihn. Hier: abholen (im Team mit Konto) und in die Form bringen, die auch die .odt-Scheine haben.
+
+const hmMin = (s) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ''));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+};
+/** Schein vom Server → je Einsatz ein Eintrag wie aus der .odt (id wie dort: Nummer, bei mehreren Tagen Nummer#n) */
+function serverReportItems(r, names) {
+  const ra = r.rechnungsadresse || {};
+  const pr = r.projekt || {};
+  const blocks = (r.arbeiten || []).map((t) => String(t).trim()).filter(Boolean);
+  const created = /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.erstellt || '');
+  const staffName = (m) => (m.name || '').trim() || names[accountUser(m.benutzer)] || m.benutzer || '';
+  return r.einsaetze.map((e, i) => {
+    const start = hmMin(e.beginn);
+    const end = hmMin(e.ende);
+    const pause = e.pause_min || 0;
+    return {
+      v: 2,
+      id: r.einsaetze.length > 1 ? `${r.nummer}#${i + 1}` : r.nummer,
+      no: r.nummer,
+      src: r.id,
+      created: created ? `${created[3]}.${created[2]}.${created[1]}` : '',
+      billName: (ra.name || '').trim(),
+      email: (pr.email || '').trim(),
+      date: e.datum,
+      customer: (pr.name || ra.name || '').trim(),
+      street: (ra.strasse || '').trim(),
+      zip: (ra.plz || '').trim(),
+      city: (ra.ort || '').trim(),
+      start,
+      end,
+      pause,
+      travel: e.fahrzeit_min ?? null,
+      km: e.km != null ? String(e.km).replace('.', ',') : '',
+      worked: e.arbeitszeit_min ?? (start != null && end != null ? (end >= start ? end - start : end + 1440 - start) - pause : null),
+      staff: (e.mitarbeiter || []).map(staffName).filter(Boolean),
+      work: blocks.join(' ').replace(/\s+/g, ' '),
+      workLines: blocks,
+      flat: (r.pauschalen || []).map((p) => ({ name: (p.bezeichnung || '').trim(), qty: (p.anzahl || '').trim(), note: (p.bemerkung || '').trim() })),
+      material: (r.material || []).map((m) => ({ name: (m.bezeichnung || '').trim(), qty: (m.anzahl || '').trim(), unit: (m.einheit || '').trim() })),
+    };
+  });
+}
+
+/** Neue, geänderte und zurückgezogene Scheine holen; Ergebnis: Zahl neuer Einträge */
+async function accountFetchReports() {
+  if (!team || !accountOk() || accountFetchReports.busy || !navigator.onLine) return 0;
+  accountFetchReports.busy = true;
+  let n = 0;
+  try {
+    const out = await accountRequest('reports', { since: reportStore.serverSince || 0 }, team.code);
+    for (const row of out.reports || []) {
+      // ersetzt: alle Einträge dieses Scheins (Zahl der Einsätze kann sich geändert haben)
+      reportStore.items = reportStore.items.filter((x) => x.src !== row.id);
+      if (!row.deleted) {
+        try {
+          n += addReports(serverReportItems(JSON.parse(row.data), out.names || {}));
+        } catch {
+          // unbekanntes Format – übergehen
+        }
+      }
+      reportStore.serverSince = Math.max(reportStore.serverSince || 0, row.changed || 0);
+    }
+    saveReports();
+  } catch {
+    // beim nächsten Mal
+  } finally {
+    accountFetchReports.busy = false;
+  }
+  return n;
+}
+
 // ───────── Einlesen vom Team-Server ─────────
 
 const accountWhen = (t) => {

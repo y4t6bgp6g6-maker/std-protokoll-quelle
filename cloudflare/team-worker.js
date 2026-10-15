@@ -44,6 +44,13 @@
 //                  ← { action: 'delete', user, auth }                    Konto und Sicherungen löschen
 //   PUT    /backup  Header X-User, X-Auth; Inhalt = verschlüsselte Sicherung (Text)  → { at }
 //                    Behalten: die drei neuesten und je Tag (deutsche Zeit) die letzte der vergangenen BACKUP_DAYS Tage
+// Arbeitsscheine aus einer Arbeitsschein-App (ohne Team-Code, Header X-Report-Key = Secret REPORT_KEY, jede Herkunft):
+//   POST   /reports ← Schein (Format „arbeitsschein/1“, siehe checkReport) → { ok, empfaenger, unbekannt }
+//                    Empfänger: Verfasser und alle Mitarbeiter der Einsätze (Benutzernamen der Konten). Gleiche id
+//                    ersetzt den Schein; wer nicht mehr darauf steht, bekommt ihn entfernt
+//   DELETE /reports ← { id }                                   Schein zurückziehen
+//   Abholen mit Konto: POST /account { action: 'reports', since } → { reports: [{ id, data, changed, deleted }], names }
+//   Tabelle reports, je Empfänger eine Zeile; nach REPORT_DAYS Tagen gelöscht
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
 //   GET    /errors → { errors, storage, team, dict, accounts, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
 //                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
@@ -71,6 +78,8 @@ const BACKUP_PART = 900_000; // D1: höchstens 2 MB je Zeile, also in Teilen spe
 const BACKUP_DAYS = 7;
 const AUTH_FAILS = 5; // falsche Passwörter, danach AUTH_WAIT Minuten Pause
 const AUTH_WAIT = 10;
+const REPORT_MAX = 200_000; // Zeichen je Arbeitsschein
+const REPORT_DAYS = 60;
 const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const AI_PER_DAY = 300;
 const AI_CACHE_DAYS = 60;
@@ -431,6 +440,15 @@ async function accountRequest(db, body, h) {
   const row = await checkAccount(db, user, body.auth);
   if (row.error) return json({ error: row.error }, row.status, h);
   if (body.action === 'list') return json({ backups: await backupList(db, user) }, 200, h);
+  if (body.action === 'reports') {
+    await db.exec(REPORT_TABLE);
+    const since = Number(body.since) || 0;
+    const [rows, names] = await db.batch([
+      db.prepare('SELECT id, data, changed, deleted FROM reports WHERE user = ? AND changed > ? ORDER BY changed LIMIT 200').bind(user, since),
+      db.prepare('SELECT user, name FROM accounts'),
+    ]);
+    return json({ reports: rows.results, names: Object.fromEntries(names.results.map((x) => [x.user, x.name || ''])) }, 200, h);
+  }
   if (body.action === 'get') {
     const parts = (await db.prepare('SELECT data FROM backups WHERE user = ? AND at = ? ORDER BY part').bind(user, Number(body.at) || 0).all()).results;
     if (!parts.length) return json({ error: 'missing' }, 404, h);
@@ -450,6 +468,100 @@ async function accountRequest(db, body, h) {
     return json({ ok: true }, 200, h);
   }
   return json({ error: 'action' }, 400, h);
+}
+
+// ───────── Arbeitsscheine ─────────
+
+const REPORT_TABLE = 'CREATE TABLE IF NOT EXISTS reports (id TEXT NOT NULL, user TEXT NOT NULL, data TEXT NOT NULL, changed INTEGER NOT NULL, deleted INTEGER, PRIMARY KEY (id, user))';
+/** CORS für die Arbeitsschein-App: jede Herkunft (geschützt durch den Schlüssel) */
+const REPORT_CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, X-Report-Key',
+  'Access-Control-Max-Age': '86400',
+};
+
+/** Schein prüfen; Ergebnis: Fehlertext (welches Feld) oder '' */
+function checkReport(r) {
+  const str = (v, max, opt) => (v == null || v === '' ? opt : typeof v === 'string' && v.length <= max);
+  const arr = (v, max) => Array.isArray(v) && v.length <= max;
+  const hm = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+  const min = (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 1440);
+  if (!r || typeof r !== 'object') return 'Inhalt';
+  if (r.format !== 'arbeitsschein/1') return 'format';
+  if (typeof r.id !== 'string' || !/^[A-Za-z0-9._:-]{1,100}$/.test(r.id)) return 'id';
+  if (!str(r.nummer, 40, false)) return 'nummer';
+  if (r.erstellt != null && !(typeof r.erstellt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.erstellt))) return 'erstellt';
+  if (!userKey(r.verfasser)) return 'verfasser';
+  const ra = r.rechnungsadresse || {};
+  for (const k of ['name', 'strasse', 'plz', 'ort']) if (!str(ra[k], 200, true)) return `rechnungsadresse.${k}`;
+  const pr = r.projekt || {};
+  for (const k of ['name', 'email']) if (!str(pr[k], 200, true)) return `projekt.${k}`;
+  if (!(ra.name || pr.name)) return 'projekt.name';
+  if (!arr(r.einsaetze, 62) || !r.einsaetze.length) return 'einsaetze';
+  for (const [i, e] of r.einsaetze.entries()) {
+    const at = `einsaetze[${i}]`;
+    if (!e || typeof e.datum !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.datum)) return `${at}.datum`;
+    if (!hm(e.beginn)) return `${at}.beginn`;
+    if (!hm(e.ende)) return `${at}.ende`;
+    for (const k of ['pause_min', 'fahrzeit_min', 'arbeitszeit_min']) if (!min(e[k])) return `${at}.${k}`;
+    if (e.km != null && !(typeof e.km === 'number' && e.km >= 0 && e.km < 100000)) return `${at}.km`;
+    if (!arr(e.mitarbeiter, 30)) return `${at}.mitarbeiter`;
+    for (const [k, m] of e.mitarbeiter.entries()) {
+      if (!m || !str(m.name, 80, true) || !str(m.benutzer, 40, true) || !(m.name || m.benutzer)) return `${at}.mitarbeiter[${k}]`;
+    }
+  }
+  if (!arr(r.arbeiten, 50) || !r.arbeiten.every((t) => str(t, 4000, false))) return 'arbeiten';
+  if (r.pauschalen != null && !(arr(r.pauschalen, 200) && r.pauschalen.every((p) => p && str(p.bezeichnung, 200, true) && str(p.anzahl, 40, true) && str(p.bemerkung, 400, true))))
+    return 'pauschalen';
+  if (r.material != null && !(arr(r.material, 200) && r.material.every((m) => m && str(m.bezeichnung, 200, false) && str(m.anzahl, 40, true) && str(m.einheit, 40, true))))
+    return 'material';
+  return '';
+}
+
+async function reportsRequest(db, req, env, h) {
+  if (!env.REPORT_KEY || !sameCode(req.headers.get('X-Report-Key'), env.REPORT_KEY)) {
+    await new Promise((r) => setTimeout(r, 400));
+    return json({ error: 'key' }, 401, h);
+  }
+  const text = await req.text();
+  if (text.length > REPORT_MAX) return json({ error: 'size' }, 413, h);
+  let r;
+  try {
+    r = JSON.parse(text);
+  } catch {
+    return json({ error: 'json' }, 400, h);
+  }
+  await db.exec(REPORT_TABLE);
+  const now = Date.now();
+  if (req.method === 'DELETE') {
+    if (typeof r?.id !== 'string' || !r.id) return json({ error: 'id' }, 400, h);
+    await db.prepare("UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ?").bind(now, now, r.id).run();
+    return json({ ok: true }, 200, h);
+  }
+  const bad = checkReport(r);
+  if (bad) return json({ error: bad }, 400, h);
+  // Empfänger: Verfasser und alle Mitarbeiter mit Benutzernamen; nur wer ein Konto hat
+  const wanted = [...new Set([r.verfasser, ...r.einsaetze.flatMap((e) => e.mitarbeiter.map((m) => m.benutzer))].map(userKey).filter(Boolean))];
+  await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
+  const known = new Set(
+    (await db.prepare(`SELECT user FROM accounts WHERE user IN (${wanted.map(() => '?').join(',')})`).bind(...wanted).all()).results.map((x) => x.user)
+  );
+  const to = wanted.filter((u) => known.has(u));
+  const ops = to.map((u) =>
+    db
+      .prepare('INSERT INTO reports (id, user, data, changed, deleted) VALUES (?, ?, ?, ?, NULL) ON CONFLICT(id, user) DO UPDATE SET data = excluded.data, changed = excluded.changed, deleted = NULL')
+      .bind(r.id, u, text, now)
+  );
+  // nicht mehr auf dem Schein: dort entfernen
+  ops.push(
+    db
+      .prepare(`UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ? AND deleted IS NULL${to.length ? ` AND user NOT IN (${to.map(() => '?').join(',')})` : ''}`)
+      .bind(now, now, r.id, ...to)
+  );
+  ops.push(db.prepare('DELETE FROM reports WHERE changed < ?').bind(now - REPORT_DAYS * 86400e3));
+  await db.batch(ops);
+  return json({ ok: true, empfaenger: to, unbekannt: wanted.filter((u) => !known.has(u)) }, 200, h);
 }
 
 /** Verschlüsselte Sicherung speichern (Inhalt roh, nicht als JSON verpackt: spart Rechenzeit bei großen Dateien) */
@@ -474,8 +586,14 @@ async function backupPut(db, req, h) {
 
 export default {
   async fetch(req, env, ctx) {
-    const h = cors(req);
+    const isReports = new URL(req.url).pathname === '/reports';
+    const h = isReports ? REPORT_CORS : cors(req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+    // Arbeitsschein-App: eigener Schlüssel statt Team-Code
+    if (isReports) {
+      if (req.method !== 'POST' && req.method !== 'DELETE') return json({ error: 'method' }, 405, h);
+      return reportsRequest(env.DB, req, env, h);
+    }
 
     // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei)
     const teamCode = req.headers.get('X-Team-Code');
