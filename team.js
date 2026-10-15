@@ -37,15 +37,16 @@ async function teamRequest(method, path, body, code = team && team.code) {
 }
 
 // ───────── KI (Workers AI über den Team-Server, nur im Team) ─────────
-// Speicher (nicht in der Sicherung): spell: { Eintrag: Korrektur der KI }, sites: { key, groups: [[Schreibweisen]] }
+// Speicher (nicht in der Sicherung): spell: { Eintrag: Ergebnis (KI, danach Wörterbuch des Servers) }, spellV: Stand des
+// Wörterbuchs (ändert er sich, wird neu geprüft), sites: { key, groups: [[Schreibweisen]] }
 
 const AI_KEY = 'stdprotokoll.ai.v1';
-const AI_SPELL_V = 3; // wie im Worker: neue Fassung der Anweisung → gemerkte Prüfungen verwerfen
 let aiStore = { spell: {}, sites: null };
 try {
   Object.assign(aiStore, JSON.parse(localStorage.getItem(AI_KEY) || '{}'));
 } catch {}
-if (aiStore.spellV !== AI_SPELL_V) aiStore = { ...aiStore, spell: {}, spellV: AI_SPELL_V };
+/** Ergebnisse nur aus dem Wörterbuch (die KI hat nicht geantwortet): zeigen, aber beim nächsten Mal wieder fragen */
+const aiSpellTemp = {};
 const saveAi = () => {
   try {
     localStorage.setItem(AI_KEY, JSON.stringify(aiStore));
@@ -63,9 +64,16 @@ async function aiSpellCheck(items) {
   if (!todo.length) return false;
   todo.forEach((t) => aiSpellBusy.add(t));
   try {
-    const { out } = await teamAi('spell', { items: todo });
-    for (const [t, fixed] of out || []) {
+    const { out, v } = await teamAi('spell', { items: todo });
+    // Wörterbuch oder Anweisung geändert: alles Gemerkte neu prüfen lassen
+    if (v && v !== aiStore.spellV) aiStore = { ...aiStore, spell: {}, spellV: v };
+    for (const [t, fixed, checked] of out || []) {
+      if (!checked) {
+        aiSpellTemp[t] = fixed;
+        continue;
+      }
       aiStore.spell[t] = fixed;
+      delete aiSpellTemp[t];
       // die Korrektur selbst ist richtig geschrieben: nach dem Übernehmen nicht noch einmal fragen
       if (fixed && fixed !== t) aiStore.spell[aiNorm(fixed)] = aiNorm(fixed);
     }
@@ -83,7 +91,7 @@ async function aiSpellCheck(items) {
 /** Korrektur der KI für einen Eintrag, nur wenn sie etwas ändert */
 function aiSpellFix(t) {
   const k = aiNorm(t);
-  const fixed = aiStore.spell[k];
+  const fixed = aiStore.spell[k] ?? aiSpellTemp[k];
   return fixed && fixed !== k ? fixed : null;
 }
 
@@ -282,6 +290,11 @@ async function teamLoad() {
     // Während des Ladens das Team verlassen: Ergebnis verwerfen
     if (!team) return;
     team.cache = { month: data.month, members: teamClean(data.members), posts: teamCleanPosts(data.posts), at: Date.now() };
+    // Wörterbuch auf dem Server geändert: gemerkte Rechtschreib-Prüfungen verwerfen (werden beim nächsten Verlassen neu geprüft)
+    if (data.spellV && data.spellV !== aiStore.spellV) {
+      aiStore = { ...aiStore, spell: {}, spellV: data.spellV };
+      saveAi();
+    }
     saveTeam();
     teamData = team.cache;
   } catch (e) {

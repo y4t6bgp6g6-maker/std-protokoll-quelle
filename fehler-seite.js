@@ -26,6 +26,9 @@ let adminStorage = null;
 /** Team diesen Monat ({ month, people: [{ name, version, updated, sheets }], posts }) und Antwortzeit des Servers in ms */
 let adminTeam = null;
 let adminPing = null;
+/** Wörterbuch des Servers (richtige Schreibweisen, nach der KI) und KI-Verbrauch heute ({ day, neurons, limit }) */
+let adminDict = null;
+let adminAi = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -116,6 +119,8 @@ function renderFehler(full = false) {
     ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
     ${adminServerHTML()}
     ${adminStorageHTML(adminStorage)}
+    ${adminAiHTML(adminAi)}
+    ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
     <h2 class="section-title">Fehlerberichte</h2>
     <div class="fb-list">${list}</div>`;
@@ -175,6 +180,48 @@ function adminStorageHTML(s) {
     </div>`;
 }
 
+/** KI-Kontingent heute als Ring: Neuronen von den kostenlosen am Tag; neu ab 0 Uhr UTC (bei uns 1 bzw. 2 Uhr) */
+function adminAiHTML(ai) {
+  if (!ai || !ai.limit) return '';
+  const used = Math.round(ai.neurons || 0);
+  const share = Math.min(1, used / ai.limit);
+  const r = 22;
+  const len = 2 * Math.PI * r;
+  const color = share >= 0.95 ? 'var(--danger)' : share >= 0.8 ? 'var(--warning)' : 'var(--accent)';
+  const [y, m, d] = String(ai.day).split('-').map(Number);
+  const reset = new Date(Date.UTC(y, m - 1, d + 1)).toLocaleTimeString('de-DE', { hour: 'numeric', minute: '2-digit' });
+  return `<div class="card fb-store fb-ai">
+      <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="${r}" fill="none" stroke="var(--fill)" stroke-width="7"/>${
+        used ? `<circle cx="28" cy="28" r="${r}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${len * share} ${len}" transform="rotate(-90 28 28)"/>` : ''
+      }<text x="28" y="32" text-anchor="middle">${Math.round(share * 100)}%</text></svg>
+      <div><div>KI heute</div><div class="fb-sub">${used.toLocaleString('de-DE')} von ${ai.limit.toLocaleString('de-DE')} Neuronen<br>neu um ${reset} Uhr</div></div>
+    </div>`;
+}
+
+/** Wörterbuch: richtige Schreibweisen, die nach der KI gelten (gleiche Buchstaben, andere Schreibweise → ersetzt) */
+function adminDictHTML(dict) {
+  if (!dict) return '';
+  return `<div class="card fb-store">
+      <div class="fb-store-h"><span>Wörterbuch</span><span class="muted">${dict.length}</span></div>
+      <form class="fb-dict-add" data-fb-form="dict"><input data-fb-word placeholder="Richtige Schreibweise" maxlength="80" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"><button class="fb-dict-btn" aria-label="Hinzufügen">${ICON.plus}</button></form>
+      ${dict.length ? `<div class="fb-chips">${dict.map((w) => `<span class="fb-chip">${escapeHtml(w)}<button data-fb="dict-del" data-word="${escapeHtml(w)}" aria-label="Löschen">${ICON.close}</button></span>`).join('')}</div>` : ''}
+    </div>`;
+}
+
+async function adminDictChange(method, word) {
+  word = String(word || '').replace(/\s+/g, ' ').trim();
+  if (!word || adminBusy) return;
+  adminBusy = true;
+  try {
+    adminDict = (await adminRequest(method, '/dict', { word })).dict || adminDict;
+    haptic();
+  } catch {
+    toast('Keine Verbindung');
+  }
+  adminBusy = false;
+  if (currentView === 'fehler' && admin) renderFehler();
+}
+
 async function adminLoad() {
   try {
     const t0 = performance.now();
@@ -183,6 +230,8 @@ async function adminLoad() {
     adminErrors = data.errors || [];
     adminStorage = data.storage || null;
     adminTeam = data.team || null;
+    adminDict = data.dict || [];
+    adminAi = data.ai || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
@@ -253,7 +302,15 @@ document.addEventListener('click', (e) => {
     case 'push-off':
       adminPushOff();
       break;
+    case 'dict-del':
+      adminDictChange('DELETE', el.dataset.word);
+      break;
   }
+});
+document.addEventListener('submit', (e) => {
+  if (!e.target.matches('[data-fb-form="dict"]')) return;
+  e.preventDefault();
+  adminDictChange('PUT', e.target.querySelector('[data-fb-word]').value);
 });
 // Mitteilung angetippt, App war schon offen: der Service Worker schickt die Seite (ist sie schon offen, neu laden)
 if ('serviceWorker' in navigator)

@@ -11,12 +11,16 @@
 // Die Tabelle legt der Worker selbst an.
 //
 // Anfragen (Code im Header X-Team-Code):
-//   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }] }
+//   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }], spellV }
+//                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
 //   PUT    /me     ← { member, token, name, month, sheets, version }   eigener Eintrag (version: App-Version für die Admin-Seite)
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
-//   POST   /ai     ← { member, token, task: 'spell', items }   → { out }    Rechtschreibung je Eintrag (Arbeit, Baustelle)
+//   POST   /ai     ← { member, token, task: 'spell', items }   → { v, out: [[Eintrag, Ergebnis, geprüft]] }
+//                    Rechtschreibung je Eintrag (Arbeit, Baustelle): erst die KI, danach das Wörterbuch (Tabelle dict:
+//                    richtige Schreibweisen; gleiche Buchstaben in anderer Schreibweise werden ersetzt). Antwortet die KI
+//                    nicht (Kontingent, Fehler), gilt nur das Wörterbuch (geprüft = false). v ändert sich mit dem Wörterbuch
 //                  ← { member, token, task: 'sites', names }   → { groups } welche Baustellen-Schreibweisen dieselbe meinen
 //                    Workers AI (kostenloses Tageskontingent); Ergebnisse in ai_cache (60 Tage), höchstens AI_PER_DAY
 //                    Anfragen je Person und Tag. Nur mit eigenem Eintrag im laufenden Monat
@@ -25,7 +29,10 @@
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
-//   GET    /errors → { errors, storage, team }                die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat
+//   GET    /errors → { errors, storage, team, dict, ai }      die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
+//                                                              Wörterbuch, KI-Verbrauch heute (Neuronen, Tag in UTC)
+//   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
+//   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
 //   DELETE /push   ← { endpoint }                              abmelden
 // Web Push: Secret VAPID_JWK (privater Schlüssel als JWK), öffentlicher Schlüssel steht in fehler-seite.js
@@ -42,16 +49,15 @@ const STORAGE_LIMIT = 500 * 1024 * 1024; // D1 im kostenlosen Tarif: 500 MB je D
 const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const AI_PER_DAY = 300;
 const AI_CACHE_DAYS = 60;
-// Fassung der Anweisung: Teil des Speicher-Schlüssels, damit eine geänderte Anweisung alles neu prüft.
-// Dazu kommen eigene Schreibweisen aus dem Secret AI_HINTS (z. B. Ketten, die das Modell nicht sicher kennt) –
-// sie stehen nur bei Cloudflare, nicht im Repo, weil sie Baustellen verraten würden.
-const AI_SPELL_V = 3;
+// Fassung der Anweisung: Teil des Speicher-Schlüssels, damit eine geänderte Anweisung alles neu prüft
+const AI_SPELL_V = 4;
+const AI_FREE = 10000; // kostenlose Neuronen je Tag (Workers AI), neu ab 0 Uhr UTC
 const AI_SPELL = "Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung, auch in Straßennamen (z. B. „Lindenwg“ → „Lindenweg“, „Hauptstrase“ → „Hauptstraße“). Formuliere nichts um, füge keine Wörter hinzu, lass Abkürzungen und Zahlen so. Namen bekannter Marken, Ketten und Unternehmen schreibst du genau in ihrer offiziellen Schreibweise – fehlende Apostrophe, Akzente und Großbuchstaben ergänzt du, auch wenn noch ein Ort oder anderes dabei steht (z. B. „loreal“ → „L'Oréal“, „starbucks Musterstadt“ → „Starbucks Musterstadt“, „ikea“ → „IKEA“). Namen von Personen, kleinen Firmen und Orten lässt du so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {\"out\": [\"…\", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.";
-const spellPrompt = (env) => (env.AI_HINTS ? `${AI_SPELL} Weitere richtige Schreibweisen: ${env.AI_HINTS}` : AI_SPELL);
 const AI_SITES = 'Du bekommst nummerierte Baustellen-Bezeichnungen, die Handwerker einer Firma in ihre Stundenzettel geschrieben haben. Fasse die zusammen, die sicher dieselbe Baustelle meinen (andere Schreibweise, Tippfehler, Abkürzung, Ort oder Kunde zusätzlich genannt oder weggelassen, Straße abgekürzt). Verschiedene Hausnummern, verschiedene Straßen, verschiedene Gebäude oder Kunden am selben Ort sind verschiedene Baustellen. Im Zweifel getrennt lassen. Antworte nur mit JSON: {"groups": [[Nummer, Nummer, …], …]} – nur Gruppen mit mindestens zwei Nummern.';
 
-/** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort */
-async function aiJson(env, system, user, maxTokens) {
+/** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort.
+ *  Den Verbrauch (Neuronen) zählt der Worker selbst mit, für den Balken auf der Server-Seite */
+async function aiJson(env, db, system, user, maxTokens) {
   const r = await env.AI.run(AI_MODEL, {
     messages: [
       { role: 'system', content: system },
@@ -61,9 +67,62 @@ async function aiJson(env, system, user, maxTokens) {
     temperature: 0,
     chat_template_kwargs: { enable_thinking: false },
   });
+  const u = r?.usage || {};
+  // ohne Angabe aus den Tokens geschätzt (Preise von Gemma 4: 9091 bzw. 27273 Neuronen je Million)
+  const neurons = Number(u.neurons) || ((u.prompt_tokens || 0) * 9091 + (u.completion_tokens || 0) * 27273) / 1e6;
+  await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
+  await db
+    .prepare('INSERT INTO ai_day (day, neurons) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET neurons = neurons + excluded.neurons')
+    .bind(new Date().toISOString().slice(0, 10), neurons)
+    .run();
   const text = String(r?.choices?.[0]?.message?.content ?? r?.response ?? '');
   const m = text.match(/\{[\s\S]*\}/);
   return JSON.parse(m ? m[0] : text);
+}
+
+// ───────── Wörterbuch: richtige Schreibweisen (nach der KI) ─────────
+
+/** Nur Buchstaben und Ziffern, klein, ohne Akzente: „L'Oréal“, „l oreal“ und „Loreal“ ergeben „loreal“ */
+const dictKey = (s) =>
+  String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+async function loadDict(db) {
+  await db.exec('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)');
+  return (await db.prepare('SELECT key, word FROM dict ORDER BY word COLLATE NOCASE').all()).results;
+}
+/** Stand von Anweisung und Wörterbuch: ändert er sich, verwerfen die iPhones ihre gemerkten Prüfungen */
+const spellVersion = async (dict) => (await sha256(`${AI_SPELL_V}|${dict.map((d) => d.word).join('|')}`)).slice(0, 12);
+/** Wortfolgen, deren Buchstaben einem Eintrag gleichen, in dessen Schreibweise bringen (längste Folge zuerst);
+ *  Satzzeichen davor und dahinter bleiben. Tippfehler erkennt das Wörterbuch nicht – die korrigiert vorher die KI */
+function applyDict(text, dict) {
+  if (!dict.length || !text) return text;
+  const map = new Map(dict.map((d) => [d.key, d.word]));
+  // „star bucks“ hat mehr Wörter als „Starbucks“: bis zu zwei Wörter mehr als der längste Eintrag
+  const maxWords = Math.max(...dict.map((d) => d.word.split(/\s+/).length)) + 2;
+  const toks = text.split(' ');
+  const out = [];
+  for (let i = 0; i < toks.length; ) {
+    let n = Math.min(maxWords, toks.length - i);
+    for (; n >= 1; n--) {
+      const seg = toks.slice(i, i + n).join(' ');
+      const pre = seg.match(/^[^\p{L}\p{N}]*/u)[0];
+      const post = seg.slice(pre.length).match(/[^\p{L}\p{N}]*$/u)[0];
+      const core = seg.slice(pre.length, seg.length - post.length);
+      // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph, Bindestrich und Punkt (keine Kommas usw.)
+      if (!core || /[^\p{L}\p{N}\s'’`´.\-]/u.test(core)) continue;
+      const word = map.get(dictKey(core));
+      if (word) {
+        out.push(pre + word + post);
+        break;
+      }
+    }
+    if (n >= 1) i += n;
+    else out.push(toks[i++]);
+  }
+  return out.join(' ');
 }
 
 /** Spalte version nachträglich anlegen (ältere Tabelle ohne sie); einmal je Worker-Instanz */
@@ -212,7 +271,7 @@ export default {
         const { results } = await db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month).all();
         const members = results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
         const posts = (await db.prepare('SELECT id, member, name, text, created FROM posts WHERE month = ? ORDER BY created DESC LIMIT 200').bind(month).all()).results;
-        return json({ month, members, posts }, 200, h);
+        return json({ month, members, posts, spellV: await spellVersion(await loadDict(db)) }, 200, h);
       }
 
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
@@ -248,6 +307,8 @@ export default {
         if (Math.random() < 0.05) {
           await db.prepare('DELETE FROM ai_cache WHERE created < ?').bind(Date.now() - AI_CACHE_DAYS * 86400000).run();
           await db.prepare('DELETE FROM ai_use WHERE day < ?').bind(day).run();
+          await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
+          await db.prepare('DELETE FROM ai_day WHERE day < ?').bind(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)).run();
         }
         const used = await db.prepare('SELECT n FROM ai_use WHERE member = ? AND day = ?').bind(body.member, day).first();
         const count = async () =>
@@ -255,31 +316,36 @@ export default {
         const str = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
 
         if (body.task === 'spell') {
-          // Jeder Eintrag einzeln im Speicher: was schon einmal geprüft wurde (auch bei Kollegen), kostet nichts mehr
+          // Jeder Eintrag einzeln im Speicher: was die KI schon einmal geprüft hat (auch bei Kollegen), kostet nichts mehr.
+          // Gespeichert wird das Ergebnis der KI; das Wörterbuch kommt erst beim Antworten dazu (Änderungen gelten sofort)
           const items = [...new Set((Array.isArray(body.items) ? body.items : []).map(str).filter(Boolean))].slice(0, 20);
-          const v = `${AI_SPELL_V}${env.AI_HINTS ? (await sha256(env.AI_HINTS)).slice(0, 8) : ''}`;
-          const keys = await Promise.all(items.map(async (t) => `spell${v}:${await sha256(t)}`));
-          const out = new Map();
+          const dict = await loadDict(db);
+          const v = await spellVersion(dict);
+          const keys = await Promise.all(items.map(async (t) => `spell${AI_SPELL_V}:${await sha256(t)}`));
+          const ai = new Map();
           for (let i = 0; i < items.length; i++) {
             const row = await db.prepare('SELECT result FROM ai_cache WHERE key = ?').bind(keys[i]).first();
-            if (row) out.set(items[i], row.result);
+            if (row) ai.set(items[i], row.result);
           }
-          const todo = items.filter((t) => !out.has(t));
-          if (todo.length) {
-            if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
-            await count();
-            const res = await aiJson(env, spellPrompt(env), JSON.stringify(todo), 40 + todo.length * 40);
-            if (!Array.isArray(res.out) || res.out.length !== todo.length) return json({ error: 'ai' }, 502, h);
-            const now = Date.now();
-            await db.batch(
-              todo.map((t, i) => {
-                const fixed = str(res.out[i]) || t;
-                out.set(t, fixed);
-                return db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(keys[items.indexOf(t)], fixed, now);
-              })
-            );
+          const todo = items.filter((t) => !ai.has(t));
+          if (todo.length && !(used && used.n >= AI_PER_DAY)) {
+            // Antwortet die KI nicht (Kontingent aufgebraucht, Fehler), gilt nur das Wörterbuch
+            try {
+              await count();
+              const res = await aiJson(env, db, AI_SPELL, JSON.stringify(todo), 40 + todo.length * 40);
+              if (Array.isArray(res.out) && res.out.length === todo.length) {
+                const now = Date.now();
+                await db.batch(
+                  todo.map((t, i) => {
+                    const fixed = str(res.out[i]) || t;
+                    ai.set(t, fixed);
+                    return db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(keys[items.indexOf(t)], fixed, now);
+                  })
+                );
+              }
+            } catch {}
           }
-          return json({ out: items.map((t) => [t, out.get(t)]) }, 200, h);
+          return json({ v, out: items.map((t) => [t, applyDict(ai.get(t) ?? t, dict), ai.has(t)]) }, 200, h);
         }
 
         if (body.task === 'sites') {
@@ -290,7 +356,7 @@ export default {
           if (row) return json({ groups: JSON.parse(row.result) }, 200, h);
           if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
           await count();
-          const res = await aiJson(env, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
+          const res = await aiJson(env, db, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
           const groups = (Array.isArray(res.groups) ? res.groups : [])
             .map((g) => [...new Set((Array.isArray(g) ? g : []).map((i) => names[Number(i) - 1]).filter(Boolean))])
             .filter((g) => g.length >= 2);
@@ -328,7 +394,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push') {
+      if (path === '/errors' || path === '/push' || path === '/dict') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -352,7 +418,21 @@ export default {
           // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
           const people = (await db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month).all()).results;
           const { n: postCount } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month).first();
-          return json({ errors: results, storage, team: { month, people, posts: postCount } }, 200, h);
+          await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
+          const today = new Date().toISOString().slice(0, 10);
+          const aiRow = await db.prepare('SELECT neurons FROM ai_day WHERE day = ?').bind(today).first();
+          const dict = (await loadDict(db)).map((d) => d.word);
+          return json({ errors: results, storage, team: { month, people, posts: postCount }, dict, ai: { day: today, neurons: aiRow ? aiRow.neurons : 0, limit: AI_FREE } }, 200, h);
+        }
+        if (path === '/dict' && (req.method === 'PUT' || req.method === 'DELETE')) {
+          const body = await readBody(req);
+          const word = String(body.word ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+          const key = dictKey(word);
+          if (!key) return json({ error: 'word' }, 400, h);
+          await loadDict(db);
+          if (req.method === 'DELETE') await db.prepare('DELETE FROM dict WHERE key = ?').bind(key).run();
+          else await db.prepare('INSERT OR REPLACE INTO dict (key, word, created) VALUES (?, ?, ?)').bind(key, word, Date.now()).run();
+          return json({ dict: (await loadDict(db)).map((d) => d.word) }, 200, h);
         }
         if (path === '/push' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);
