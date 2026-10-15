@@ -8,7 +8,9 @@ const BH_KEY = 'stdprotokoll.berichtsheft.v1';
 // sigs: gespeicherte Unterschriften { azubi, eltern, ausbilder } wie settings.signature
 // autoSign: jeder geschriebene Bericht trägt von selbst die Unterschrift des Azubis (Datum = letzte Änderung)
 // hefte: [{ id, jahr, start, end, weeks: { Montag 'JJJJ-MM-TT': Woche }, months: { 'JJJJ-MM': Monat } }]
-// Woche: { days: [{ lines: [{ t, h }] (bis 5 Zeilen: Tätigkeit, Einzelstunden), hours (Gesamtstunden) }] × 6 (Mo–Sa),
+// Woche: { days: [{ lines: [{ t, h }] (bis 5 Zeilen: Tätigkeit, Einzelstunden), hours (Gesamtstunden),
+//                   type (Tagesart wie im Stundenzettel: krank, urlaub, feiertag, frei; fehlt = Arbeit) }] × 6 (Mo–Sa),
+//          Mit Tagesart bleiben Zeilen und Stunden gespeichert (zurück auf Arbeit sind sie wieder da), zählen aber nicht
 //          signed: { azubi, eltern, ausbilder: 'JJJJ-MM-TT' } }
 // Monat: { taet: { text, img }, schule: { text, img }, signed } – img: { id, w, h } (Bild in IndexedDB)
 let bh = { profile: {}, sigs: {}, hefte: [] };
@@ -25,7 +27,7 @@ function normDay(d) {
   const lines = Array.isArray(d?.lines)
     ? d.lines.map((l) => ({ t: String(l?.t || ''), h: String(l?.h || '') }))
     : String(d?.text || '').split('\n').map((s) => s.trim()).filter(Boolean).map((t) => ({ t, h: '' }));
-  return { lines: capLines(lines), hours: d?.hours || '' };
+  return { lines: capLines(lines), hours: d?.hours || '', ...(d?.type ? { type: d.type } : {}) };
 }
 function normWeek(w) {
   if (w) w.days = [0, 1, 2, 3, 4, 5].map((i) => normDay(w.days?.[i]));
@@ -129,6 +131,16 @@ function bhYearRange(jahr) {
   if (bh.profile.ende && bh.profile.ende >= isoDate(start) && bh.profile.ende < end) end = bh.profile.ende;
   return { start: isoDate(start), end };
 }
+/** Ausbildungsjahr von heute als Text (Heft-Nr.); leer ohne Beginn oder außerhalb der Ausbildung */
+function bhYearToday() {
+  if (!bh.profile.beginn) return '';
+  const today = isoDate(new Date());
+  for (let j = 1; j <= bhYearCount(); j++) {
+    const r = bhYearRange(j);
+    if (today >= r.start && today <= r.end) return String(j);
+  }
+  return '';
+}
 /** Anzahl der Ausbildungsjahre bis zum Ende der Ausbildung (angefangene zählen); ohne Ende 4 */
 function bhYearCount() {
   if (!bh.profile.ende || !bh.profile.beginn || bh.profile.ende < bh.profile.beginn) return 4;
@@ -186,13 +198,14 @@ function weekSpan(h, monday, w) {
 
 const emptyWeek = () => ({ days: [0, 1, 2, 3, 4, 5].map(() => ({ lines: [], hours: '' })), signed: {} });
 const emptyMonth = () => ({ taet: { text: '' }, schule: { text: '' }, signed: {} });
-const dayFilled = (d) => !!d?.lines?.some((l) => l.t.trim());
+const dayFilled = (d) => !!d?.type || !!d?.lines?.some((l) => l.t.trim());
 const weekFilled = (w) => !!w && w.days?.some(dayFilled);
 const monthFilled = (m) => !!m && ['taet', 'schule'].some((k) => (m[k]?.text || '').trim() || m[k]?.img);
 /** Tag eines Wochenberichts fertig: eine Zeile mit mindestens 2 Wörtern oder 10 Zeichen und Gesamtstunden.
- *  Andere Tagesarten (Zeile beginnt mit Urlaub, Krank, Frei, Feiertag) und gesetzliche Feiertage brauchen beides nicht. */
+ *  Andere Tagesarten (gewählt oder Zeile beginnt mit Urlaub, Krank, Frei, Feiertag) und gesetzliche Feiertage brauchen
+ *  beides nicht. */
 function dayComplete(d, date) {
-  if (holidayName(date)) return true;
+  if (d?.type || holidayName(date)) return true;
   const texts = (d?.lines || []).map((l) => l.t.trim()).filter(Boolean);
   const types = Object.values(DAY_STATUS_SHORT).map((t) => t.toLowerCase());
   if (texts.some((t) => types.includes(t.split(/[\s,.(]+/)[0].toLowerCase()))) return true;
@@ -492,9 +505,13 @@ function renderBhWeek(h, mon) {
     const date = addDays(parseDate(mon), i);
     if (i === 5 && !dayFilled(d) && !bhSatOpen)
       return `<button class="card bh-day bh-sat" data-bh="sat">${ICON.plus} Samstag ${fmtDayMonth(date)}</button>`;
+    if (d.type)
+      return `<section class="card bh-day bh-typed status-${d.type}" data-i="${i}">
+      <div class="bh-day-head"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${bhTypeBtn(i, d)}</div>
+    </section>`;
     const lines = d.lines.length ? d.lines : [{ t: '', h: '' }];
     return `<section class="card bh-day" data-i="${i}">
-      <div class="bh-day-head"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>
+      <div class="bh-day-head"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${bhTypeBtn(i, d)}
         <label class="bh-hours"><input data-bh-hours="${i}" inputmode="decimal" placeholder="0,00" value="${escapeHtml(d.hours || '')}" enterkeyhint="done"><span>Std.</span></label>
       </div>
       <div class="bh-lines">${lines.map((l, k) => lineHTML(i, k, l, d)).join('')}${lines.length < BH_LINES ? addLineHTML(i) : ''}</div>
@@ -518,6 +535,32 @@ function renderBhWeek(h, mon) {
   if (locked) app.querySelectorAll('.bh-locked input').forEach((x) => (x.readOnly = true));
   fitRowTexts();
   updatePdfThumb(true);
+}
+/** Tagesart-Knopf wie im Stundenzettel (nur Mo–Fr) */
+const bhTypeLabel = (type, date) => (type === 'feiertag' ? holidayName(date) || 'Feiertag' : DAY_STATUS_SHORT[type]);
+const bhTypeBtn = (i, d) =>
+  i < 5
+    ? `<button class="chip-btn status-btn bh-type ${d.type ? `set status-tag status-${d.type}` : ''}" data-bh="type" data-i="${i}">${
+        d.type ? `${ICON[d.type]} ${DAY_STATUS_SHORT[d.type]}` : 'Arbeit'
+      } ▾</button>`
+    : '';
+/** Tagesart wählen; Zeilen und Stunden bleiben dabei gespeichert */
+function bhChooseType(i) {
+  const { h, key } = bhEntry;
+  const d = bhCurrent(false)?.days[i];
+  const set = (type) => {
+    const w = bhCurrent();
+    if (type) w.days[i].type = type;
+    else delete w.days[i].type;
+    bhBreakSeal(w);
+    bhWeekChanged(w);
+    saveBh();
+    renderBhWeek(h, key);
+  };
+  actionSheet([
+    { label: `${d?.type ? '' : '✓ '}Arbeit`, run: () => set(null) },
+    ...Object.entries(DAY_STATUS_SHORT).map(([k, label]) => ({ label: `${d?.type === k ? '✓ ' : ''}${label}`, run: () => set(k) })),
+  ]);
 }
 let bhSatOpen = false;
 let bhEntry = null; // { kind, h, key } der geöffneten Seite
@@ -573,7 +616,7 @@ function bhCurrent(create = true) {
  *  Einzelstunden bleiben leer: die Pause gehört zum ganzen Tag und lässt sich keiner Tätigkeit zuordnen. */
 function sheetDayReport(d, date) {
   if (!d) return null;
-  if (d.status && !canWork(d)) return { lines: [DAY_STATUS_SHORT[d.status]], hours: '' };
+  if (d.status && !canWork(d)) return { type: d.status };
   const parts = [];
   for (const r of d.rows) for (const p of String(r.work || '').split(',')) if (p.trim() && !parts.some((x) => sameKey(x) === sameKey(p))) parts.push(p.trim());
   const holiday = d.status === 'feiertag' ? holidayName(date) || 'Feiertag' : '';
@@ -591,7 +634,8 @@ function weekFromSheets() {
       const date = addDays(parseDate(key), i);
       const r = sheetDayReport(sheetDayFor(date), date);
       if (!r) continue;
-      w.days[i] = { lines: capLines(r.lines.map((t) => ({ t, h: '' }))), hours: r.hours };
+      // Tagesart: was dort schon steht, bleibt gespeichert (zurück auf Arbeit ist es wieder da)
+      w.days[i] = r.type ? { ...w.days[i], type: r.type } : { lines: capLines(r.lines.map((t) => ({ t, h: '' }))), hours: r.hours };
       n++;
     }
     if (n) bhBreakSeal(w);
@@ -810,8 +854,10 @@ function renderBhInfo() {
           : ''
       }`
     ).join('')}</div>
-    </div>`;
+    </div>
+    ${pdfThumbHTML('Vorblatt')}`;
   app.querySelectorAll('.bh-tf textarea').forEach(bhFitField);
+  updatePdfThumb(true);
 }
 
 /** Langer Wert: Bezeichnung klein darüber, Wert darunter mit Umbruch – so ist immer alles zu sehen */
@@ -871,9 +917,13 @@ function addWeekPage(doc, h, mon) {
   return bhWeekPage(doc, {
     nr: String(heftWeeks(h).indexOf(mon) + 1),
     head: bhHeadFor(h, a, b),
-    days: [0, 1, 2, 3, 4, 5].map((i) =>
-      days.includes(i) && w ? { lines: w.days[i].lines.filter((l) => l.t.trim() || l.h.trim()), total: w.days[i].hours || '' } : null
-    ),
+    days: [0, 1, 2, 3, 4, 5].map((i) => {
+      if (!days.includes(i) || !w) return null;
+      const d = w.days[i];
+      // Tagesart: nur ihr Name (beim Feiertag der des Feiertags), ohne Stunden
+      if (d.type) return { lines: [{ t: bhTypeLabel(d.type, addDays(parseDate(mon), i)), h: '' }], total: '' };
+      return { lines: d.lines.filter((l) => l.t.trim() || l.h.trim()), total: d.hours || '' };
+    }),
     sigs: bhSigsFor(w),
   });
 }
@@ -910,6 +960,16 @@ function buildHeftPdf(h, kind, page = null) {
     : `Berichtsheft ${h.jahr}. Ausbildungsjahr – ${monthly ? 'Monate' : 'Wochen'}`;
   const blob = doc.output({ title: what, author: bhName() });
   return new File([blob], `${what}.pdf`, { type: 'application/pdf' });
+}
+
+/** Deckblatt und Vorblatt mit den Angaben, je als eigenes PDF (Vorschau auf der Seite „Angaben“ zum Durchblättern) */
+function bhInfoFiles() {
+  const one = (title, draw) => {
+    const doc = new BhPdf();
+    draw(doc);
+    return new File([doc.output({ title, author: bhName() })], `${title}.pdf`, { type: 'application/pdf' });
+  };
+  return [one('Deckblatt', (doc) => bhDeckblatt(doc, false, bhProfileForPdf())), one('Vorblatt', (doc) => bhVorblatt(doc, false, bhProfileForPdf(), bhYearToday()))];
 }
 
 /** PDF der geöffneten Wochen- oder Monatsseite (für die Vorschau) */
@@ -1036,6 +1096,9 @@ document.addEventListener('click', (e) => {
     case 'sign':
       signTap(el.dataset.role);
       break;
+    case 'type':
+      bhChooseType(Number(el.dataset.i));
+      break;
     case 'sig-edit':
       editSignature(el.dataset.role);
       break;
@@ -1097,6 +1160,7 @@ document.addEventListener('input', (e) => {
     bh.profile[t.dataset.bhP] = t.value.trim();
     if (t.dataset.bhP === 'beginn' || t.dataset.bhP === 'ende') bhRecalcYears();
     saveBh();
+    updatePdfThumb();
   }
 });
 

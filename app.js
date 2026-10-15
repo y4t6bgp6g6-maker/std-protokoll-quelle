@@ -2906,13 +2906,19 @@ document.addEventListener('touchmove', (e) => e.touches.length > 1 && e.preventD
 
 let pdfUrl = null;
 let pdfThumbTimer = 0;
+/** Mehrere Blätter (je ein PDF mit einer Seite, z. B. Deckblatt und Vorblatt): Adressen und angezeigtes Blatt */
+let pdfUrls = [];
+let pdfPage = 0;
+let pdfPagesView = null;
 /** Vorschau neu erzeugen – nach Änderungen kurz gewartet, damit nicht bei jedem Tastendruck ein PDF entsteht */
 function updatePdfThumb(now = false) {
   clearTimeout(pdfThumbTimer);
   const run = () => {
     const img = document.getElementById('pdf-thumb');
     if (!img) return;
+    if (pdfPagesView !== currentView) (pdfPage = 0), (pdfPagesView = currentView);
     let file = null;
+    if (currentView === 'bhInfo') return showPdfPages(img, bhInfoFiles());
     if (currentView === 'trip') {
       const t = currentTrip();
       if (t && t.dates.length) file = tripPdfFile(t);
@@ -2920,22 +2926,46 @@ function updatePdfThumb(now = false) {
     // Zettel: Vorschau zeigt den gespeicherten Stand, Änderungen erst nach „Eintrag speichern“
     else if (currentSheet()) file = pdfFileFor(savedSheet(currentSheet()));
     // Abrechnung ohne Reisetage: noch keine Vorschau
-    img.closest('.pv-thumb').hidden = !file;
-    if (!file) return;
-    // Alte Vorschau erst später freigeben: lädt sie noch, gäbe es sonst einen Ladefehler
-    const old = pdfUrl;
-    if (old) setTimeout(() => URL.revokeObjectURL(old), 10000);
-    pdfUrl = URL.createObjectURL(file);
-    img.src = pdfUrl;
+    showPdfPages(img, file ? [file] : []);
   };
   if (now) run();
   else pdfThumbTimer = setTimeout(run, 400);
 }
+/** Blätter in die Vorschau; bei mehreren mit Pfeilen zum Durchblättern */
+function showPdfPages(img, files) {
+  const box = img.closest('.pv-box');
+  box.hidden = !files.length;
+  if (!files.length) return;
+  // Alte Vorschau erst später freigeben: lädt sie noch, gäbe es sonst einen Ladefehler
+  const old = pdfUrls;
+  if (old.length) setTimeout(() => old.forEach((u) => URL.revokeObjectURL(u)), 10000);
+  pdfUrls = files.map((f) => URL.createObjectURL(f));
+  pdfPage = Math.min(pdfPage, files.length - 1);
+  showPdfPage();
+}
+function showPdfPage() {
+  const img = document.getElementById('pdf-thumb');
+  if (!img || !pdfUrls.length) return;
+  pdfUrl = pdfUrls[pdfPage];
+  img.src = pdfUrl;
+  const pager = img.closest('.pv-box').querySelector('.pv-pager');
+  pager.hidden = pdfUrls.length < 2;
+  pager.querySelector('.pv-n').textContent = `${pdfPage + 1} / ${pdfUrls.length}`;
+  pager.querySelector('[data-act="pdf-prev"]').disabled = pdfPage === 0;
+  pager.querySelector('[data-act="pdf-next"]').disabled = pdfPage === pdfUrls.length - 1;
+}
 
-const pdfThumbHTML = (what, wide = false) => `<button class="pv-thumb ${wide ? 'wide' : ''}" data-act="pdf-preview" aria-label="PDF-Vorschau vergrößern">
-      <img id="pdf-thumb" alt="">
-      <span><b>PDF-Vorschau</b><span class="muted">Antippen zum Vergrößern</span></span>
-    </button>`;
+const pdfThumbHTML = (what, wide = false) => `<div class="pv-box">
+      <button class="pv-thumb ${wide ? 'wide' : ''}" data-act="pdf-preview" aria-label="PDF-Vorschau vergrößern">
+        <img id="pdf-thumb" alt="">
+        <span><b>PDF-Vorschau</b><span class="muted">Antippen zum Vergrößern</span></span>
+      </button>
+      <div class="pv-pager" hidden>
+        <button class="pv-arrow" data-act="pdf-prev" aria-label="Vorheriges Blatt">${ICON.chevronLeft}</button>
+        <span class="pv-n"></span>
+        <button class="pv-arrow" data-act="pdf-next" aria-label="Nächstes Blatt">${ICON.chevronRight}</button>
+      </div>
+    </div>`;
 
 /**
  * Große Vorschau: Seite auf Breite. Zoomen (zwei Finger, Doppeltipp) und Ziehen (ein Finger, mit Schwung) laufen
@@ -5593,6 +5623,11 @@ document.addEventListener('click', (e) => {
     }
     case 'pdf-preview':
       openPdfPreview();
+      break;
+    case 'pdf-prev':
+    case 'pdf-next':
+      pdfPage = Math.max(0, Math.min(pdfUrls.length - 1, pdfPage + (act === 'pdf-next' ? 1 : -1)));
+      showPdfPage();
       break;
     case 'delrow': {
       const { s, dayIndex, day, rowIndex, row } = rowContext(el);

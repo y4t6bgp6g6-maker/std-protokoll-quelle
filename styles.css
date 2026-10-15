@@ -1083,7 +1083,16 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .pv-thumb:active { background: var(--fill); }
 .pv-thumb img { flex: none; width: 92px; aspect-ratio: 595 / 842; border-radius: 4px; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
 .pv-thumb.wide img { width: 124px; aspect-ratio: 842 / 595; }
+.pv-box { position: relative; }
+.pv-box[hidden], .pv-pager[hidden] { display: none; }
 .pv-thumb[hidden] { display: none; }
+.pv-pager { display: flex; align-items: center; gap: 4px; z-index: 1; } /* über der Vorschau-Schaltfläche (Safari stapelt sie sonst darüber) */
+.pv-arrow { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: var(--fill); color: var(--accent); }
+.pv-arrow:disabled { color: var(--muted); opacity: 0.4; }
+.pv-arrow svg { width: 18px; height: 18px; }
+.pv-n { min-width: 44px; text-align: center; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Pfeile unten rechts in der Karte */
+.pv-pager { position: absolute; right: 12px; bottom: 12px; }
 .pv-thumb b { display: block; font-size: 17px; }
 .pv-thumb .muted { font-size: 14px; }
 .modal.pv-modal { top: 0; max-width: none; display: flex; flex-direction: column; background: var(--bg); }
@@ -1712,6 +1721,8 @@ a.s-row:active { background: var(--fill); }
 .bh-day { padding: 10px 14px 4px; }
 .bh-day-head { display: flex; align-items: center; gap: 6px; }
 .bh-day-head .muted { flex: 1; }
+.bh-type { flex: none; }
+.bh-typed .bh-day-head { padding: 2px 0 6px; }
 .bh-hours { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 15px; }
 .bh-hours input {
   width: 64px;
