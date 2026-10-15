@@ -1907,9 +1907,10 @@ a.s-row:active { background: var(--fill); }
 .fb-legend span { display: flex; align-items: center; gap: 6px; }
 .fb-legend i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .fb-legend b { margin-left: auto; font-weight: 500; color: var(--muted); }
-.fb-ai { display: flex; align-items: center; gap: 14px; }
-.fb-ai svg { flex: none; }
-.fb-ai text { font-size: 12px; font-weight: 700; fill: var(--text); }
+.fb-rings { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 10px; margin-top: 12px; }
+.fb-ring { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.fb-ring svg { flex: none; }
+.fb-ring text { font-size: 12px; font-weight: 700; fill: var(--text); }
 .fb-sub { margin-top: 2px; font-size: 13px; color: var(--muted); }
 .fb-dict-add { display: flex; gap: 8px; margin-top: 10px; }
 .fb-dict-add input { flex: 1; min-width: 0; padding: 9px 12px; border: 0; outline: 0; border-radius: 10px; background: var(--fill); font: inherit; font-size: 16px; color: var(--text); }

@@ -29,12 +29,13 @@
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
-//   GET    /errors → { errors, storage, team, dict, ai }      die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
-//                                                              Wörterbuch, KI-Verbrauch heute (Neuronen, Tag in UTC)
+//   GET    /errors → { errors, storage, team, dict, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
+//                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
 //   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
 //   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
 //   DELETE /push   ← { endpoint }                              abmelden
+// Tagesgrenzen: Secret CF_STATS_TOKEN (API-Token nur mit „Konto-Analysen: Lesen“) und Variable CF_ACCOUNT_ID
 // Web Push: Secret VAPID_JWK (privater Schlüssel als JWK), öffentlicher Schlüssel steht in fehler-seite.js
 
 const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
@@ -51,13 +52,16 @@ const AI_PER_DAY = 300;
 const AI_CACHE_DAYS = 60;
 // Fassung der Anweisung: Teil des Speicher-Schlüssels, damit eine geänderte Anweisung alles neu prüft
 const AI_SPELL_V = 4;
-const AI_FREE = 10000; // kostenlose Neuronen je Tag (Workers AI), neu ab 0 Uhr UTC
+// Kostenloser Tarif je Tag (neu ab 0 Uhr UTC): Anfragen an Worker, gelesene/geschriebene Zeilen in D1, Neuronen der KI
+const FREE_REQUESTS = 100000;
+const FREE_ROWS_READ = 5000000;
+const FREE_ROWS_WRITTEN = 100000;
+const AI_FREE = 10000;
 const AI_SPELL = "Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung, auch in Straßennamen (z. B. „Lindenwg“ → „Lindenweg“, „Hauptstrase“ → „Hauptstraße“). Formuliere nichts um, füge keine Wörter hinzu, lass Abkürzungen und Zahlen so. Namen bekannter Marken, Ketten und Unternehmen schreibst du genau in ihrer offiziellen Schreibweise – fehlende Apostrophe, Akzente und Großbuchstaben ergänzt du, auch wenn noch ein Ort oder anderes dabei steht (z. B. „loreal“ → „L'Oréal“, „starbucks Musterstadt“ → „Starbucks Musterstadt“, „ikea“ → „IKEA“). Namen von Personen, kleinen Firmen und Orten lässt du so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {\"out\": [\"…\", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.";
 const AI_SITES = 'Du bekommst nummerierte Baustellen-Bezeichnungen, die Handwerker einer Firma in ihre Stundenzettel geschrieben haben. Fasse die zusammen, die sicher dieselbe Baustelle meinen (andere Schreibweise, Tippfehler, Abkürzung, Ort oder Kunde zusätzlich genannt oder weggelassen, Straße abgekürzt). Verschiedene Hausnummern, verschiedene Straßen, verschiedene Gebäude oder Kunden am selben Ort sind verschiedene Baustellen. Im Zweifel getrennt lassen. Antworte nur mit JSON: {"groups": [[Nummer, Nummer, …], …]} – nur Gruppen mit mindestens zwei Nummern.';
 
-/** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort.
- *  Den Verbrauch (Neuronen) zählt der Worker selbst mit, für den Balken auf der Server-Seite */
-async function aiJson(env, db, system, user, maxTokens) {
+/** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort */
+async function aiJson(env, system, user, maxTokens) {
   const r = await env.AI.run(AI_MODEL, {
     messages: [
       { role: 'system', content: system },
@@ -67,17 +71,40 @@ async function aiJson(env, db, system, user, maxTokens) {
     temperature: 0,
     chat_template_kwargs: { enable_thinking: false },
   });
-  const u = r?.usage || {};
-  // ohne Angabe aus den Tokens geschätzt (Preise von Gemma 4: 9091 bzw. 27273 Neuronen je Million)
-  const neurons = Number(u.neurons) || ((u.prompt_tokens || 0) * 9091 + (u.completion_tokens || 0) * 27273) / 1e6;
-  await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
-  await db
-    .prepare('INSERT INTO ai_day (day, neurons) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET neurons = neurons + excluded.neurons')
-    .bind(new Date().toISOString().slice(0, 10), neurons)
-    .run();
   const text = String(r?.choices?.[0]?.message?.content ?? r?.response ?? '');
   const m = text.match(/\{[\s\S]*\}/);
   return JSON.parse(m ? m[0] : text);
+}
+
+/** Verbrauch heute laut Cloudflare (ganzes Konto, Tag in UTC): je [verbraucht, Grenze]; null ohne Token oder bei Fehler */
+async function cfUsage(env) {
+  if (!env.CF_STATS_TOKEN || !env.CF_ACCOUNT_ID) return null;
+  const now = new Date();
+  const day = now.toISOString().slice(0, 10);
+  const query = `query ($a: string!, $d: Date!, $s: Time!, $e: Time!) { viewer { accounts(filter: { accountTag: $a }) {
+    workersInvocationsAdaptive(limit: 100, filter: { date: $d }) { sum { requests } }
+    d1AnalyticsAdaptiveGroups(limit: 100, filter: { date: $d }) { sum { rowsRead rowsWritten } }
+    aiInferenceAdaptiveGroups(limit: 100, filter: { datetime_geq: $s, datetime_leq: $e }) { sum { totalNeurons } }
+  } } }`;
+  try {
+    const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.CF_STATS_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, variables: { a: env.CF_ACCOUNT_ID, d: day, s: `${day}T00:00:00Z`, e: now.toISOString() } }),
+    });
+    const acc = (await res.json())?.data?.viewer?.accounts?.[0];
+    if (!acc) return null;
+    const sum = (rows, f) => (rows || []).reduce((n, r) => n + (Number(r?.sum?.[f]) || 0), 0);
+    return {
+      day,
+      requests: [sum(acc.workersInvocationsAdaptive, 'requests'), FREE_REQUESTS],
+      read: [sum(acc.d1AnalyticsAdaptiveGroups, 'rowsRead'), FREE_ROWS_READ],
+      write: [sum(acc.d1AnalyticsAdaptiveGroups, 'rowsWritten'), FREE_ROWS_WRITTEN],
+      ai: [sum(acc.aiInferenceAdaptiveGroups, 'totalNeurons'), AI_FREE],
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ───────── Wörterbuch: richtige Schreibweisen (nach der KI) ─────────
@@ -346,8 +373,6 @@ export default {
         if (Math.random() < 0.05) {
           await db.prepare('DELETE FROM ai_cache WHERE created < ?').bind(Date.now() - AI_CACHE_DAYS * 86400000).run();
           await db.prepare('DELETE FROM ai_use WHERE day < ?').bind(day).run();
-          await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
-          await db.prepare('DELETE FROM ai_day WHERE day < ?').bind(new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)).run();
         }
         const used = await db.prepare('SELECT n FROM ai_use WHERE member = ? AND day = ?').bind(body.member, day).first();
         const count = async () =>
@@ -373,7 +398,7 @@ export default {
             try {
               await count();
               // je Eintrag reichlich Platz (ein Token je Zeichen und JSON drumherum); abgeschnitten wäre die Antwort unbrauchbar
-              const res = await aiJson(env, db, AI_SPELL, JSON.stringify(todo), 40 + todo.reduce((n, t) => n + t.length + 16, 0));
+              const res = await aiJson(env, AI_SPELL, JSON.stringify(todo), 40 + todo.reduce((n, t) => n + t.length + 16, 0));
               if (Array.isArray(res.out) && res.out.length === todo.length) {
                 const now = Date.now();
                 await db.batch(
@@ -397,7 +422,7 @@ export default {
           if (row) return json({ groups: JSON.parse(row.result) }, 200, h);
           if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
           await count();
-          const res = await aiJson(env, db, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
+          const res = await aiJson(env, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
           const groups = (Array.isArray(res.groups) ? res.groups : [])
             .map((g) => [...new Set((Array.isArray(g) ? g : []).map((i) => names[Number(i) - 1]).filter(Boolean))])
             .filter((g) => g.length >= 2);
@@ -459,11 +484,8 @@ export default {
           // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
           const people = (await db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month).all()).results;
           const { n: postCount } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month).first();
-          await db.exec('CREATE TABLE IF NOT EXISTS ai_day (day TEXT PRIMARY KEY, neurons REAL NOT NULL)');
-          const today = new Date().toISOString().slice(0, 10);
-          const aiRow = await db.prepare('SELECT neurons FROM ai_day WHERE day = ?').bind(today).first();
           const dict = (await loadDict(db)).map((d) => d.word);
-          return json({ errors: results, storage, team: { month, people, posts: postCount }, dict, ai: { day: today, neurons: aiRow ? aiRow.neurons : 0, limit: AI_FREE } }, 200, h);
+          return json({ errors: results, storage, team: { month, people, posts: postCount }, dict, usage: await cfUsage(env) }, 200, h);
         }
         if (path === '/dict' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);

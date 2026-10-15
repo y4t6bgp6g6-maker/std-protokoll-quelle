@@ -26,9 +26,10 @@ let adminStorage = null;
 /** Team diesen Monat ({ month, people: [{ name, version, updated, sheets }], posts }) und Antwortzeit des Servers in ms */
 let adminTeam = null;
 let adminPing = null;
-/** Wörterbuch des Servers (richtige Schreibweisen, nach der KI) und KI-Verbrauch heute ({ day, neurons, limit }) */
+/** Wörterbuch des Servers (richtige Schreibweisen, nach der KI) und Tagesgrenzen von Cloudflare
+ *  ({ day, requests, read, write, ai }, je [verbraucht, Grenze]; neu ab 0 Uhr UTC) */
 let adminDict = null;
-let adminAi = null;
+let adminUsage = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -119,7 +120,7 @@ function renderFehler(full = false) {
     ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
     ${adminServerHTML()}
     ${adminStorageHTML(adminStorage)}
-    ${adminAiHTML(adminAi)}
+    ${adminUsageHTML(adminUsage)}
     ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
     <h2 class="section-title">Fehlerberichte</h2>
@@ -180,22 +181,37 @@ function adminStorageHTML(s) {
     </div>`;
 }
 
-/** KI-Kontingent heute als Ring: Neuronen von den kostenlosen am Tag; neu ab 0 Uhr UTC (bei uns 1 bzw. 2 Uhr) */
-function adminAiHTML(ai) {
-  if (!ai || !ai.limit) return '';
-  const used = Math.round(ai.neurons || 0);
-  const share = Math.min(1, used / ai.limit);
+/** Tagesgrenzen des kostenlosen Tarifs (Zahlen von Cloudflare): Anfragen, gelesene und geschriebene Zeilen, KI */
+const ADMIN_USAGE = [
+  ['requests', 'Anfragen'],
+  ['read', 'Gelesen'],
+  ['write', 'Geschrieben'],
+  ['ai', 'KI'],
+];
+const adminShareColor = (share) => (share >= 0.95 ? 'var(--danger)' : share >= 0.8 ? 'var(--warning)' : 'var(--accent)');
+/** Kurze Zahl: 1.234 → „1.234“, 100.000 → „100.000“, 5.000.000 → „5 Mio.“ */
+const adminNum = (n) => (n >= 1e6 ? `${(n / 1e6).toLocaleString('de-DE', { maximumFractionDigits: 1 })} Mio.` : Math.round(n).toLocaleString('de-DE'));
+/** Als Ringe im Raster, je Ring Anteil, Verbrauch und Grenze */
+function adminUsageHTML(u) {
+  if (!u) return '';
+  const [y, m, d] = String(u.day).split('-').map(Number);
+  const reset = new Date(Date.UTC(y, m - 1, d + 1)).toLocaleTimeString('de-DE', { hour: 'numeric', minute: '2-digit' });
+  const items = ADMIN_USAGE.filter(([k]) => u[k]).map(([k, label]) => {
+    const [used, limit] = u[k];
+    const share = Math.min(1, used / limit);
+    return { label, used, limit, share, color: adminShareColor(share) };
+  });
+  const head = `<div class="fb-store-h"><span>Heute</span><span class="muted">neu um ${reset} Uhr</span></div>`;
   const r = 22;
   const len = 2 * Math.PI * r;
-  const color = share >= 0.95 ? 'var(--danger)' : share >= 0.8 ? 'var(--warning)' : 'var(--accent)';
-  const [y, m, d] = String(ai.day).split('-').map(Number);
-  const reset = new Date(Date.UTC(y, m - 1, d + 1)).toLocaleTimeString('de-DE', { hour: 'numeric', minute: '2-digit' });
-  return `<div class="card fb-store fb-ai">
-      <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="${r}" fill="none" stroke="var(--fill)" stroke-width="7"/>${
-        used ? `<circle cx="28" cy="28" r="${r}" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${len * share} ${len}" transform="rotate(-90 28 28)"/>` : ''
-      }<text x="28" y="32" text-anchor="middle">${Math.round(share * 100)}%</text></svg>
-      <div><div>KI heute</div><div class="fb-sub">${used.toLocaleString('de-DE')} von ${ai.limit.toLocaleString('de-DE')} Neuronen<br>neu um ${reset} Uhr</div></div>
-    </div>`;
+  return `<div class="card fb-store">${head}<div class="fb-rings">${items
+    .map(
+      (it) => `<div class="fb-ring"><svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="${r}" fill="none" stroke="var(--fill)" stroke-width="7"/>${
+        it.used ? `<circle cx="28" cy="28" r="${r}" fill="none" stroke="${it.color}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${Math.max(0.5, len * it.share)} ${len}" transform="rotate(-90 28 28)"/>` : ''
+      }<text x="28" y="32" text-anchor="middle">${it.share > 0 && it.share < 0.01 ? '<1' : Math.round(it.share * 100)}%</text></svg>
+      <div><div>${it.label}</div><div class="fb-sub">${adminNum(it.used)}<br>von ${adminNum(it.limit)}</div></div></div>`
+    )
+    .join('')}</div></div>`;
 }
 
 /** Wörterbuch: richtige Schreibweisen, die nach der KI gelten (gleiche Buchstaben, andere Schreibweise → ersetzt) */
@@ -237,7 +253,7 @@ async function adminLoad() {
     adminStorage = data.storage || null;
     adminTeam = data.team || null;
     adminDict = data.dict || [];
-    adminAi = data.ai || null;
+    adminUsage = data.usage || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
