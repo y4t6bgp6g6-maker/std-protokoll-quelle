@@ -113,18 +113,18 @@ function renderFehler(full = false) {
             )
             .join('');
   const html = `
-    <div class="card fb-push">
-      <span>Mitteilungen</span>
-      <button class="link-btn" data-fb="${push ? 'push-off' : 'push-on'}" ${adminBusy ? 'disabled' : ''}>${push ? 'Ausschalten' : 'Einschalten'}</button>
-    </div>
-    ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
     ${adminServerHTML()}
     ${adminStorageHTML(adminStorage)}
     ${adminUsageHTML(adminUsage)}
     ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
     <h2 class="section-title">Fehlerberichte</h2>
-    <div class="fb-list">${list}</div>`;
+    <div class="fb-list">${list}</div>
+    <label class="card fb-row">
+      <span>Mitteilungen</span>
+      <input type="checkbox" class="toggle" data-fb-push ${push ? 'checked' : ''} ${adminBusy ? 'disabled' : ''}>
+    </label>
+    ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}`;
   if (body) body.innerHTML = html;
   else app.innerHTML = `${nav}<div id="fb-body">${html}</div>`;
 }
@@ -269,8 +269,11 @@ const adminKeyBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/
 
 /** Mitteilungen einschalten: muss direkt aus dem Antippen kommen (sonst fragt iOS nicht) */
 async function adminPushOn() {
-  if (adminBusy) return;
-  if (!adminPushPossible()) return toast('Nur in der App vom Home-Bildschirm');
+  // nicht möglich: Schalter wieder ausschalten
+  if (adminBusy || !adminPushPossible()) {
+    if (!adminBusy) toast('Nur in der App vom Home-Bildschirm');
+    return adminSetBusy(adminBusy);
+  }
   adminSetBusy(true);
   try {
     if ((await Notification.requestPermission()) !== 'granted') throw Object.assign(new Error('perm'), { perm: true });
@@ -289,7 +292,7 @@ async function adminPushOn() {
 }
 
 async function adminPushOff() {
-  if (adminBusy) return;
+  if (adminBusy) return adminSetBusy(true);
   adminSetBusy(true);
   try {
     const reg = await navigator.serviceWorker.ready;
@@ -318,16 +321,16 @@ document.addEventListener('click', (e) => {
   const el = e.target.closest('[data-fb]');
   if (!el || layer.contains(el)) return;
   switch (el.dataset.fb) {
-    case 'push-on':
-      adminPushOn();
-      break;
-    case 'push-off':
-      adminPushOff();
-      break;
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
       break;
   }
+});
+// Schalter „Mitteilungen“: Einschalten muss direkt aus dem Antippen kommen (sonst fragt iOS nicht)
+document.addEventListener('change', (e) => {
+  if (!e.target.matches('[data-fb-push]')) return;
+  if (e.target.checked) adminPushOn();
+  else adminPushOff();
 });
 document.addEventListener('submit', (e) => {
   if (!e.target.matches('[data-fb-form="dict"]')) return;

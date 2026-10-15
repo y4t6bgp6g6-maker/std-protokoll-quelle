@@ -1883,7 +1883,7 @@ a.s-row:active { background: var(--fill); }
 }
 
 /* Fehlerberichte (nur Admin) */
-.fb-push, .fb-row { display: flex; align-items: center; justify-content: space-between; margin: 0 16px; padding: 14px 16px; }
+.fb-row { display: flex; align-items: center; justify-content: space-between; margin: 0 16px; padding: 14px 16px; }
 .fb-row { margin-top: 16px; }
 .fb-ping { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .fb-ping i { width: 9px; height: 9px; border-radius: 50%; }
