@@ -956,13 +956,14 @@ function buildHeftPdf(h, kind, page = null) {
   } else {
     for (const mon of page ? [page] : heftWeeks(h).filter((k) => k <= today || weekFilled(h.weeks[k]))) addWeekPage(doc, h, mon);
   }
-  const what = page
+  const [what, rest] = page
     ? monthly
-      ? `Monatsbericht ${monthName(page)}`
-      : `Wochenbericht Nr. ${heftWeeks(h).indexOf(page) + 1}`
-    : `Berichtsheft ${h.jahr}. Ausbildungsjahr – ${monthly ? 'Monate' : 'Wochen'}`;
-  const blob = doc.output({ title: what, author: bhName() });
-  return new File([blob], `${what}.pdf`, { type: 'application/pdf' });
+      ? ['Monatsbericht', monthName(page)]
+      : ['Wochenbericht', `Nr. ${heftWeeks(h).indexOf(page) + 1}`]
+    : ['Berichtsheft', `${h.jahr}. Ausbildungsjahr – ${monthly ? 'Monate' : 'Wochen'}`];
+  const blob = doc.output({ title: `${what} ${rest}`, author: bhName() });
+  // Dateiname mit dem Namen des Azubis (beim Betrieb unterscheidbar)
+  return new File([blob], pdfFileName(what, bhName(), rest), { type: 'application/pdf' });
 }
 
 /** Deckblatt und Vorblatt mit den Angaben, je als eigenes PDF (Vorschau auf der Seite „Angaben“ zum Durchblättern) */

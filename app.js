@@ -2885,10 +2885,17 @@ function askDelete(id, leave, onCancel = null) {
 
 /** Kyrillische Texte einer Seite vorab übersetzen lassen; kommt Neues, die Vorschau neu zeichnen */
 const pdfTranslateKick = (v) => aiTranslateDeep(v).then((fresh) => fresh && updatePdfThumb(true));
+/** Dateiname eines PDFs: Art, Name, Rest („Stundenzettel Max Muster 13.04.26 - 19.04.26.pdf“) – beim Arbeitgeber sind die
+ *  Zettel der Kollegen so zu unterscheiden. Name wie im PDF (Kyrillisches übersetzt), ohne Zeichen, die in Dateinamen stören */
+function pdfFileName(kind, name, rest) {
+  const n = String(pdfDe({ n: name || '' }).n || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return `${[kind, n, rest].filter(Boolean).join(' ')}.pdf`;
+}
 function pdfFileFor(s) {
   pdfTranslateKick(s);
   const blob = buildTimesheetPdf(pdfDe(s), sheetTarget(s));
-  return new File([blob], `${sheetTitle(s)}.pdf`, { type: 'application/pdf' });
+  const name = pdfFileName('Stundenzettel', s.name, `${fmtShort(sheetFirstDate(s))} - ${fmtShort(sheetLastDate(s))}`);
+  return new File([blob], name, { type: 'application/pdf' });
 }
 
 // ───────────────────────── Kein Zoomen ─────────────────────────
@@ -3742,7 +3749,7 @@ function tripPdfFile(t) {
     signDate: t.signDate ? fmtShort(parseDate(t.signDate)) : '',
     signature: settings.signature,
   }));
-  return new File([blob], `${tripTitle(t)}.pdf`, { type: 'application/pdf' });
+  return new File([blob], pdfFileName('Reisekostenabrechnung', t.name || settings.name, tripTitle(t).replace(/^Reisekostenabrechnung ?/, '')), { type: 'application/pdf' });
 }
 
 async function shareTripPdf(t) {
