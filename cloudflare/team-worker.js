@@ -19,7 +19,7 @@
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
 //   POST   /ai     ← { member, token, task: 'spell', items }   → { v, out: [[Eintrag, Ergebnis, geprüft]] }
 //                    Rechtschreibung je Eintrag (Arbeit, Baustelle): erst die KI, danach das Wörterbuch (Tabelle dict:
-//                    richtige Schreibweisen; gleiche Buchstaben in anderer Schreibweise werden ersetzt). Antwortet die KI
+//                    richtige Schreibweisen; gleiche Buchstaben oder ein Tippfehler werden ersetzt). Antwortet die KI
 //                    nicht (Kontingent, Fehler), gilt nur das Wörterbuch (geprüft = false). v ändert sich mit dem Wörterbuch
 //                  ← { member, token, task: 'sites', names }   → { groups } welche Baustellen-Schreibweisen dieselbe meinen
 //                    Workers AI (kostenloses Tageskontingent); Ergebnisse in ai_cache (60 Tage), höchstens AI_PER_DAY
@@ -93,10 +93,37 @@ async function loadDict(db) {
   await db.exec('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)');
   return (await db.prepare('SELECT key, word FROM dict ORDER BY word COLLATE NOCASE').all()).results;
 }
+/** Stand der Wörterbuch-Regeln (nur die Antwort ändert sich, nicht das gemerkte KI-Ergebnis) */
+const DICT_V = 2;
 /** Stand von Anweisung und Wörterbuch: ändert er sich, verwerfen die iPhones ihre gemerkten Prüfungen */
-const spellVersion = async (dict) => (await sha256(`${AI_SPELL_V}|${dict.map((d) => d.word).join('|')}`)).slice(0, 12);
+const spellVersion = async (dict) => (await sha256(`${AI_SPELL_V}|${DICT_V}|${dict.map((d) => d.word).join('|')}`)).slice(0, 12);
+function editDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = t;
+    }
+  }
+  return row[b.length];
+}
+/** Eintrag zu einer Wortfolge: gleiche Buchstaben, sonst ein Tippfehler (ab 12 Buchstaben zwei, unter 6 keiner);
+ *  erster Buchstabe und Ziffern müssen gleich sein, und nur ein Eintrag darf passen */
+function dictLookup(key, map, dict) {
+  if (map.has(key)) return map.get(key);
+  if (key.length < 6) return null;
+  const digits = key.replace(/\D/g, '');
+  const hits = dict.filter(
+    (d) => d.key.length >= 6 && d.key[0] === key[0] && d.key.replace(/\D/g, '') === digits && Math.abs(d.key.length - key.length) <= 2 &&
+      editDistance(key, d.key) <= (Math.min(key.length, d.key.length) >= 12 ? 2 : 1)
+  );
+  return hits.length === 1 ? hits[0].word : null;
+}
 /** Wortfolgen, deren Buchstaben einem Eintrag gleichen, in dessen Schreibweise bringen (längste Folge zuerst);
- *  Satzzeichen davor und dahinter bleiben. Tippfehler erkennt das Wörterbuch nicht – die korrigiert vorher die KI */
+ *  Satzzeichen davor und dahinter bleiben. Einzelne Tippfehler erkennt es selbst (Eigennamen kennt die KI oft nicht) */
 function applyDict(text, dict) {
   if (!dict.length || !text) return text;
   const map = new Map(dict.map((d) => [d.key, d.word]));
@@ -113,7 +140,7 @@ function applyDict(text, dict) {
       const core = seg.slice(pre.length, seg.length - post.length);
       // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph, Bindestrich und Punkt (keine Kommas usw.)
       if (!core || /[^\p{L}\p{N}\s'’`´.\-]/u.test(core)) continue;
-      const word = map.get(dictKey(core));
+      const word = dictLookup(dictKey(core), map, dict);
       if (word) {
         out.push(pre + word + post);
         break;
