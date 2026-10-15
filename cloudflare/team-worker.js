@@ -31,11 +31,25 @@
 //                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
+// Konten (Benutzername + Passwort, für das Team Pflicht) und verschlüsselte Sicherungen. Das iPhone leitet aus dem
+// Passwort zwei Schlüssel ab: auth (hier nur als SHA-256 gespeichert) und den Sicherungs-Schlüssel (verlässt das iPhone
+// nie). Sicherungen kommen also schon verschlüsselt an; der Server kann sie nicht lesen.
+//   POST   /account ← { action: 'join', user, auth, mode: 'create' | 'login', member, token, name }
+//                    → { member, backups }  Konto anlegen bzw. prüfen und mit dem Team-Eintrag verbinden. Hat das Konto
+//                    schon einen Eintrag, gilt dessen Kennung (neues Token); ein mitgeschickter anderer Eintrag
+//                    mit passendem Token wird gelöscht (keine Doppelten nach Neuinstallation)
+//                  ← { action: 'list', user, auth }                      → { backups: [{ at, size }] } neueste zuerst
+//                  ← { action: 'get', user, auth, at }                   → { data }
+//                  ← { action: 'password', user, auth, newAuth }         → neues Passwort; alte Sicherungen werden gelöscht
+//                  ← { action: 'delete', user, auth }                    Konto und Sicherungen löschen
+//   PUT    /backup  Header X-User, X-Auth; Inhalt = verschlüsselte Sicherung (Text)  → { at }
+//                    Behalten: die drei neuesten und je Tag (deutsche Zeit) die letzte der vergangenen BACKUP_DAYS Tage
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
-//   GET    /errors → { errors, storage, team, dict, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
+//   GET    /errors → { errors, storage, team, dict, accounts, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
 //                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
 //   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
 //   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
+//   DELETE /account ← { user }                                 Konto samt Sicherungen löschen (z. B. Passwort vergessen)
 //   DELETE /member ← { member }                                Person aus dem Team entfernen (z. B. doppelt nach Neuinstallation;
 //                                                              benutzt sie die App noch, erscheint sie beim nächsten Upload wieder)
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
@@ -52,6 +66,11 @@ const ERROR_DAYS = 180;
 const PUSH_GAP = 10;
 const VAPID_SUB = 'https://y4t6bgp6g6-maker.github.io/std-protokoll/';
 const STORAGE_LIMIT = 500 * 1024 * 1024; // D1 im kostenlosen Tarif: 500 MB je Datenbank
+const BACKUP_MAX = 20_000_000; // Zeichen je Sicherung (mit Bildern aus dem Berichtsheft)
+const BACKUP_PART = 900_000; // D1: höchstens 2 MB je Zeile, also in Teilen speichern
+const BACKUP_DAYS = 7;
+const AUTH_FAILS = 5; // falsche Passwörter, danach AUTH_WAIT Minuten Pause
+const AUTH_WAIT = 10;
 const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const AI_PER_DAY = 300;
 const AI_CACHE_DAYS = 60;
@@ -241,7 +260,7 @@ function cors(req) {
     ? {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code, X-Admin-Code',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code, X-Admin-Code, X-User, X-Auth',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
       }
@@ -324,6 +343,135 @@ async function notifyAdmins(db, env, payload) {
   }
 }
 
+// ───────── Konten und Sicherungen ─────────
+
+const ACCOUNT_TABLES = [
+  'CREATE TABLE IF NOT EXISTS accounts (user TEXT PRIMARY KEY, auth TEXT NOT NULL, member TEXT, name TEXT, created INTEGER NOT NULL, fails INTEGER NOT NULL DEFAULT 0, failed INTEGER)',
+  'CREATE TABLE IF NOT EXISTS backups (user TEXT NOT NULL, at INTEGER NOT NULL, part INTEGER NOT NULL, parts INTEGER NOT NULL, size INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (user, at, part))',
+];
+/** Benutzername: 3–32 Buchstaben, Ziffern, Punkt, Strich, Unterstrich; Groß/klein egal */
+const userKey = (s) => {
+  const u = String(s ?? '').trim().toLowerCase();
+  return /^[\p{L}\p{N}._-]{3,32}$/u.test(u) ? u : '';
+};
+const validAuth = (s) => typeof s === 'string' && /^[A-Za-z0-9+/=]{40,64}$/.test(s);
+
+/** Konto mit Passwort-Prüfwert prüfen; nach AUTH_FAILS Fehlversuchen AUTH_WAIT Minuten gesperrt.
+ *  Ergebnis: Zeile des Kontos oder { error, status } */
+async function checkAccount(db, user, auth) {
+  if (!user || !validAuth(auth)) return { error: 'id', status: 400 };
+  const row = await db.prepare('SELECT * FROM accounts WHERE user = ?').bind(user).first();
+  if (!row) return { error: 'unknown', status: 404 };
+  if (row.fails >= AUTH_FAILS && Date.now() - (row.failed || 0) < AUTH_WAIT * 60000) return { error: 'wait', status: 429 };
+  if (!sameCode(await sha256(auth), row.auth)) {
+    await db.prepare('UPDATE accounts SET fails = CASE WHEN ? - COALESCE(failed, 0) > ? THEN 1 ELSE fails + 1 END, failed = ? WHERE user = ?')
+      .bind(Date.now(), AUTH_WAIT * 60000, Date.now(), user).run();
+    await new Promise((r) => setTimeout(r, 400));
+    return { error: 'auth', status: 403 };
+  }
+  if (row.fails) await db.prepare('UPDATE accounts SET fails = 0 WHERE user = ?').bind(user).run();
+  return row;
+}
+
+/** Sicherungen eines Kontos: [{ at, size }], neueste zuerst */
+const backupList = async (db, user) =>
+  (await db.prepare('SELECT at, size FROM backups WHERE user = ? AND part = 0 ORDER BY at DESC').bind(user).all()).results;
+
+/** Tag in deutscher Zeit („2026-10-15“) */
+const berlinDay = (t) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin' }).format(new Date(t));
+
+/** Behalten: die drei neuesten (ein versehentlich gesicherter leerer Stand verdrängt den guten nicht gleich) und je Tag
+ *  die letzte der vergangenen BACKUP_DAYS Tage; der Rest wird gelöscht */
+async function pruneBackups(db, user) {
+  const list = await backupList(db, user);
+  const days = new Set();
+  const drop = [];
+  list.forEach((b, i) => {
+    const day = berlinDay(b.at);
+    if (i < 3 || (!days.has(day) && Date.now() - b.at < BACKUP_DAYS * 86400e3)) days.add(day);
+    else drop.push(b.at);
+  });
+  if (drop.length) await db.batch(drop.map((at) => db.prepare('DELETE FROM backups WHERE user = ? AND at = ?').bind(user, at)));
+}
+
+async function accountRequest(db, body, h) {
+  const user = userKey(body.user);
+  if (body.action === 'join') {
+    if (!user || !validAuth(body.auth) || !validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
+    const name = String(body.name ?? '').slice(0, 80);
+    const token = await sha256(body.token);
+    // mitgeschickter Eintrag: gehört er wirklich diesem iPhone? (Token passt oder es gibt ihn diesen Monat nicht)
+    const sent = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
+    const sentOwn = !sent || sent.token === token;
+    const exists = await db.prepare('SELECT user FROM accounts WHERE user = ?').bind(user).first();
+    if (!exists) {
+      if (body.mode !== 'create') return json({ error: 'unknown' }, 404, h);
+      if (!sentOwn) return json({ error: 'token' }, 403, h);
+      // ein Team-Eintrag gehört nur zu einem Konto (z. B. abgemeldet und neues Konto auf demselben iPhone)
+      await db.batch([
+        db.prepare('UPDATE accounts SET member = NULL WHERE member = ?').bind(body.member),
+        db.prepare('INSERT INTO accounts (user, auth, member, name, created) VALUES (?, ?, ?, ?, ?)').bind(user, await sha256(body.auth), body.member, name, Date.now()),
+      ]);
+      return json({ member: body.member, backups: [] }, 200, h);
+    }
+    const row = await checkAccount(db, user, body.auth);
+    // falsches Passwort beim Anlegen: der Name gehört jemand anderem
+    if (row.error) return json({ error: row.error === 'auth' && body.mode === 'create' ? 'taken' : row.error }, row.status, h);
+    const member = validId(row.member) ? row.member : body.member;
+    const ops = [
+      db.prepare('UPDATE accounts SET member = NULL WHERE member = ? AND user <> ?').bind(member, user),
+      db.prepare('UPDATE accounts SET member = ?, name = COALESCE(NULLIF(?, \'\'), name) WHERE user = ?').bind(member, name, user),
+    ];
+    // Eintrag des Kontos übernimmt das neue Token; ein anderer, frisch angelegter Eintrag dieses iPhones verschwindet
+    ops.push(db.prepare('UPDATE members SET token = ? WHERE member = ?').bind(token, member));
+    if (member !== body.member && sent && sentOwn) ops.push(db.prepare('DELETE FROM members WHERE member = ?').bind(body.member));
+    await db.batch(ops);
+    return json({ member, backups: await backupList(db, user) }, 200, h);
+  }
+  const row = await checkAccount(db, user, body.auth);
+  if (row.error) return json({ error: row.error }, row.status, h);
+  if (body.action === 'list') return json({ backups: await backupList(db, user) }, 200, h);
+  if (body.action === 'get') {
+    const parts = (await db.prepare('SELECT data FROM backups WHERE user = ? AND at = ? ORDER BY part').bind(user, Number(body.at) || 0).all()).results;
+    if (!parts.length) return json({ error: 'missing' }, 404, h);
+    return json({ data: parts.map((p) => p.data).join('') }, 200, h);
+  }
+  if (body.action === 'password') {
+    if (!validAuth(body.newAuth)) return json({ error: 'id' }, 400, h);
+    // alte Sicherungen sind mit dem alten Passwort verschlüsselt – mit dem neuen ließen sie sich nicht öffnen
+    await db.batch([
+      db.prepare('UPDATE accounts SET auth = ? WHERE user = ?').bind(await sha256(body.newAuth), user),
+      db.prepare('DELETE FROM backups WHERE user = ?').bind(user),
+    ]);
+    return json({ ok: true }, 200, h);
+  }
+  if (body.action === 'delete') {
+    await db.batch([db.prepare('DELETE FROM backups WHERE user = ?').bind(user), db.prepare('DELETE FROM accounts WHERE user = ?').bind(user)]);
+    return json({ ok: true }, 200, h);
+  }
+  return json({ error: 'action' }, 400, h);
+}
+
+/** Verschlüsselte Sicherung speichern (Inhalt roh, nicht als JSON verpackt: spart Rechenzeit bei großen Dateien) */
+async function backupPut(db, req, h) {
+  const row = await checkAccount(db, userKey(req.headers.get('X-User')), req.headers.get('X-Auth'));
+  if (row.error) return json({ error: row.error }, row.status, h);
+  const data = await req.text();
+  if (data.length > BACKUP_MAX) return json({ error: 'size' }, 413, h);
+  // nur Verschlüsseltes annehmen (Format von sealBackup in app.js)
+  if (!/^\{"app":"std-protokoll","enc":"AES-256-GCM"/.test(data)) return json({ error: 'plain' }, 400, h);
+  const at = Date.now();
+  const parts = Math.ceil(data.length / BACKUP_PART);
+  await db.batch(
+    Array.from({ length: parts }, (_, i) =>
+      db.prepare('INSERT INTO backups (user, at, part, parts, size, data) VALUES (?, ?, ?, ?, ?, ?)')
+        .bind(row.user, at, i, parts, data.length, data.slice(i * BACKUP_PART, (i + 1) * BACKUP_PART))
+    )
+  );
+  await pruneBackups(db, row.user);
+  return json({ at }, 200, h);
+}
+
 export default {
   async fetch(req, env, ctx) {
     const h = cors(req);
@@ -351,6 +499,11 @@ export default {
     try {
       // Antwortzeit für die Server-Seite: so viel Arbeit wie jede Team-Anfrage, ohne Inhalt
       if (path === '/ping' && req.method === 'GET') return json({ ok: true }, 200, h);
+
+      if ((path === '/account' && req.method === 'POST') || (path === '/backup' && req.method === 'PUT')) {
+        await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
+        return path === '/backup' ? await backupPut(db, req, h) : await accountRequest(db, await readBody(req), h);
+      }
       if (path === '/team' && req.method === 'GET') {
         const { results } = await db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month).all();
         const members = results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
@@ -512,7 +665,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -524,24 +677,34 @@ export default {
           await ensureVersionColumn(db);
           // Speicher: Größe der ganzen Datenbank (meta.size_after) und Bytes je Inhalt; der Rest ist die Datenbank selbst
           const bytes = (cols) => cols.map((c) => `COALESCE(LENGTH(CAST(${c} AS BLOB)), 0)`).join(' + ');
-          const [, , errors, size, people, posts, dict] = await db.batch([
+          const [, , , , errors, size, people, posts, dict, accounts] = await db.batch([
+            ...ACCOUNT_TABLES.map((sql) => db.prepare(sql)),
             db.prepare('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)'),
             db.prepare('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)'),
             db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50'),
             db.prepare(
               `SELECT (SELECT COALESCE(SUM(${bytes(['member', 'token', 'name', 'month', 'data', 'version'])}), 0) FROM members) AS sheets, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'text'])}), 0) FROM posts) AS posts, ` +
-                `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors`
+                `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors, ` +
+                `(SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups) AS backups`
             ),
             // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
             db.prepare('SELECT member, name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month),
             db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
             db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
+            // Konten: Name, letzte Sicherung, Größe aller Sicherungen
+            db.prepare('SELECT a.user, a.name, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
           ]);
           const s = size.results[0];
-          const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors };
+          const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors, backups: s.backups };
           const team = { month, people: people.results, posts: posts.results[0].n };
-          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), usage: await usage }, 200, h);
+          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, usage: await usage }, 200, h);
+        }
+        if (path === '/account' && req.method === 'DELETE') {
+          const user = userKey((await readBody(req)).user);
+          if (!user) return json({ error: 'id' }, 400, h);
+          await db.batch([db.prepare('DELETE FROM backups WHERE user = ?').bind(user), db.prepare('DELETE FROM accounts WHERE user = ?').bind(user)]);
+          return json({ ok: true }, 200, h);
         }
         if (path === '/member' && req.method === 'DELETE') {
           const body = await readBody(req);

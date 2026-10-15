@@ -274,7 +274,7 @@ function teamQueueUpload(delay = 3000) {
   teamUploadTimer = setTimeout(teamUpload, delay);
 }
 async function teamUpload() {
-  if (!team || !TEAM_URL || teamUploading || !navigator.onLine) return;
+  if (!team || !TEAM_URL || teamUploading || !navigator.onLine || accountRestorePending()) return;
   const payload = teamPayload();
   const text = JSON.stringify(payload);
   if (team.sent === text) return;
@@ -288,6 +288,8 @@ async function teamUpload() {
   } catch (e) {
     // Falscher Code (z. B. geändert): neu beitreten; sonst beim nächsten Anlass erneut versuchen
     if (e.status === 401 && team) leaveTeamLocal('Team-Code ungültig');
+    // Mit demselben Konto auf einem anderen iPhone angemeldet: dort gilt jetzt der Eintrag
+    else if (e.status === 403 && e.message === 'token' && team) leaveTeamLocal('Auf einem anderen iPhone angemeldet');
   } finally {
     teamUploading = false;
   }
@@ -295,30 +297,43 @@ async function teamUpload() {
 
 // ───────── Beitreten / Verlassen ─────────
 
+/** Beitreten nur mit Konto (konto.js): der Server prüft es und gibt den Team-Eintrag des Kontos zurück
+ *  (nach einer Neuinstallation derselbe wie vorher, keine Doppelten) */
 async function joinTeam(code) {
   code = code.trim();
-  if (!code) return;
-  if (!settings.name.trim()) {
+  if (!code || !account) return;
+  // Neues Konto braucht einen Namen; beim Anmelden kommt er mit der Sicherung zurück
+  if (account.mode !== 'login' && !settings.name.trim()) {
     toast('Bitte zuerst deinen Namen eintragen');
     return;
   }
   const btn = app.querySelector('[data-team="join"]');
   if (btn) btn.disabled = true;
-  const next = { code, member: uid(), token: uid() + uid(), sent: '' };
-  const prev = team;
-  team = next;
+  const token = uid() + uid();
+  let out;
   try {
-    await teamRequest('PUT', '/me', teamPayload());
-    team.sent = JSON.stringify(teamPayload());
-    saveTeam();
-    haptic();
-    renderTeamBody();
-    teamLoad();
-    adminCheck(code);
+    out = await accountJoin(code, uid(), token);
   } catch (e) {
-    team = prev;
-    toast(e.status === 401 ? 'Falscher Team-Code' : 'Keine Verbindung');
+    toast(accountError(e));
+    // Name vergeben, Passwort falsch …: steht dann auch auf der Konto-Seite
+    if (e.status && e.status !== 401) {
+      account.error = accountError(e);
+      saveAccount();
+    }
     if (btn) btn.disabled = false;
+    return;
+  }
+  team = { code, member: out.member, token, sent: '' };
+  saveTeam();
+  haptic();
+  renderTeamBody();
+  teamLoad();
+  adminCheck(code);
+  // Sicherung auf dem Server: erst fragen, dann den eigenen Stand hochladen
+  if (accountRestorePending()) accountOfferRestore(out.backups);
+  else {
+    teamUpload();
+    accountBackup(true);
   }
 }
 
@@ -793,6 +808,7 @@ function renderTeam() {
   if (team) {
     teamUpload();
     teamLoad();
+    accountLink();
   }
 }
 
@@ -800,14 +816,16 @@ function renderTeam() {
 function renderTeamNav() {
   const nav = document.getElementById('team-nav');
   if (!nav) return;
-  const n = team ? teamUnread() : 0;
+  // gesperrt (ohne Konto): keine Knöpfe
+  const on = !!(team && accountOk());
+  const n = on ? teamUnread() : 0;
   nav.innerHTML =
-    team && teamPinOpen
+    on && teamPinOpen
       ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
-      : `${team && admin ? `<button class="nav-btn" data-team="fehler" aria-label="Fehlerberichte">${adminIcon()}</button>` : '<span class="nav-btn"></span>'}<span class="nav-title"></span>${
-          team ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
+      : `${on && admin ? `<button class="nav-btn" data-team="fehler" aria-label="Fehlerberichte">${adminIcon()}</button>` : '<span class="nav-btn"></span>'}<span class="nav-title"></span>${
+          on ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
         }`;
-  document.getElementById('team-title').textContent = team && teamPinOpen ? 'Teammeeting' : 'Team';
+  document.getElementById('team-title').textContent = on && teamPinOpen ? 'Teammeeting' : 'Team';
 }
 
 function renderTeamBody() {
@@ -816,9 +834,26 @@ function renderTeamBody() {
   if (!team) teamPinOpen = false;
   if (teamPinOpen) teamMarkSeen();
   renderTeamNav();
+  const icon = svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48);
+  // Ohne Konto kein Team (Pflicht); wer schon drin ist, sieht nichts, bis er angemeldet ist
+  if (!team && !account) {
+    body.innerHTML = `
+      <div class="team-empty">${icon}<b>Zettel der Kollegen sehen</b></div>
+      <div class="tm-join-form"><button class="primary tm-join-btn" data-team="login">Anmelden</button></div>
+      <p class="footnote center">Fürs Team brauchst du ein Konto.</p>`;
+    return;
+  }
+  if (team && !accountOk()) {
+    body.innerHTML = `
+      <div class="team-empty">${icon}<b>Erst anmelden</b></div>
+      <div class="tm-join-form"><button class="primary tm-join-btn" data-team="login">${account ? (account.error ? 'Konto prüfen' : 'Wird geprüft …') : 'Anmelden'}</button></div>
+      <p class="footnote center">${account && account.error ? escapeHtml(account.error) : 'Fürs Team brauchst du ein Konto.'}</p>
+      <div class="center"><button class="link-btn tm-leave" data-team="leave">Team verlassen</button></div>`;
+    return;
+  }
   if (!team) {
     body.innerHTML = `
-      <div class="team-empty">${svg('<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3.2 3-5 5.5-5s4.7 1.8 5.5 5"/><circle cx="17" cy="9" r="2.4"/><path d="M16 14.2c2.3.2 3.9 1.8 4.5 4.3"/>', 48)}<b>Zettel der Kollegen sehen</b></div>
+      <div class="team-empty">${icon}<b>Zettel der Kollegen sehen</b></div>
       <div class="tm-join-form">
         <div class="card tm-join"><input data-team="code" placeholder="Team-Code" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go"></div>
         <button class="primary tm-join-btn" data-team="join">Beitreten</button>
@@ -921,7 +956,7 @@ const teamDayWritten = (d) => !!d && (teamDayRows(d).length > 0 || (!!d.status &
 const teamOnDay = (iso) => (team ? teamMembers().filter((m) => teamDayWritten(teamDayOf(m, iso)?.d)) : []);
 
 function teamDayChipHTML(s, i) {
-  if (!team) return '';
+  if (!team || !accountOk()) return '';
   const people = teamOnDay(isoDate(sheetDate(s, i)));
   if (!people.length) return '';
   return `<button class="ws-chip tm-chip" data-act="team-day" aria-label="Einträge im Team">${ICON.tabTeam}<b>${people.length}</b></button>`;
@@ -1033,6 +1068,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'leave':
       leaveTeam();
+      break;
+    case 'login':
+      location.hash = '#/einstellungen/konto';
       break;
     case 'fehler':
       location.hash = '#/fehler';

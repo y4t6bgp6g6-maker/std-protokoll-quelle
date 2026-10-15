@@ -30,6 +30,8 @@ let adminPing = null;
  *  ({ day, requests, read, write, ai }, je [verbraucht, Grenze]; neu ab 0 Uhr UTC) */
 let adminDict = null;
 let adminUsage = null;
+/** Konten: [{ user, name, last, bytes }] (letzte Sicherung, Größe aller Sicherungen) */
+let adminAccounts = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -118,6 +120,7 @@ function renderFehler(full = false) {
     ${adminUsageHTML(adminUsage)}
     ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
+    ${adminAccountsHTML(adminAccounts)}
     <h2 class="section-title">Fehlerberichte</h2>
     <div class="fb-list">${list}</div>
     <label class="card fb-row">
@@ -161,6 +164,33 @@ function adminTeamHTML(tm) {
     </div>`;
 }
 
+/** Konten mit letzter Sicherung auf dem Server; Antippen löscht das Konto (z. B. Passwort vergessen) */
+function adminAccountsHTML(list) {
+  if (!list) return '';
+  const rows = list
+    .map(
+      (a) => `<div class="fb-person" data-fb="account-del" data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.user)}</b> <span class="muted" translate="no">${escapeHtml(teamFirstName(a.name || ''))}</span></span><span class="muted">${a.bytes ? adminBytes(a.bytes) : '–'}</span><span class="muted">${a.last ? teamAgo(a.last) : 'nie'}</span></div>`
+    )
+    .join('');
+  return `<div class="card fb-store">
+      <div class="fb-store-h"><span>Konten</span><span class="muted">${list.length}</span></div>
+      ${rows}
+    </div>`;
+}
+async function adminAccountDelete(user) {
+  if (!user || adminBusy) return;
+  adminBusy = true;
+  try {
+    await adminRequest('DELETE', '/account', { user });
+    if (adminAccounts) adminAccounts = adminAccounts.filter((a) => a.user !== user);
+    haptic();
+  } catch {
+    toast('Keine Verbindung');
+  }
+  adminBusy = false;
+  if (currentView === 'fehler' && admin) renderFehler();
+}
+
 const adminBytes = (n) =>
   n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toLocaleString('de-DE', { maximumFractionDigits: n < 10240 ? 1 : 0 })} KB` : `${(n / 1048576).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB`;
 
@@ -171,7 +201,8 @@ function adminStorageHTML(s) {
     ['Zettel', s.sheets, 'var(--accent)'],
     ['Teammeeting', s.posts, 'var(--success)'],
     ['Fehlerberichte', s.errors, 'var(--danger)'],
-    ['Datenbank', Math.max(0, s.total - s.sheets - s.posts - s.errors), 'var(--muted)'],
+    ['Sicherungen', s.backups || 0, 'var(--warning)'],
+    ['Datenbank', Math.max(0, s.total - s.sheets - s.posts - s.errors - (s.backups || 0)), 'var(--muted)'],
   ];
   const legend = `<div class="fb-legend">${parts.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n}<b>${adminBytes(v)}</b></span>`).join('')}</div>`;
   // Balken bis zum Limit; jeder belegte Teil mindestens 3 px breit, damit man ihn sieht
@@ -260,6 +291,7 @@ async function adminLoad() {
     adminTeam = data.team || null;
     adminDict = data.dict || [];
     adminUsage = data.usage || null;
+    adminAccounts = data.accounts || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
@@ -342,6 +374,9 @@ document.addEventListener('click', (e) => {
   switch (el.dataset.fb) {
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
+      break;
+    case 'account-del':
+      confirmDialog('Konto löschen?', 'Die Sicherungen auf dem Server werden gelöscht.', 'Löschen', () => adminAccountDelete(el.dataset.user), true);
       break;
     case 'person-del':
       confirmDialog('Aus dem Team entfernen?', 'Wird die App dort noch benutzt, kommt der Eintrag zurück.', 'Entfernen', () => adminPersonDelete(el.dataset.member), true);

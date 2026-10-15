@@ -1270,7 +1270,7 @@ const reportStatusText = () =>
   }`;
 
 // ───────────────────────── Verschlüsselte Sicherung ─────────────────────────
-// AES-256-GCM, Schlüssel aus dem Passwort (PBKDF2-SHA256). Der Schlüssel liegt nur auf diesem iPhone
+// AES-256-GCM, Schlüssel aus dem Passwort des Kontos (PBKDF2-SHA256, siehe konto.js). Der Schlüssel liegt nur auf diesem iPhone
 // (stdprotokoll.crypt.v1, nicht in der Sicherung), damit die automatische Sicherung ohne Eingabe läuft.
 // Beim Einlesen einer verschlüsselten Datei fragt die App nach dem Passwort.
 
@@ -1301,10 +1301,13 @@ async function rememberKey(key, salt) {
   } catch {}
 }
 
-/** Sicherung zum Speichern/Senden: verschlüsselt, wenn eingeschaltet */
+/** Verschlüsselt wird mit Konto (konto.js) – oder wie früher per Schalter, solange noch kein Konto eingerichtet ist */
+const backupEncrypted = () => !!(cryptStore && (account || settings.encryptBackup));
+/** Sicherung zum Speichern/Senden: verschlüsselt, wenn ein Konto (bzw. der frühere Schalter) da ist */
 async function sealBackup(plain) {
-  if (!settings.encryptBackup) return plain;
-  if (!cryptStore) throw new Error('Passwort für die Sicherung fehlt – in den Einstellungen neu festlegen.');
+  // früherer Schalter an, Schlüssel fehlt: nicht stillschweigend unverschlüsselt sichern
+  if (!account && settings.encryptBackup && !cryptStore) throw new Error('Passwort fehlt – unter Einstellungen → Konto anmelden.');
+  if (!backupEncrypted()) return plain;
   const key = await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain));
@@ -1373,16 +1376,6 @@ function askPassword(title, message, confirm = false) {
   });
 }
 
-/** Neues Passwort festlegen (auch zum Ändern); danach sind neue Sicherungen damit verschlüsselt */
-async function askNewBackupPassword(onDone) {
-  const pw = await askPassword('Passwort für Sicherungen', 'Ohne Passwort lässt sich eine Sicherung nicht öffnen – gut aufbewahren, z. B. in den iPhone-Passwörtern.', true);
-  if (pw == null) return;
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  await rememberKey(await passwordKey(pw, salt), salt);
-  toast('Passwort gespeichert');
-  onDone();
-}
-
 // ───────────────────────── Sicherung in Google Drive ─────────────────────────
 // Über dieselbe Abholadresse wie die Arbeitsscheine: das Google-Skript (doPost) legt die Datei im Ordner
 // „Std-Protokoll-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
@@ -1402,7 +1395,7 @@ async function driveBackup(manual = false) {
   const url = (settings.reportUrl || '').trim();
   if (!url || driveBusy || (!manual && settings.autoBackup === false)) return;
   const plain = backupJson();
-  const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, '') + (settings.encryptBackup ? '#enc' : ''));
+  const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, '') + (backupEncrypted() ? '#enc' : ''));
   if (!manual && (hash === driveState.hash || Date.now() - driveState.at < 20 * 3600e3)) return;
   driveBusy = true;
   if (manual) toast('Sichern …');
@@ -3874,6 +3867,7 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
 /** Symbole der Einstellungen: weiße Zeichen auf farbigem Quadrat (wie in den iPhone-Einstellungen) */
 const SET_ICON = {
   contrast: '<circle cx="12" cy="12" r="8" fill="none" stroke="#fff" stroke-width="2"/><path d="M12 4a8 8 0 0 1 0 16z"/>',
+  person: '<circle cx="12" cy="8.5" r="3.6"/><path d="M5 19.5c.9-3.6 3.7-5.5 7-5.5s6.1 1.9 7 5.5z"/>',
   face: '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
   euro: '<path d="M17 6.5A6.5 6.5 0 0 0 7.2 10M17 17.5A6.5 6.5 0 0 1 7.2 14M4.5 10.5h9M4.5 13.5h8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>',
   case: '<path d="M9 6V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1h4a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zm2 0h2V5h-2z"/>',
@@ -3897,6 +3891,7 @@ const SETTINGS_PAGES = {
   vorschlaege: 'Vorschläge',
   scheine: 'Arbeitsscheine',
   sicherung: 'Datensicherung',
+  konto: 'Konto',
 };
 const settingsSub = () => {
   const s = (location.hash.match(/^#\/einstellungen\/([a-z]+)$/) || [])[1] || '';
@@ -3913,7 +3908,8 @@ function settingsSummary() {
     reisekosten: [settings.place ? settings.place : '', settings.signature ? 'Unterschrift' : ''].filter(Boolean).join(', ') || 'Ort, Unterschrift',
     vorschlaege: settings.typoHints !== false ? 'Korrektur an' : 'Korrektur aus',
     scheine: url ? `${n}${reportStore.at ? ` · ${sameDay(new Date(reportStore.at), new Date()) ? 'heute' : fmtDayMonth(new Date(reportStore.at))} abgeholt` : ''}` : 'nicht eingerichtet',
-    sicherung: [url && settings.autoBackup !== false ? 'Drive' : 'von Hand', settings.encryptBackup ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
+    sicherung: [url && settings.autoBackup !== false ? 'Drive' : 'von Hand', backupEncrypted() ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
+    konto: account ? account.user : 'Nicht angemeldet',
   };
 }
 
@@ -3939,6 +3935,9 @@ function renderSettings() {
       ${pdfHintHTML(settings.name)}
     </div>
     <div class="card s-group">
+      ${setLink('#/einstellungen/konto', 'person', 'gray', 'Konto', sum.konto)}
+    </div>
+    <div class="card s-group">
       <div class="s-row">${setIcon('contrast', 'indigo')}<span class="s-label">Design</span>
         <span class="s-seg">${[['light', 'Hell'], ['dark', 'Dunkel']]
           .map(([v, l]) => `<button data-act="theme-set" data-v="${v}" class="${(isDarkTheme() ? 'dark' : 'light') === v ? 'on' : ''}">${l}</button>`)
@@ -3958,8 +3957,7 @@ function renderSettings() {
     <div class="card s-group">
       ${setLink('#/einstellungen/scheine', 'doc', 'purple', 'Arbeitsscheine', sum.scheine)}
       ${setLink('#/einstellungen/sicherung', 'cloud', 'blue', 'Datensicherung', sum.sicherung)}
-    </div>
-    ${settings.encryptBackup && !cryptStore ? '<p class="footnote warn">Passwort für die Sicherung fehlt – unter Datensicherung neu festlegen.</p>' : ''}`;
+    </div>`;
 }
 
 function renderSettingsPage(sub) {
@@ -4007,12 +4005,8 @@ function renderSettingsPage(sub) {
     <p class="footnote" id="report-status">${reportStatusText()}</p>
 
 `,
+    konto: kontoPageHTML(),
     sicherung: `
-    <div class="card form">
-      <label class="field"><span>Sicherung verschlüsseln</span><input type="checkbox" class="toggle" data-encrypt-switch ${settings.encryptBackup ? 'checked' : ''}></label>
-      ${settings.encryptBackup ? '<button class="list-btn" data-act="backup-pw">Passwort ändern</button>' : ''}
-    </div>
-    ${settings.encryptBackup && !cryptStore ? '<p class="footnote warn">Passwort fehlt – bitte neu festlegen.</p>' : ''}
     <div class="card list">
       <button class="list-btn" data-act="backup-export">Sicherung speichern …</button>
       <label class="list-btn">Sicherung einlesen …<input type="file" multiple accept="${IMPORT_ACCEPT}" data-act-change="backup-import" hidden></label>
@@ -5675,13 +5669,6 @@ document.addEventListener('click', (e) => {
       window.scrollTo(0, y);
       break;
     }
-    case 'backup-pw':
-      askNewBackupPassword(() => {
-        const y = window.scrollY;
-        renderSettings();
-        window.scrollTo(0, y);
-      });
-      break;
     case 'backup-drive':
       driveBackup(true);
       break;
@@ -5836,25 +5823,6 @@ document.addEventListener('input', (e) => {
       renderSettings();
       window.scrollTo(0, y);
     });
-  } else if (t.dataset.encryptSwitch != null) {
-    const rerender = () => {
-      const y = window.scrollY;
-      renderSettings();
-      window.scrollTo(0, y);
-    };
-    if (t.checked) {
-      t.checked = false;
-      askNewBackupPassword(() => {
-        settings.encryptBackup = true;
-        saveSettings();
-        rerender();
-        driveBackup(true);
-      });
-    } else {
-      settings.encryptBackup = false;
-      saveSettings();
-      rerender();
-    }
   } else if (t.dataset.themeSwitch != null) {
     settings.theme = t.checked ? 'dark' : 'light';
     saveSettings();
@@ -6343,6 +6311,8 @@ setTimeout(() => document.querySelector('#tabbar .tab-caps').offsetWidth && lens
 
 fetchReports();
 driveBackup();
+accountBackup();
+accountLink();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   fetchReports();
