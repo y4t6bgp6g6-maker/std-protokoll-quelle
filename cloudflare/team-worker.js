@@ -94,7 +94,7 @@ async function loadDict(db) {
   return (await db.prepare('SELECT key, word FROM dict ORDER BY word COLLATE NOCASE').all()).results;
 }
 /** Stand der Wörterbuch-Regeln (nur die Antwort ändert sich, nicht das gemerkte KI-Ergebnis) */
-const DICT_V = 2;
+const DICT_V = 3;
 /** Stand von Anweisung und Wörterbuch: ändert er sich, verwerfen die iPhones ihre gemerkten Prüfungen */
 const spellVersion = async (dict) => (await sha256(`${AI_SPELL_V}|${DICT_V}|${dict.map((d) => d.word).join('|')}`)).slice(0, 12);
 function editDistance(a, b) {
@@ -110,20 +110,21 @@ function editDistance(a, b) {
   }
   return row[b.length];
 }
-/** Eintrag zu einer Wortfolge: gleiche Buchstaben, sonst ein Tippfehler (ab 12 Buchstaben zwei, unter 6 keiner);
- *  erster Buchstabe und Ziffern müssen gleich sein, und nur ein Eintrag darf passen */
-function dictLookup(key, map, dict) {
-  if (map.has(key)) return map.get(key);
+/** Eintrag mit einem Tippfehler (ab 12 Buchstaben zwei, unter 6 keiner); erster Buchstabe und Ziffern müssen
+ *  gleich sein, und nur ein Eintrag darf passen */
+function dictFuzzy(key, dict) {
   if (key.length < 6) return null;
   const digits = key.replace(/\D/g, '');
-  const hits = dict.filter(
-    (d) => d.key.length >= 6 && d.key[0] === key[0] && d.key.replace(/\D/g, '') === digits && Math.abs(d.key.length - key.length) <= 2 &&
-      editDistance(key, d.key) <= (Math.min(key.length, d.key.length) >= 12 ? 2 : 1)
-  );
+  const hits = dict.filter((d) => {
+    const max = Math.min(key.length, d.key.length) >= 12 ? 2 : 1;
+    return d.key.length >= 6 && d.key[0] === key[0] && d.key.replace(/\D/g, '') === digits &&
+      Math.abs(d.key.length - key.length) <= max && editDistance(key, d.key) <= max;
+  });
   return hits.length === 1 ? hits[0].word : null;
 }
 /** Wortfolgen, deren Buchstaben einem Eintrag gleichen, in dessen Schreibweise bringen (längste Folge zuerst);
- *  Satzzeichen davor und dahinter bleiben. Einzelne Tippfehler erkennt es selbst (Eigennamen kennt die KI oft nicht) */
+ *  Satzzeichen davor und dahinter bleiben. Einzelne Tippfehler erkennt es selbst (Eigennamen kennt die KI oft nicht):
+ *  erst nach allen genauen Treffern, und ein angehängtes kurzes Wort zählt nicht als Tippfehler („Musterhaus B“) */
 function applyDict(text, dict) {
   if (!dict.length || !text) return text;
   const map = new Map(dict.map((d) => [d.key, d.word]));
@@ -131,23 +132,34 @@ function applyDict(text, dict) {
   const maxWords = Math.max(...dict.map((d) => d.word.split(/\s+/).length)) + 2;
   const toks = text.split(' ');
   const out = [];
+  /** Ersatz für die Folge aus n Wörtern ab i, oder null */
+  const at = (i, n, fuzzy) => {
+    const seg = toks.slice(i, i + n).join(' ');
+    const pre = seg.match(/^[^\p{L}\p{N}]*/u)[0];
+    const post = seg.slice(pre.length).match(/[^\p{L}\p{N}]*$/u)[0];
+    const core = seg.slice(pre.length, seg.length - post.length);
+    // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph, Bindestrich und Punkt (keine Kommas usw.)
+    if (!core || /[^\p{L}\p{N}\s'’`´.\-]/u.test(core)) return null;
+    const key = dictKey(core);
+    if (!fuzzy) return map.has(key) ? pre + map.get(key) + post : null;
+    if (n > 1 && dictKey(toks[i + n - 1]).length <= 2) return null;
+    const word = dictFuzzy(key, dict);
+    return word ? pre + word + post : null;
+  };
   for (let i = 0; i < toks.length; ) {
-    let n = Math.min(maxWords, toks.length - i);
-    for (; n >= 1; n--) {
-      const seg = toks.slice(i, i + n).join(' ');
-      const pre = seg.match(/^[^\p{L}\p{N}]*/u)[0];
-      const post = seg.slice(pre.length).match(/[^\p{L}\p{N}]*$/u)[0];
-      const core = seg.slice(pre.length, seg.length - post.length);
-      // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph, Bindestrich und Punkt (keine Kommas usw.)
-      if (!core || /[^\p{L}\p{N}\s'’`´.\-]/u.test(core)) continue;
-      const word = dictLookup(dictKey(core), map, dict);
-      if (word) {
-        out.push(pre + word + post);
-        break;
+    const most = Math.min(maxWords, toks.length - i);
+    let hit = null;
+    for (const fuzzy of [false, true]) {
+      for (let n = most; n >= 1 && !hit; n--) {
+        const word = at(i, n, fuzzy);
+        if (word) hit = { word, n };
       }
+      if (hit) break;
     }
-    if (n >= 1) i += n;
-    else out.push(toks[i++]);
+    if (hit) {
+      out.push(hit.word);
+      i += hit.n;
+    } else out.push(toks[i++]);
   }
   return out.join(' ');
 }
@@ -359,7 +371,8 @@ export default {
             // Antwortet die KI nicht (Kontingent aufgebraucht, Fehler), gilt nur das Wörterbuch
             try {
               await count();
-              const res = await aiJson(env, db, AI_SPELL, JSON.stringify(todo), 40 + todo.length * 40);
+              // je Eintrag reichlich Platz (ein Token je Zeichen und JSON drumherum); abgeschnitten wäre die Antwort unbrauchbar
+              const res = await aiJson(env, db, AI_SPELL, JSON.stringify(todo), 40 + todo.reduce((n, t) => n + t.length + 16, 0));
               if (Array.isArray(res.out) && res.out.length === todo.length) {
                 const now = Date.now();
                 await db.batch(

@@ -46,7 +46,12 @@ try {
   Object.assign(aiStore, JSON.parse(localStorage.getItem(AI_KEY) || '{}'));
 } catch {}
 /** Ergebnisse nur aus dem Wörterbuch (die KI hat nicht geantwortet): zeigen, aber beim nächsten Mal wieder fragen */
-const aiSpellTemp = {};
+let aiSpellTemp = {};
+/** Neuer Stand von Anweisung oder Wörterbuch auf dem Server: alles Gemerkte verwerfen */
+function aiSpellReset(v) {
+  aiStore = { ...aiStore, spell: {}, spellV: v };
+  aiSpellTemp = {};
+}
 const saveAi = () => {
   try {
     localStorage.setItem(AI_KEY, JSON.stringify(aiStore));
@@ -66,18 +71,18 @@ async function aiSpellCheck(items) {
   try {
     const { out, v } = await teamAi('spell', { items: todo });
     // Wörterbuch oder Anweisung geändert: alles Gemerkte neu prüfen lassen
-    if (v && v !== aiStore.spellV) aiStore = { ...aiStore, spell: {}, spellV: v };
+    if (v && v !== aiStore.spellV) aiSpellReset(v);
     for (const [t, fixed, checked] of out || []) {
       if (!checked) {
         aiSpellTemp[t] = fixed;
         continue;
       }
-      aiStore.spell[t] = fixed;
+      aiSpellRemember(t, fixed);
       delete aiSpellTemp[t];
       // die Korrektur selbst ist richtig geschrieben: nach dem Übernehmen nicht noch einmal fragen
-      if (fixed && fixed !== t) aiStore.spell[aiNorm(fixed)] = aiNorm(fixed);
+      if (fixed && fixed !== t) aiSpellRemember(aiNorm(fixed), aiNorm(fixed));
     }
-    // Speicher begrenzen: die ältesten Einträge zuerst raus
+    // Speicher begrenzen: die ältesten Einträge zuerst raus (neu gemerkte stehen hinten)
     const keys = Object.keys(aiStore.spell);
     for (const k of keys.slice(0, Math.max(0, keys.length - 2000))) delete aiStore.spell[k];
     saveAi();
@@ -87,6 +92,11 @@ async function aiSpellCheck(items) {
   } finally {
     todo.forEach((t) => aiSpellBusy.delete(t));
   }
+}
+/** Merken und dabei ans Ende stellen, damit beim Begrenzen wirklich die ältesten wegfallen */
+function aiSpellRemember(t, fixed) {
+  delete aiStore.spell[t];
+  aiStore.spell[t] = fixed;
 }
 /** Korrektur der KI für einen Eintrag, nur wenn sie etwas ändert */
 function aiSpellFix(t) {
@@ -111,7 +121,10 @@ function aiSitesRequest(names) {
       teamSitesKey = null;
       teamRefreshView();
     })
-    .catch(() => {});
+    .catch(() => {
+      // beim nächsten Mal wieder fragen (z. B. schlechter Empfang)
+      if (aiSitesAsked === key) aiSitesAsked = '';
+    });
 }
 
 // ───────── Eigene Zettel hochladen ─────────
@@ -292,7 +305,7 @@ async function teamLoad() {
     team.cache = { month: data.month, members: teamClean(data.members), posts: teamCleanPosts(data.posts), at: Date.now() };
     // Wörterbuch auf dem Server geändert: gemerkte Rechtschreib-Prüfungen verwerfen (werden beim nächsten Verlassen neu geprüft)
     if (data.spellV && data.spellV !== aiStore.spellV) {
-      aiStore = { ...aiStore, spell: {}, spellV: data.spellV };
+      aiSpellReset(data.spellV);
       saveAi();
     }
     saveTeam();
@@ -411,13 +424,15 @@ function teamGroupSites(people) {
       groups[a] = [];
     }
   // Dazu, was die KI als dieselbe Baustelle erkannt hat (andere Schreibweise, Abkürzung, Ort/Kunde dabei);
-  // auch eine ältere Antwort gilt für die Namen, die sie kennt. Verschiedene Hausnummern bleiben getrennt.
+  // auch eine ältere Antwort gilt für die Namen, die sie kennt. Verschiedene Hausnummern bleiben getrennt –
+  // zwischen allen Schreibweisen der beiden Gruppen, nicht nur den beiden aus der Antwort
+  const numsFit = (x, y) => !parts[x].nums || !parts[y].nums || parts[x].nums === parts[y].nums;
   const index = new Map(names.map((n, i) => [aiNorm(n), i]));
   for (const g of aiStore.sites?.groups || []) {
     const ii = g.map((n) => index.get(aiNorm(n))).filter((i) => i != null);
     for (const i of ii.slice(1)) {
       const a = of[i], b = of[ii[0]];
-      if (a === b || (parts[i].nums && parts[ii[0]].nums && parts[i].nums !== parts[ii[0]].nums)) continue;
+      if (a === b || !groups[a].every((x) => groups[b].every((y) => numsFit(x, y)))) continue;
       for (const x of groups[a]) of[x] = b;
       groups[b].push(...groups[a]);
       groups[a] = [];

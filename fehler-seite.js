@@ -212,14 +212,20 @@ async function adminDictChange(method, word) {
   word = String(word || '').replace(/\s+/g, ' ').trim();
   if (!word || adminBusy) return;
   adminBusy = true;
+  let failed = false;
   try {
     adminDict = (await adminRequest(method, '/dict', { word })).dict || adminDict;
     haptic();
   } catch {
+    failed = true;
     toast('Keine Verbindung');
   }
   adminBusy = false;
-  if (currentView === 'fehler' && admin) renderFehler();
+  if (currentView !== 'fehler' || !admin) return;
+  renderFehler();
+  // ohne Verbindung das getippte Wort stehen lassen
+  const input = failed && method === 'PUT' && document.querySelector('[data-fb-word]');
+  if (input) input.value = word;
 }
 
 async function adminLoad() {
