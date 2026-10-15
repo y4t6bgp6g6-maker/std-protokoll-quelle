@@ -36,6 +36,8 @@
 //                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
 //   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
 //   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
+//   DELETE /member ← { member }                                Person aus dem Team entfernen (z. B. doppelt nach Neuinstallation;
+//                                                              benutzt sie die App noch, erscheint sie beim nächsten Upload wieder)
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
 //   DELETE /push   ← { endpoint }                              abmelden
 // Tagesgrenzen: Secret CF_STATS_TOKEN (API-Token nur mit „Konto-Analysen: Lesen“) und Variable CF_ACCOUNT_ID
@@ -510,7 +512,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -532,7 +534,7 @@ export default {
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors`
             ),
             // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
-            db.prepare('SELECT name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month),
+            db.prepare('SELECT member, name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month),
             db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
             db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
           ]);
@@ -540,6 +542,12 @@ export default {
           const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors };
           const team = { month, people: people.results, posts: posts.results[0].n };
           return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), usage: await usage }, 200, h);
+        }
+        if (path === '/member' && req.method === 'DELETE') {
+          const body = await readBody(req);
+          if (!validId(body.member)) return json({ error: 'id' }, 400, h);
+          await db.prepare('DELETE FROM members WHERE member = ?').bind(body.member).run();
+          return json({ ok: true }, 200, h);
         }
         if (path === '/dict' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);

@@ -1911,7 +1911,7 @@ a.s-row:active { background: var(--fill); }
 .fb-ping i { width: 9px; height: 9px; border-radius: 50%; }
 .fb-count { display: flex; gap: 16px; margin: 10px 0 4px; font-size: 13px; color: var(--muted); }
 .fb-count b { color: var(--text); font-size: 17px; margin-right: 3px; }
-.fb-person { display: grid; grid-template-columns: 1fr auto 92px; gap: 10px; padding: 8px 0 0; font-size: 14px; border-top: 0.5px solid var(--sep); margin-top: 8px; }
+.fb-person { cursor: pointer; display: grid; grid-template-columns: 1fr auto 92px; gap: 10px; padding: 8px 0 0; font-size: 14px; border-top: 0.5px solid var(--sep); margin-top: 8px; }
 .fb-person span:last-child { text-align: right; }
 .fb-old { color: var(--warning); font-weight: 600; }
 .fb-list { margin: 16px 16px 0; display: grid; gap: 10px; }

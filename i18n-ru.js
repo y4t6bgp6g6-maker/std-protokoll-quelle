@@ -101,7 +101,8 @@ if (LANG === 'ru') {
       'Überstunden: alles über': 'Переработка: всё сверх',
 
       // ── Team ──
-      'Team diesen Monat': 'Команда в этом месяце', 'Team verlassen': 'Выйти из команды', 'Team verlassen?': 'Выйти из команды?',
+      'Team diesen Monat': 'Команда в этом месяце', 'Aus dem Team entfernen?': 'Удалить из команды?',
+      'Wird die App dort noch benutzt, kommt der Eintrag zurück.': 'Если приложение там ещё используется, запись вернётся.', 'Team verlassen': 'Выйти из команды', 'Team verlassen?': 'Выйти из команды?',
       'Deine Zettel werden für das Team gelöscht.': 'Ваши табели будут удалены для команды.', 'Team-Code ungültig': 'Неверный код команды',
       'Falscher Team-Code': 'Неверный код команды', Teammeeting: 'Собрание', Nachricht: 'Сообщение', Nachrichten: 'Сообщения',
       'Nachricht ans Team': 'Сообщение команде', 'Nachricht löschen?': 'Удалить сообщение?', 'Noch keine Nachrichten': 'Сообщений пока нет',

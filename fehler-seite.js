@@ -23,7 +23,7 @@ const saveAdmin = () => {
 /** Zuletzt geladene Berichte (null = noch nicht geladen) und Speicherbelegung des Servers */
 let adminErrors = null;
 let adminStorage = null;
-/** Team diesen Monat ({ month, people: [{ name, version, updated, sheets }], posts }) und Antwortzeit des Servers in ms */
+/** Team diesen Monat ({ month, people: [{ member, name, version, updated, sheets }], posts }) und Antwortzeit des Servers in ms */
 let adminTeam = null;
 let adminPing = null;
 /** Wörterbuch des Servers (richtige Schreibweisen, nach der KI) und Tagesgrenzen von Cloudflare
@@ -139,7 +139,8 @@ function adminServerHTML() {
 /** Nummer aus „std-protokoll-v29“ (0 = unbekannt) */
 const adminVer = (v) => Number(String(v || '').split('-v')[1]) || 0;
 
-/** Team diesen Monat: Zahlen, Tag der Löschung, je Person App-Version (veraltete gelb) und letzter Upload */
+/** Team diesen Monat: Zahlen, Tag der Löschung, je Person App-Version (veraltete gelb) und letzter Upload;
+ *  Antippen entfernt die Person (z. B. doppelt nach Neuinstallation) */
 function adminTeamHTML(tm) {
   if (!tm) return '';
   const people = tm.people || [];
@@ -150,7 +151,7 @@ function adminTeamHTML(tm) {
   const rows = people
     .map((p) => {
       const v = adminVer(p.version);
-      return `<div class="fb-person"><b>${escapeHtml(p.name || '?')}</b><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
+      return `<div class="fb-person" data-fb="person-del" data-member="${escapeHtml(p.member || '')}"><b>${escapeHtml(p.name || '?')}</b><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
     })
     .join('');
   return `<div class="card fb-store">
@@ -317,6 +318,19 @@ async function adminPushOff() {
 }
 
 /** Knopf sperren bzw. freigeben; neu zeichnen nur, wenn die Seite noch offen ist (man kann währenddessen zurückgehen) */
+async function adminPersonDelete(member) {
+  if (!member || adminBusy) return;
+  adminBusy = true;
+  try {
+    await adminRequest('DELETE', '/member', { member });
+    if (adminTeam) adminTeam.people = (adminTeam.people || []).filter((p) => p.member !== member);
+    haptic();
+  } catch {
+    toast('Keine Verbindung');
+  }
+  adminBusy = false;
+  if (currentView === 'fehler' && admin) renderFehler();
+}
 function adminSetBusy(on) {
   adminBusy = on;
   if (currentView === 'fehler' && admin) renderFehler();
@@ -328,6 +342,9 @@ document.addEventListener('click', (e) => {
   switch (el.dataset.fb) {
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
+      break;
+    case 'person-del':
+      confirmDialog('Aus dem Team entfernen?', 'Wird die App dort noch benutzt, kommt der Eintrag zurück.', 'Entfernen', () => adminPersonDelete(el.dataset.member), true);
       break;
   }
 });
