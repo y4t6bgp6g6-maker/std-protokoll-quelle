@@ -45,18 +45,22 @@
 //   PUT    /backup  Header X-User, X-Auth; Inhalt = verschlüsselte Sicherung (Text)  → { at }
 //                    Behalten: die drei neuesten und je Tag (deutsche Zeit) die letzte der vergangenen BACKUP_DAYS Tage
 // Arbeitsscheine aus einer Arbeitsschein-App (ohne Team-Code, Header X-Report-Key = Secret REPORT_KEY, jede Herkunft):
-//   POST   /reports ← Schein (Format „arbeitsschein/1“, siehe checkReport) → { ok, empfaenger, unbekannt }
-//                    Empfänger: Verfasser und alle Mitarbeiter der Einsätze (Benutzernamen der Konten). Gleiche id
-//                    ersetzt den Schein; wer nicht mehr darauf steht, bekommt ihn entfernt
+//   POST   /reports ← Schein (Format „arbeitsschein/1“, siehe checkReport) → { ok, empfaenger, offen }
+//                    Empfänger: Verfasser und alle Mitarbeiter, zugeordnet über den echten Namen (voller Name aus den
+//                    Einstellungen des Kontos, Schreibweise großzügig, siehe nameKey) oder eine Zuordnung des Admins;
+//                    ein mitgeschickter Benutzername geht vor. Nicht eindeutige Namen warten in report_open, bis der
+//                    Admin sie auf der Server-Seite zuordnet. Gleiche id ersetzt; wer nicht mehr draufsteht, verliert ihn
 //   DELETE /reports ← { id }                                   Schein zurückziehen
-//   Abholen mit Konto: POST /account { action: 'reports', since } → { reports: [{ id, data, changed, deleted }], names }
-//   Tabelle reports, je Empfänger eine Zeile; nach REPORT_DAYS Tagen gelöscht
+//   Abholen mit Konto: POST /account { action: 'reports', since, fullname } → { reports: [{ id, data, changed, deleted }], names }
+//   Tabellen reports (je Empfänger eine Zeile), report_open (wartende Namen), report_alias (Zuordnungen); 60 Tage
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
 //   GET    /errors → { errors, storage, team, dict, accounts, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
 //                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
 //   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
 //   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
 //   DELETE /account ← { user }                                 Konto samt Sicherungen löschen (z. B. Passwort vergessen)
+//   PUT    /alias  ← { key, user }                             wartenden Namen einem Konto zuordnen (wird gemerkt, Scheine zugestellt)
+//   DELETE /alias  ← { key }                                   wartenden Namen verwerfen (z. B. Aushilfe ohne Konto)
 //   DELETE /member ← { member }                                Person aus dem Team entfernen (z. B. doppelt nach Neuinstallation;
 //                                                              benutzt sie die App noch, erscheint sie beim nächsten Upload wieder)
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
@@ -408,6 +412,8 @@ async function accountRequest(db, body, h) {
   if (body.action === 'join') {
     if (!user || !validAuth(body.auth) || !validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
     const name = String(body.name ?? '').slice(0, 80);
+    const fullname = String(body.fullname ?? '').trim().slice(0, 80);
+    await ensureFullname(db);
     const token = await sha256(body.token);
     // mitgeschickter Eintrag: gehört er wirklich diesem iPhone? (Token passt oder es gibt ihn diesen Monat nicht)
     const sent = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
@@ -419,7 +425,7 @@ async function accountRequest(db, body, h) {
       // ein Team-Eintrag gehört nur zu einem Konto (z. B. abgemeldet und neues Konto auf demselben iPhone)
       await db.batch([
         db.prepare('UPDATE accounts SET member = NULL WHERE member = ?').bind(body.member),
-        db.prepare('INSERT INTO accounts (user, auth, member, name, created) VALUES (?, ?, ?, ?, ?)').bind(user, await sha256(body.auth), body.member, name, Date.now()),
+        db.prepare('INSERT INTO accounts (user, auth, member, name, fullname, created) VALUES (?, ?, ?, ?, ?, ?)').bind(user, await sha256(body.auth), body.member, name, fullname || null, Date.now()),
       ]);
       return json({ member: body.member, backups: [] }, 200, h);
     }
@@ -429,7 +435,7 @@ async function accountRequest(db, body, h) {
     const member = validId(row.member) ? row.member : body.member;
     const ops = [
       db.prepare('UPDATE accounts SET member = NULL WHERE member = ? AND user <> ?').bind(member, user),
-      db.prepare('UPDATE accounts SET member = ?, name = COALESCE(NULLIF(?, \'\'), name) WHERE user = ?').bind(member, name, user),
+      db.prepare('UPDATE accounts SET member = ?, name = COALESCE(NULLIF(?, \'\'), name), fullname = COALESCE(NULLIF(?, \'\'), fullname) WHERE user = ?').bind(member, name, fullname, user),
     ];
     // Eintrag des Kontos übernimmt das neue Token; ein anderer, frisch angelegter Eintrag dieses iPhones verschwindet
     ops.push(db.prepare('UPDATE members SET token = ? WHERE member = ?').bind(token, member));
@@ -441,8 +447,12 @@ async function accountRequest(db, body, h) {
   if (row.error) return json({ error: row.error }, row.status, h);
   if (body.action === 'list') return json({ backups: await backupList(db, user) }, 200, h);
   if (body.action === 'reports') {
-    await db.exec(REPORT_TABLE);
+    await reportTables(db);
+    await ensureFullname(db);
     const since = Number(body.since) || 0;
+    // voller Name aus den Einstellungen (für die Zuordnung der Arbeitsscheine), nur wenn geändert
+    const fullname = String(body.fullname ?? '').trim().slice(0, 80);
+    if (fullname && fullname !== row.fullname) await db.prepare('UPDATE accounts SET fullname = ? WHERE user = ?').bind(fullname, user).run();
     const [rows, names] = await db.batch([
       db.prepare('SELECT id, data, changed, deleted FROM reports WHERE user = ? AND changed > ? ORDER BY changed LIMIT 200').bind(user, since),
       db.prepare('SELECT user, name FROM accounts'),
@@ -481,18 +491,31 @@ const REPORT_CORS = {
   'Access-Control-Max-Age': '86400',
 };
 
+/** Name zum Vergleichen: Groß/klein, Leerzeichen, Akzente, ä/ae, ß/ss und Reihenfolge („Muster, Max“) egal */
+const nameKey = (s) =>
+  String(s ?? '')
+    .toLowerCase()
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean)
+    .sort()
+    .join(' ');
+
 /** Schein prüfen; Ergebnis: Fehlertext (welches Feld) oder '' */
 function checkReport(r) {
   const str = (v, max, opt) => (v == null || v === '' ? opt : typeof v === 'string' && v.length <= max);
   const arr = (v, max) => Array.isArray(v) && v.length <= max;
   const hm = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
   const min = (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 1440);
+  const person = (m) => m && typeof m === 'object' && str(m.name, 80, false) && nameKey(m.name) && str(m.benutzer, 40, true);
   if (!r || typeof r !== 'object') return 'Inhalt';
   if (r.format !== 'arbeitsschein/1') return 'format';
   if (typeof r.id !== 'string' || !/^[A-Za-z0-9._:-]{1,100}$/.test(r.id)) return 'id';
   if (!str(r.nummer, 40, false)) return 'nummer';
   if (r.erstellt != null && !(typeof r.erstellt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.erstellt))) return 'erstellt';
-  if (!userKey(r.verfasser)) return 'verfasser';
+  if (!person(r.verfasser)) return 'verfasser';
   const ra = r.rechnungsadresse || {};
   for (const k of ['name', 'strasse', 'plz', 'ort']) if (!str(ra[k], 200, true)) return `rechnungsadresse.${k}`;
   const pr = r.projekt || {};
@@ -507,9 +530,7 @@ function checkReport(r) {
     for (const k of ['pause_min', 'fahrzeit_min', 'arbeitszeit_min']) if (!min(e[k])) return `${at}.${k}`;
     if (e.km != null && !(typeof e.km === 'number' && e.km >= 0 && e.km < 100000)) return `${at}.km`;
     if (!arr(e.mitarbeiter, 30)) return `${at}.mitarbeiter`;
-    for (const [k, m] of e.mitarbeiter.entries()) {
-      if (!m || !str(m.name, 80, true) || !str(m.benutzer, 40, true) || !(m.name || m.benutzer)) return `${at}.mitarbeiter[${k}]`;
-    }
+    for (const [k, m] of e.mitarbeiter.entries()) if (!person(m)) return `${at}.mitarbeiter[${k}]`;
   }
   if (!arr(r.arbeiten, 50) || !r.arbeiten.every((t) => str(t, 4000, false))) return 'arbeiten';
   if (r.pauschalen != null && !(arr(r.pauschalen, 200) && r.pauschalen.every((p) => p && str(p.bezeichnung, 200, true) && str(p.anzahl, 40, true) && str(p.bemerkung, 400, true))))
@@ -518,6 +539,25 @@ function checkReport(r) {
     return 'material';
   return '';
 }
+
+const REPORT_OPEN = 'CREATE TABLE IF NOT EXISTS report_open (id TEXT NOT NULL, key TEXT NOT NULL, name TEXT NOT NULL, data TEXT NOT NULL, changed INTEGER NOT NULL, PRIMARY KEY (id, key))';
+const REPORT_ALIAS = 'CREATE TABLE IF NOT EXISTS report_alias (key TEXT PRIMARY KEY, user TEXT NOT NULL)';
+const reportTables = (db) => db.batch([REPORT_TABLE, REPORT_OPEN, REPORT_ALIAS, ...ACCOUNT_TABLES].map((sql) => db.prepare(sql)));
+/** Voller Name je Konto (aus den Einstellungen); Spalte bei älteren Datenbanken nachrüsten */
+let fullnameColumn = false;
+async function ensureFullname(db) {
+  if (fullnameColumn) return;
+  try {
+    await db.exec('ALTER TABLE accounts ADD COLUMN fullname TEXT');
+  } catch {}
+  fullnameColumn = true;
+}
+
+/** Schein an ein Konto geben (ersetzt seine frühere Fassung) */
+const deliver = (db, id, user, text, now) =>
+  db
+    .prepare('INSERT INTO reports (id, user, data, changed, deleted) VALUES (?, ?, ?, ?, NULL) ON CONFLICT(id, user) DO UPDATE SET data = excluded.data, changed = excluded.changed, deleted = NULL')
+    .bind(id, user, text, now);
 
 async function reportsRequest(db, req, env, h) {
   if (!env.REPORT_KEY || !sameCode(req.headers.get('X-Report-Key'), env.REPORT_KEY)) {
@@ -532,36 +572,52 @@ async function reportsRequest(db, req, env, h) {
   } catch {
     return json({ error: 'json' }, 400, h);
   }
-  await db.exec(REPORT_TABLE);
+  await reportTables(db);
+  await ensureFullname(db);
   const now = Date.now();
   if (req.method === 'DELETE') {
     if (typeof r?.id !== 'string' || !r.id) return json({ error: 'id' }, 400, h);
-    await db.prepare("UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ?").bind(now, now, r.id).run();
+    await db.batch([
+      db.prepare("UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ?").bind(now, now, r.id),
+      db.prepare('DELETE FROM report_open WHERE id = ?').bind(r.id),
+    ]);
     return json({ ok: true }, 200, h);
   }
   const bad = checkReport(r);
   if (bad) return json({ error: bad }, 400, h);
-  // Empfänger: Verfasser und alle Mitarbeiter mit Benutzernamen; nur wer ein Konto hat
-  const wanted = [...new Set([r.verfasser, ...r.einsaetze.flatMap((e) => e.mitarbeiter.map((m) => m.benutzer))].map(userKey).filter(Boolean))];
-  await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
-  const known = new Set(
-    (await db.prepare(`SELECT user FROM accounts WHERE user IN (${wanted.map(() => '?').join(',')})`).bind(...wanted).all()).results.map((x) => x.user)
-  );
-  const to = wanted.filter((u) => known.has(u));
-  const ops = to.map((u) =>
-    db
-      .prepare('INSERT INTO reports (id, user, data, changed, deleted) VALUES (?, ?, ?, ?, NULL) ON CONFLICT(id, user) DO UPDATE SET data = excluded.data, changed = excluded.changed, deleted = NULL')
-      .bind(r.id, u, text, now)
-  );
-  // nicht mehr auf dem Schein: dort entfernen
+  // Personen auf dem Schein → Konten: Benutzername, sonst Zuordnung des Admins, sonst genau ein Konto mit diesem Namen
+  const [accRows, aliasRows] = await db.batch([db.prepare('SELECT user, name, fullname FROM accounts'), db.prepare('SELECT key, user FROM report_alias')]);
+  const users = new Set(accRows.results.map((a) => a.user));
+  const alias = new Map(aliasRows.results.map((a) => [a.key, a.user]));
+  const byName = new Map();
+  for (const a of accRows.results) {
+    const k = nameKey(a.fullname);
+    if (k) byName.set(k, byName.has(k) ? null : a.user); // null = mehrdeutig
+  }
+  const people = [r.verfasser, ...r.einsaetze.flatMap((e) => e.mitarbeiter)];
+  const to = new Map(); // Konto → angezeigter Name
+  const open = new Map(); // Namensschlüssel → Name
+  for (const p of people) {
+    const key = nameKey(p.name);
+    const u = userKey(p.benutzer);
+    const user = (u && users.has(u) && u) || (users.has(alias.get(key)) && alias.get(key)) || byName.get(key) || null;
+    if (user) to.set(user, p.name.trim());
+    else open.set(key, p.name.trim());
+  }
+  const ops = [...to.keys()].map((u) => deliver(db, r.id, u, text, now));
+  // nicht mehr auf dem Schein: dort entfernen; wartende Namen neu
+  const keep = [...to.keys()];
   ops.push(
     db
-      .prepare(`UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ? AND deleted IS NULL${to.length ? ` AND user NOT IN (${to.map(() => '?').join(',')})` : ''}`)
-      .bind(now, now, r.id, ...to)
+      .prepare(`UPDATE reports SET data = '', deleted = ?, changed = ? WHERE id = ? AND deleted IS NULL${keep.length ? ` AND user NOT IN (${keep.map(() => '?').join(',')})` : ''}`)
+      .bind(now, now, r.id, ...keep)
   );
+  ops.push(db.prepare('DELETE FROM report_open WHERE id = ?').bind(r.id));
+  for (const [key, name] of open) ops.push(db.prepare('INSERT INTO report_open (id, key, name, data, changed) VALUES (?, ?, ?, ?, ?)').bind(r.id, key, name, text, now));
   ops.push(db.prepare('DELETE FROM reports WHERE changed < ?').bind(now - REPORT_DAYS * 86400e3));
+  ops.push(db.prepare('DELETE FROM report_open WHERE changed < ?').bind(now - REPORT_DAYS * 86400e3));
   await db.batch(ops);
-  return json({ ok: true, empfaenger: to, unbekannt: wanted.filter((u) => !known.has(u)) }, 200, h);
+  return json({ ok: true, empfaenger: [...to.values()], offen: [...open.values()] }, 200, h);
 }
 
 /** Verschlüsselte Sicherung speichern (Inhalt roh, nicht als JSON verpackt: spart Rechenzeit bei großen Dateien) */
@@ -783,7 +839,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -795,7 +851,9 @@ export default {
           await ensureVersionColumn(db);
           // Speicher: Größe der ganzen Datenbank (meta.size_after) und Bytes je Inhalt; der Rest ist die Datenbank selbst
           const bytes = (cols) => cols.map((c) => `COALESCE(LENGTH(CAST(${c} AS BLOB)), 0)`).join(' + ');
-          const [, , , , errors, size, people, posts, dict, accounts] = await db.batch([
+          await reportTables(db);
+          await ensureFullname(db);
+          const [, , , , errors, size, people, posts, dict, accounts, open] = await db.batch([
             ...ACCOUNT_TABLES.map((sql) => db.prepare(sql)),
             db.prepare('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)'),
             db.prepare('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)'),
@@ -811,12 +869,35 @@ export default {
             db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
             db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
             // Konten: Name, letzte Sicherung, Größe aller Sicherungen
-            db.prepare('SELECT a.user, a.name, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
+            db.prepare('SELECT a.user, a.name, a.fullname, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
+            // Arbeitsscheine: Namen, die noch keinem Konto zugeordnet sind (je Name, Zahl der Scheine)
+            db.prepare('SELECT key, MAX(name) AS name, COUNT(*) AS n, MAX(changed) AS last FROM report_open GROUP BY key ORDER BY last DESC'),
           ]);
           const s = size.results[0];
           const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors, backups: s.backups };
           const team = { month, people: people.results, posts: posts.results[0].n };
-          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, usage: await usage }, 200, h);
+          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, open: open.results, usage: await usage }, 200, h);
+        }
+        if (path === '/alias' && (req.method === 'PUT' || req.method === 'DELETE')) {
+          const body = await readBody(req);
+          const key = String(body.key ?? '');
+          if (!key) return json({ error: 'key' }, 400, h);
+          await reportTables(db);
+          if (req.method === 'DELETE') {
+            await db.prepare('DELETE FROM report_open WHERE key = ?').bind(key).run();
+            return json({ ok: true }, 200, h);
+          }
+          const user = userKey(body.user);
+          if (!user || !(await db.prepare('SELECT user FROM accounts WHERE user = ?').bind(user).first())) return json({ error: 'user' }, 400, h);
+          // Zuordnung merken und die wartenden Scheine zustellen
+          const now = Date.now();
+          const waiting = (await db.prepare('SELECT id, data FROM report_open WHERE key = ?').bind(key).all()).results;
+          await db.batch([
+            db.prepare('INSERT OR REPLACE INTO report_alias (key, user) VALUES (?, ?)').bind(key, user),
+            ...waiting.map((w) => deliver(db, w.id, user, w.data, now)),
+            db.prepare('DELETE FROM report_open WHERE key = ?').bind(key),
+          ]);
+          return json({ ok: true, delivered: waiting.length }, 200, h);
         }
         if (path === '/account' && req.method === 'DELETE') {
           const user = userKey((await readBody(req)).user);

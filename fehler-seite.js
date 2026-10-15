@@ -30,8 +30,10 @@ let adminPing = null;
  *  ({ day, requests, read, write, ai }, je [verbraucht, Grenze]; neu ab 0 Uhr UTC) */
 let adminDict = null;
 let adminUsage = null;
-/** Konten: [{ user, name, last, bytes }] (letzte Sicherung, Größe aller Sicherungen) */
+/** Konten: [{ user, name, fullname, last, bytes }] (letzte Sicherung, Größe aller Sicherungen) */
 let adminAccounts = null;
+/** Arbeitsscheine: Namen ohne eindeutiges Konto [{ key, name, n, last }] */
+let adminOpen = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -120,6 +122,7 @@ function renderFehler(full = false) {
     ${adminUsageHTML(adminUsage)}
     ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
+    ${adminOpenHTML(adminOpen)}
     ${adminAccountsHTML(adminAccounts)}
     <h2 class="section-title">Fehlerberichte</h2>
     <div class="fb-list">${list}</div>
@@ -169,7 +172,7 @@ function adminAccountsHTML(list) {
   if (!list) return '';
   const rows = list
     .map(
-      (a) => `<div class="fb-person" data-fb="account-del" data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.user)}</b> <span class="muted" translate="no">${escapeHtml(teamFirstName(a.name || ''))}</span></span><span class="muted">${a.bytes ? adminBytes(a.bytes) : '–'}</span><span class="muted">${a.last ? teamAgo(a.last) : 'nie'}</span></div>`
+      (a) => `<div class="fb-person" data-fb="account-del" data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.user)}</b> <span class="muted" translate="no">${escapeHtml(a.fullname || a.name || '')}</span></span><span class="muted">${a.bytes ? adminBytes(a.bytes) : '–'}</span><span class="muted">${a.last ? teamAgo(a.last) : 'nie'}</span></div>`
     )
     .join('');
   return `<div class="card fb-store">
@@ -177,6 +180,42 @@ function adminAccountsHTML(list) {
       ${rows}
     </div>`;
 }
+/** Arbeitsscheine mit Namen, die keinem Konto eindeutig gehören; Antippen ordnet zu (wird gemerkt) */
+function adminOpenHTML(list) {
+  if (!list || !list.length) return '';
+  return `<div class="card fb-store">
+      <div class="fb-store-h"><span>Nicht zugeordnet</span><span class="muted">${list.length}</span></div>
+      ${list
+        .map(
+          (o) => `<div class="fb-person" data-fb="open-assign" data-key="${escapeHtml(o.key)}"><b translate="no">${escapeHtml(o.name)}</b><span class="muted">${o.n} ${o.n === 1 ? 'Schein' : 'Scheine'}</span><span class="muted">${teamAgo(o.last)}</span></div>`
+        )
+        .join('')}
+    </div>`;
+}
+function adminOpenAssign(key) {
+  const o = (adminOpen || []).find((x) => x.key === key);
+  if (!o || adminBusy) return;
+  const send = async (method, body) => {
+    adminBusy = true;
+    try {
+      await adminRequest(method, '/alias', body);
+      adminOpen = adminOpen.filter((x) => x.key !== key);
+      haptic();
+    } catch {
+      toast('Keine Verbindung');
+    }
+    adminBusy = false;
+    if (currentView === 'fehler' && admin) renderFehler();
+  };
+  actionSheet([
+    ...(adminAccounts || []).map((a) => ({
+      label: `${escapeHtml(a.fullname || a.name || a.user)} <span class="muted">${escapeHtml(a.user)}</span>`,
+      run: () => send('PUT', { key, user: a.user }),
+    })),
+    { label: 'Verwerfen', destructive: true, run: () => send('DELETE', { key }) },
+  ]);
+}
+
 async function adminAccountDelete(user) {
   if (!user || adminBusy) return;
   adminBusy = true;
@@ -292,6 +331,7 @@ async function adminLoad() {
     adminDict = data.dict || [];
     adminUsage = data.usage || null;
     adminAccounts = data.accounts || null;
+    adminOpen = data.open || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
@@ -374,6 +414,9 @@ document.addEventListener('click', (e) => {
   switch (el.dataset.fb) {
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
+      break;
+    case 'open-assign':
+      adminOpenAssign(el.dataset.key);
       break;
     case 'account-del':
       confirmDialog('Konto löschen?', 'Die Sicherungen auf dem Server werden gelöscht.', 'Löschen', () => adminAccountDelete(el.dataset.user), true);

@@ -56,7 +56,7 @@ const accountError = (e) =>
 
 /** Konto beim Team-Server anlegen bzw. prüfen und mit dem Team-Eintrag verbinden → { member, backups } */
 async function accountJoin(code, member, token) {
-  const out = await accountRequest('join', { mode: account.mode, member, token, name: teamFirstName(settings.name) }, code);
+  const out = await accountRequest('join', { mode: account.mode, member, token, name: teamFirstName(settings.name), fullname: settings.name.trim() }, code);
   account.ok = true;
   account.mode = 'login';
   account.error = '';
@@ -295,7 +295,8 @@ async function accountFetchReports() {
   accountFetchReports.busy = true;
   let n = 0;
   try {
-    const out = await accountRequest('reports', { since: reportStore.serverSince || 0 }, team.code);
+    // voller Name: daran erkennt der Server dich auf den Arbeitsscheinen
+    const out = await accountRequest('reports', { since: reportStore.serverSince || 0, fullname: settings.name.trim() }, team.code);
     for (const row of out.reports || []) {
       // ersetzt: alle Einträge dieses Scheins (Zahl der Einsätze kann sich geändert haben)
       reportStore.items = reportStore.items.filter((x) => x.src !== row.id);
