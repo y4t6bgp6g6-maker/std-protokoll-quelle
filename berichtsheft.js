@@ -207,23 +207,25 @@ function weekComplete(h, mon, w) {
     .every((i) => dayComplete(w.days[i], addDays(mo, i)));
 }
 /** Stand einer Woche: leer, offen (geschrieben), azubi (fertig und vom Azubi unterschrieben – ein Haken),
- *  fertig (vom Ausbilder abgezeichnet – zwei Haken) */
+ *  fertig (vom Ausbilder abgezeichnet – zwei Haken). signed.frei: der Azubi hat per langem Drücken trotzdem
+ *  unterschrieben, dann gilt der Haken auch für eine unfertige Seite */
 function weekState(h, mon) {
   const w = h.weeks[mon];
   if (!weekFilled(w)) return 'leer';
   if (w.signed?.ausbilder) return 'fertig';
-  return w.signed?.azubi && weekComplete(h, mon, w) ? 'azubi' : 'offen';
+  return w.signed?.azubi && (w.signed.frei || weekComplete(h, mon, w)) ? 'azubi' : 'offen';
 }
-/** Monatsbericht fertig: Betriebliche Tätigkeit und Berufsschule zusammen mindestens 10 Wörter oder 50 Zeichen (Bilder egal) */
+/** Monatsbericht fertig: Betriebliche Tätigkeit und Berufsschule zusammen mindestens 5 Wörter oder 30 Zeichen
+ *  (eins von beiden reicht, Bilder egal) */
 function monthComplete(m) {
   const t = ['taet', 'schule'].map((k) => (m?.[k]?.text || '').trim()).filter(Boolean).join(' ');
-  return t.length >= 50 || t.split(/\s+/).filter(Boolean).length >= 10;
+  return t.length >= 30 || t.split(/\s+/).filter(Boolean).length >= 5;
 }
 function monthState(h, ym) {
   const m = h.months[ym];
   if (!monthFilled(m)) return 'leer';
   if (m.signed?.ausbilder) return 'fertig';
-  return m.signed?.azubi && monthComplete(m) ? 'azubi' : 'offen';
+  return m.signed?.azubi && (m.signed.frei || monthComplete(m)) ? 'azubi' : 'offen';
 }
 /** Fortschritt eines Hefts: nur Seiten mit mindestens einem Haken zählen */
 function heftProgress(h) {
@@ -698,7 +700,7 @@ function withSignature(role, then) {
 function bhAutoSign(e, filled) {
   if (!e || !bh.autoSign || !bh.sigs.azubi || e.signed?.ausbilder) return;
   if (filled) e.signed = { ...e.signed, azubi: isoDate(new Date()) };
-  else if (e.signed?.azubi) delete e.signed.azubi;
+  else if (e.signed?.azubi && !e.signed.frei) delete e.signed.azubi;
 }
 
 /** Automatische Unterschrift für alle Seiten nach den Regeln von heute (einmal je Start, ältere Wochen bekamen sie schon
@@ -712,17 +714,18 @@ function bhAutoSignAll(force = false) {
     // nur fehlende ergänzen bzw. unfertigen wegnehmen; vorhandene behalten ihr Datum
     for (const [mon, w] of Object.entries(h.weeks)) {
       const done = weekComplete(h, mon, w);
-      if (done !== !!w.signed?.azubi && !w.signed?.ausbilder) bhAutoSign(w, done), (changed = true);
+      if (done !== !!w.signed?.azubi && !w.signed?.ausbilder && !w.signed?.frei) bhAutoSign(w, done), (changed = true);
     }
     for (const m of Object.values(h.months)) {
       const done = monthComplete(m);
-      if (done !== !!m.signed?.azubi && !m.signed?.ausbilder) bhAutoSign(m, done), (changed = true);
+      if (done !== !!m.signed?.azubi && !m.signed?.ausbilder && !m.signed?.frei) bhAutoSign(m, done), (changed = true);
     }
   }
   if (changed) saveBh();
 }
 
-function signTap(role) {
+/** Unterschreiben bzw. Abzeichnung entfernen; force (3 s lang gedrückt): auch eine unfertige Seite unterschreiben */
+function signTap(role, force = false) {
   const { kind, h, key } = bhEntry;
   const e = bhCurrent(false);
   const filled = kind === 'woche' ? weekFilled(e) : monthFilled(e);
@@ -734,6 +737,7 @@ function signTap(role) {
         destructive: true,
         run: () => {
           delete e.signed[role];
+          if (role === 'azubi') delete e.signed.frei;
           saveBh();
           rerender();
         },
@@ -741,12 +745,12 @@ function signTap(role) {
     ]);
     return;
   }
-  if (!filled) return toast('Erst den Bericht schreiben');
-  if (kind === 'woche' && !weekComplete(h, key, e)) return toast('Erst jeden Tag ausfüllen');
-  if (kind === 'monat' && !monthComplete(e)) return toast('Erst mehr schreiben');
+  const complete = kind === 'woche' ? weekComplete(h, key, e) : monthComplete(e);
+  if (!filled || (!complete && !force)) return toast('Erst den Bericht schreiben');
   withSignature(role, () => {
     const cur = bhCurrent();
     cur.signed = { ...cur.signed, [role]: isoDate(new Date()) };
+    if (role === 'azubi' && !complete) cur.signed.frei = true;
     saveBh();
     rerender();
   });
@@ -936,6 +940,41 @@ async function bhPdf(page) {
 }
 
 // ───────── Ereignisse ─────────
+
+// Unterschreiben 3 s lang drücken: auch wenn die Seite nach unseren Regeln noch nicht fertig ist
+const BH_FORCE_HOLD = 3000;
+let bhPress = null; // { el, x, y, timer }
+let bhSuppressClick = false;
+function bhPressEnd() {
+  if (!bhPress) return;
+  clearTimeout(bhPress.timer);
+  bhPress = null;
+}
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest?.('[data-bh="sign"]');
+  if (!el || e.button > 0 || layer.contains(el)) return;
+  bhPressEnd();
+  bhPress = { el, x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+    const role = el.dataset.role;
+    bhPressEnd();
+    bhSuppressClick = true;
+    setTimeout(() => (bhSuppressClick = false), 600);
+    if (bhCurrent(false)?.signed?.[role]) return;
+    haptic();
+    signTap(role, true);
+  }, BH_FORCE_HOLD) };
+});
+document.addEventListener('pointermove', (e) => {
+  if (bhPress && Math.hypot(e.clientX - bhPress.x, e.clientY - bhPress.y) > 10) bhPressEnd();
+});
+['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, bhPressEnd));
+window.addEventListener('scroll', bhPressEnd, { passive: true });
+document.addEventListener('click', (e) => {
+  if (bhSuppressClick && e.target.closest?.('[data-bh="sign"]')) (e.preventDefault(), e.stopPropagation());
+}, true);
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest?.('[data-bh="sign"]')) e.preventDefault();
+});
 
 // Abgezeichnete Woche: Antippen warnt erst (Felder sind nur lesbar)
 document.addEventListener(

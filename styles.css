@@ -1792,7 +1792,7 @@ a.s-row:active { background: var(--fill); }
   color: #fff;
 }
 .bh-photo-add { display: inline-flex; align-items: center; gap: 4px; margin: 8px 0 4px; cursor: pointer; }
-.bh-sign { width: 100%; text-align: left; }
+.bh-sign { width: 100%; text-align: left; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .bh-sign .sig-preview { flex: none; max-width: 120px; color: var(--text); }
 .bh-sign-btn { flex: none; color: var(--accent); font-weight: 600; }
 .bh-form .field span { white-space: nowrap; }
