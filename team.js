@@ -231,7 +231,7 @@ const teamTr = (t) => aiTr(t, LANG);
 /** Einträge und Nachrichten der Kollegen in die eingestellte Sprache übersetzen lassen; danach neu zeichnen */
 function teamTranslateAll() {
   const texts = [];
-  for (const m of teamMembers()) for (const s of m.sheets || []) for (const d of s.days || []) for (const r of d.rows || []) if (r.work) texts.push(r.work);
+  for (const m of teamMembersAll()) for (const s of m.sheets || []) for (const d of s.days || []) for (const r of d.rows || []) if (r.work) texts.push(r.work);
   for (const p of teamPosts()) texts.push(p.text);
   aiTranslate(texts, LANG).then((fresh) => fresh && teamRefreshView());
 }
@@ -250,18 +250,22 @@ if (window.stdAppVersion)
     }
   });
 
-/** Zettel des laufenden Monats, ohne Angaben, die nur dieses iPhone betreffen */
+/** Zettel des laufenden Monats und des Vormonats (nachträgliche Änderungen), ohne Angaben, die nur dieses iPhone betreffen */
 function teamPayload() {
   const now = new Date();
+  const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const pick = (d) =>
+    savedSheets()
+      .filter((s) => s.year === d.getFullYear() && s.month === d.getMonth() + 1)
+      .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days }));
   return {
     member: team.member,
     token: team.token,
     name: teamFirstName(settings.name),
     month: teamMonth(now),
     version: teamAppVersion,
-    sheets: savedSheets()
-      .filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1)
-      .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days })),
+    sheets: pick(now),
+    prev: { month: teamMonth(pm), sheets: pick(pm) },
   };
 }
 
@@ -370,6 +374,8 @@ let teamData = null;
 let teamLoading = false;
 /** Teammeeting offen (statt der Zettel), Scrollstand, waagerechter Stand der Zettelreihen (null = laufende Woche zeigen) */
 let teamPinOpen = false;
+/** Team-Seite zeigt den Vormonat statt des laufenden Monats */
+let teamPrevOpen = false;
 let teamScroll = 0;
 let teamX = null;
 /** Woche, in der teamX gemerkt wurde (in einer neuen Woche wieder die laufende zeigen) */
@@ -426,7 +432,14 @@ async function teamLoad() {
     const data = await teamRequest('GET', '/team');
     // Während des Ladens das Team verlassen: Ergebnis verwerfen
     if (!team) return;
-    team.cache = { month: data.month, members: teamClean(data.members), posts: teamCleanPosts(data.posts), at: Date.now() };
+    team.cache = {
+      month: data.month,
+      members: teamClean(data.members),
+      prevMonth: data.prev?.month || '',
+      prevMembers: teamClean(data.prev?.members),
+      posts: teamCleanPosts(data.posts),
+      at: Date.now(),
+    };
     // Wörterbuch auf dem Server geändert: gemerkte Rechtschreib-Prüfungen verwerfen (werden beim nächsten Verlassen neu geprüft)
     if (data.spellV && data.spellV !== aiStore.spellV) {
       aiSpellReset(data.spellV);
@@ -453,7 +466,7 @@ async function teamLoad() {
 /** Was die Team-Seiten zeigen (ohne Ladezeitpunkt), dazu die laufende Woche */
 function teamDrawnKey() {
   const src = teamData || (team && team.cache);
-  return JSON.stringify([src ? [src.members, src.posts, !!src.offline] : null, isoDate(mondayOf(new Date()))]);
+  return JSON.stringify([src ? [src.members, src.prevMembers, src.posts, !!src.offline] : null, isoDate(mondayOf(new Date()))]);
 }
 
 const teamAgo = (ms) => {
@@ -468,7 +481,18 @@ const teamAgo = (ms) => {
 const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
 
 /** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
-const teamMembers = () => ((teamData || (team && team.cache) || {}).members || []).filter((m) => team && m.member !== team.member);
+const teamMembers = (prev = false) => ((teamData || (team && team.cache) || {})[prev ? 'prevMembers' : 'members'] || []).filter((m) => team && m.member !== team.member);
+/** Kollegen mit den Zetteln beider Monate (Vormonat zuerst bzw. wie gewählt): für Zettel-Ansicht, Team im Zettel, Übersetzung */
+function teamMembersAll(prevFirst = false) {
+  const lists = prevFirst ? [teamMembers(true), teamMembers()] : [teamMembers(), teamMembers(true)];
+  const out = new Map();
+  for (const m of lists.flat()) {
+    const x = out.get(m.member);
+    if (x) x.sheets = [...x.sheets, ...(m.sheets || [])];
+    else out.set(m.member, { ...m, sheets: [...(m.sheets || [])] });
+  }
+  return [...out.values()];
+}
 const teamDayRows = (d) => (d.rows || []).filter((r) => !rowIsEmpty(r));
 /** Tag mit Tagesart (Urlaub, krank …) statt Arbeit; Arbeit am Feiertag zählt als Arbeit */
 const teamDayOff = (d) => d.status && !holidayWork(d);
@@ -590,13 +614,16 @@ function teamMainSite(d, crew) {
 }
 
 /** Wochen des laufenden Monats (ganze und Teilwochen) bis zur laufenden bzw. bis zur letzten mit einem Zettel */
-function teamWeeks(people) {
+/** Wochen des laufenden Monats bis heute (bzw. bis zum letzten Zettel) oder – prev – alle Wochen des Vormonats */
+function teamWeeks(people, prev = false) {
   const now = new Date();
-  const first = new Date(now.getFullYear(), now.getMonth(), 1);
-  const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const base = new Date(now.getFullYear(), now.getMonth() - (prev ? 1 : 0), 1);
+  const first = base;
+  const last = new Date(base.getFullYear(), base.getMonth() + 1, 0);
   const weeks = [];
   for (let d = mondayOf(first); d <= last; d = addDays(d, 7))
-    weeks.push({ mon: d, iso: isoDate(d), a: d < first ? first : d, b: addDays(d, 6) > last ? last : addDays(d, 6), now: sameDay(d, mondayOf(now)) });
+    weeks.push({ mon: d, iso: isoDate(d), a: d < first ? first : d, b: addDays(d, 6) > last ? last : addDays(d, 6), now: !prev && sameDay(d, mondayOf(now)) });
+  if (prev) return weeks;
   let end = weeks.findIndex((w) => w.now);
   weeks.forEach((w, k) => people.some((p) => (p.sheets || []).some((s) => s.weekStart === w.iso)) && (end = Math.max(end, k)));
   return weeks.slice(0, end + 1);
@@ -630,17 +657,18 @@ function teamPaperHTML(p, s, w, sites, marker) {
 }
 
 /** Man selbst wie ein Kollege: eigene gespeicherte Zettel des laufenden Monats */
-function teamMe() {
+/** Eigene Zettel: laufender Monat, Vormonat (prev true) oder beide (prev null) */
+function teamMe(prev = false) {
   const now = new Date();
-  return { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => s.year === now.getFullYear() && s.month === now.getMonth() + 1) };
+  const months = [now, new Date(now.getFullYear(), now.getMonth() - 1, 1)].filter((_, k) => prev == null || k === (prev ? 1 : 0));
+  return { member: team.member, name: 'Du', me: true, sheets: savedSheets().filter((s) => months.some((d) => s.year === d.getFullYear() && s.month === d.getMonth() + 1)) };
 }
 
-function teamSheetsHTML(members) {
-  const now = new Date();
+function teamSheetsHTML(members, prev = false) {
   // Die eigene Reihe steht immer ganz unten
-  const people = [...members, teamMe()];
+  const people = [...members, teamMe(prev)];
   teamGroupSites(people);
-  const weeks = teamWeeks(people);
+  const weeks = teamWeeks(people, prev);
   const nowCol = weeks.findIndex((w) => w.now);
   const sheetOf = (p, w) => (p.sheets || []).find((x) => x.weekStart === w.iso);
   const workDay = (s, i) => sheetIsActive(s, i) && !teamDayOff(s.days[i]);
@@ -703,7 +731,7 @@ function teamSheetsHTML(members) {
         <div class="tm-z-scroll"><div class="tm-z-row" data-now="${nowCol}" style="--n:${weeks.length}">${slots}</div></div></div>`;
     })
     .join('');
-  return `<h2 class="section-title">${MONTHS[now.getMonth()]} ${now.getFullYear()}</h2>${members.length ? '' : '<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>'}${cards}`;
+  return `${members.length ? '' : '<p class="tm-msg muted">Noch keine Zettel von Kollegen</p>'}${cards}`;
 }
 
 /** Zettelreihen auf den gemerkten Stand bzw. so, dass die laufende Woche rechts zu sehen ist */
@@ -802,7 +830,7 @@ const teamChatIcon = () => svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.
 function renderTeam() {
   app.innerHTML = `
     <header class="nav" id="team-nav"></header>
-    <h1 class="large-title" id="team-title"></h1>
+    <div class="title-row"><h1 class="large-title" id="team-title"></h1><span id="team-month"></span></div>
     <div id="team-body"></div>`;
   renderTeamBody();
   if (team) {
@@ -826,6 +854,21 @@ function renderTeamNav() {
           on ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
         }`;
   document.getElementById('team-title').textContent = on && teamPinOpen ? 'Teammeeting' : 'Team';
+  // Monat wählen: laufender Monat oder Vormonat (Kapsel wie das Jahr auf der Übersicht)
+  const mon = document.getElementById('team-month');
+  if (!mon) return;
+  if (!on || teamPinOpen) {
+    mon.innerHTML = '';
+    return;
+  }
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth() - (teamPrevOpen ? 1 : 0), 1);
+  const chev = (p) => svg(`<path d="${p}"/>`, 18);
+  mon.innerHTML = `<span class="nav-btn ov-yearbtn tm-month">
+      <button data-team="month-prev" aria-label="Vormonat" ${teamPrevOpen ? 'disabled' : ''}>${chev('M15 5l-7 7 7 7')}</button>
+      <span>${MONTHS[d.getMonth()]}</span>
+      <button data-team="month-next" aria-label="Laufender Monat" ${teamPrevOpen ? '' : 'disabled'}>${chev('M9 5l7 7-7 7')}</button>
+    </span>`;
 }
 
 function renderTeamBody() {
@@ -866,7 +909,7 @@ function renderTeamBody() {
     body.innerHTML = offline + teamBoardHTML();
     return;
   }
-  const content = !teamData && !team.cache ? `<p class="tm-msg muted">Wird geladen …</p>` : teamSheetsHTML(teamMembers());
+  const content = !teamData && !team.cache ? `<p class="tm-msg muted">Wird geladen …</p>` : teamSheetsHTML(teamMembers(teamPrevOpen), teamPrevOpen);
   body.innerHTML = `${offline}${content}
     <div class="center"><button class="link-btn tm-leave" data-team="leave">Team verlassen</button></div>`;
   teamPlaceRows();
@@ -887,9 +930,13 @@ function teamFindMember(id) {
     location.replace('#/team');
     return undefined;
   }
-  if (id === team.member) return teamMe();
+  if (id === team.member) {
+    const me = teamMe(null);
+    if (teamPrevOpen) me.sheets.sort((a, b) => a.month === b.month ? 0 : a.year * 12 + a.month < b.year * 12 + b.month ? -1 : 1);
+    return me;
+  }
   if (!teamData) teamLoad();
-  return teamMembers().find((m) => m.member === id) || null;
+  return teamMembersAll(teamPrevOpen).find((m) => m.member === id) || null;
 }
 
 /** Ein Zettel (eine Woche) eines Kollegen oder der eigene, nur lesen: eine Karte, je Tag links Tag und Datum, rechts alle Einträge, Pause und Stunden */
@@ -942,7 +989,7 @@ function teamRefreshView() {
 
 // ───────── Im Zettel: Kapsel je Tag mit den Einträgen der Kollegen (Fenster, keine eigene Seite) ─────────
 
-/** Tag eines Kollegen zu einem Datum (nur Zettel des laufenden Monats liegen auf dem Server) */
+/** Tag eines Kollegen zu einem Datum (auf dem Server liegen laufender Monat und Vormonat) */
 function teamDayOf(m, iso) {
   for (const s of m.sheets || []) {
     const i = Math.round((parseDate(iso) - parseDate(s.weekStart)) / 86400000);
@@ -953,7 +1000,7 @@ function teamDayOf(m, iso) {
 /** Hat jemand zu dem Tag etwas geschrieben? Arbeit oder eine Tagesart wie Urlaub; ein von selbst eingetragener Feiertag zählt nicht */
 const teamDayWritten = (d) => !!d && (teamDayRows(d).length > 0 || (!!d.status && d.status !== 'feiertag'));
 /** Kollegen mit einem Eintrag an diesem Tag */
-const teamOnDay = (iso) => (team ? teamMembers().filter((m) => teamDayWritten(teamDayOf(m, iso)?.d)) : []);
+const teamOnDay = (iso) => (team ? teamMembersAll().filter((m) => teamDayWritten(teamDayOf(m, iso)?.d)) : []);
 
 function teamDayChipHTML(s, i) {
   if (!team || !accountOk()) return '';
@@ -991,7 +1038,7 @@ function teamDayWindow(iso) {
         .join('')}</div></div>`;
   };
   const person = (id) => {
-    const m = teamMembers().find((x) => x.member === id);
+    const m = teamMembersAll().find((x) => x.member === id);
     const t = m && teamDayOf(m, iso);
     if (!t) return list();
     const { d, i } = t;
@@ -1071,6 +1118,13 @@ document.addEventListener('click', (e) => {
       break;
     case 'login':
       location.hash = '#/einstellungen/konto';
+      break;
+    case 'month-prev':
+    case 'month-next':
+      teamPrevOpen = el.dataset.team === 'month-prev';
+      teamX = null;
+      renderTeamBody();
+      window.scrollTo(0, 0);
       break;
     case 'fehler':
       location.hash = '#/fehler';

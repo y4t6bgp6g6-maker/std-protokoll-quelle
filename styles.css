@@ -1843,6 +1843,11 @@ a.s-row:active { background: var(--fill); }
 /* ───────── Übersicht: Karten (karten.js) ───────── */
 .ov-yearbtn { gap: 4px; padding: 0 12px 0 16px !important; color: var(--text) !important; font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .ov-yearbtn svg { width: 16px; height: 16px; color: var(--muted); }
+.tm-month { gap: 0; padding: 0 4px !important; }
+.tm-month > span { padding: 0 2px; }
+.tm-month button { display: grid; place-items: center; width: 30px; height: 36px; color: var(--text); }
+.tm-month button svg { width: 18px; height: 18px; color: currentColor; stroke-width: 2.4; }
+.tm-month button:disabled { opacity: 0.3; }
 .ovc-check { display: inline-flex; vertical-align: -1px; margin-left: 6px; }
 .ovc-check svg { width: 16px; height: 16px; stroke-width: 2.6; }
 .ovc-wrap { display: grid; gap: 10px; margin-bottom: 10px; }

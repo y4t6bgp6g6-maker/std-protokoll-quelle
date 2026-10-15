@@ -12,9 +12,10 @@
 //
 // Anfragen (Code im Header X-Team-Code):
 //   GET    /ping   → { ok }   nur zum Messen der Antwortzeit
-//   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }], spellV }
+//   GET    /team   → { month, members: [{ member, name, updated, sheets }], prev: { month, members }, posts: [{ id, member, name, text, created }], spellV }
+//                    prev: Zettel des Vormonats (Tabelle history); posts: die letzten POSTS_KEEP Nachrichten (nicht mehr monatlich gelöscht)
 //                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
-//   PUT    /me     ← { member, token, name, month, sheets, version }   eigener Eintrag (version: App-Version für die Admin-Seite)
+//   PUT    /me     ← { member, token, name, month, sheets, version, prev: { month, sheets } }   eigener Eintrag (version: App-Version für die Admin-Seite)
 //                    nur, wenn ein Konto den Eintrag kennt (sonst 403 'konto')
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
@@ -73,6 +74,7 @@ const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
 const MAX_BODY = 1_000_000;
 const MAX_TEXT = 500;
 const MAX_POSTS = 300; // je Person und Monat
+const POSTS_KEEP = 300; // Teammeeting: so viele Nachrichten bleiben; jede neue verdrängt dann die älteste
 const MAX_ERRORS = 30; // Fehlerberichte je Gerät und Tag
 const ERROR_DAYS = 180;
 const PUSH_GAP = 10;
@@ -246,6 +248,15 @@ async function ensureVersionColumn(db) {
   } catch {}
   versionColumn = true;
 }
+
+/** Vormonat zu „2026-10“ → „2026-09“ */
+function prevMonthOf(month) {
+  const [y, m] = month.split('-').map(Number);
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, '0')}`;
+}
+const HISTORY_TABLE = 'CREATE TABLE IF NOT EXISTS history (member TEXT NOT NULL, month TEXT NOT NULL, name TEXT, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (member, month))';
+/** Zettel des Vormonats speichern (nur, wenn neuer als der gespeicherte Stand) */
+const HISTORY_SET = 'ON CONFLICT(member, month) DO UPDATE SET name = excluded.name, data = excluded.data, updated = excluded.updated WHERE excluded.updated > history.updated';
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -662,12 +673,16 @@ export default {
 
     const db = env.DB;
     const month = currentMonth();
-    // in einem Rutsch (eine Verbindung zur Datenbank statt vier nacheinander)
+    const prevMonth = prevMonthOf(month);
+    // in einem Rutsch (eine Verbindung zur Datenbank statt mehrerer nacheinander). Beim Monatswechsel wandern die
+    // Zettel in history (Vormonat bleibt sichtbar), Älteres wird gelöscht; Nachrichten bleiben (begrenzt auf POSTS_KEEP)
     await db.batch([
       db.prepare('CREATE TABLE IF NOT EXISTS members (member TEXT PRIMARY KEY, token TEXT NOT NULL, name TEXT, month TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)'),
       db.prepare('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)'),
+      db.prepare(HISTORY_TABLE),
+      db.prepare(`INSERT INTO history (member, month, name, data, updated) SELECT member, month, name, data, updated FROM members WHERE month = ? ${HISTORY_SET}`).bind(prevMonth),
       db.prepare('DELETE FROM members WHERE month <> ?').bind(month),
-      db.prepare('DELETE FROM posts WHERE month <> ?').bind(month),
+      db.prepare('DELETE FROM history WHERE month <> ?').bind(prevMonth),
     ]);
 
     const path = new URL(req.url).pathname;
@@ -680,10 +695,13 @@ export default {
         return path === '/backup' ? await backupPut(db, req, h) : await accountRequest(db, await readBody(req), h);
       }
       if (path === '/team' && req.method === 'GET') {
-        const { results } = await db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month).all();
-        const members = results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
-        const posts = (await db.prepare('SELECT id, member, name, text, created FROM posts WHERE month = ? ORDER BY created DESC LIMIT 200').bind(month).all()).results;
-        return json({ month, members, posts, spellV: await spellVersion(await loadDict(db)) }, 200, h);
+        const [cur, prev, posts] = await db.batch([
+          db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month),
+          db.prepare('SELECT member, name, updated, data FROM history WHERE month = ? ORDER BY name').bind(prevMonth),
+          db.prepare('SELECT id, member, name, text, created FROM posts ORDER BY created DESC LIMIT ?').bind(POSTS_KEEP),
+        ]);
+        const list = (rows) => rows.results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
+        return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)) }, 200, h);
       }
 
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
@@ -702,7 +720,11 @@ export default {
         if (!text) return json({ error: 'text' }, 400, h);
         const { n } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE member = ? AND month = ?').bind(body.member, month).first();
         if (n >= MAX_POSTS) return json({ error: 'limit' }, 429, h);
-        await db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()).run();
+        await db.batch([
+          db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()),
+          // höchstens POSTS_KEEP Nachrichten: die älteste fällt weg
+          db.prepare('DELETE FROM posts WHERE id NOT IN (SELECT id FROM posts ORDER BY id DESC LIMIT ?)').bind(POSTS_KEEP),
+        ]);
         return json({ ok: true }, 200, h);
       }
 
@@ -860,7 +882,8 @@ export default {
             db.prepare('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)'),
             db.prepare('SELECT id, name, version, ua, view, message, stack, count, first, last, created FROM errors ORDER BY created DESC LIMIT 50'),
             db.prepare(
-              `SELECT (SELECT COALESCE(SUM(${bytes(['member', 'token', 'name', 'month', 'data', 'version'])}), 0) FROM members) AS sheets, ` +
+              `SELECT (SELECT COALESCE(SUM(${bytes(['member', 'token', 'name', 'month', 'data', 'version'])}), 0) FROM members) + ` +
+                `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'data'])}), 0) FROM history) AS sheets, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'text'])}), 0) FROM posts) AS posts, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors, ` +
                 `(SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups) AS backups`
@@ -909,7 +932,7 @@ export default {
         if (path === '/member' && req.method === 'DELETE') {
           const body = await readBody(req);
           if (!validId(body.member)) return json({ error: 'id' }, 400, h);
-          await db.prepare('DELETE FROM members WHERE member = ?').bind(body.member).run();
+          await db.batch([db.prepare('DELETE FROM members WHERE member = ?').bind(body.member), db.prepare('DELETE FROM history WHERE member = ?').bind(body.member)]);
           return json({ ok: true }, 200, h);
         }
         if (path === '/dict' && (req.method === 'PUT' || req.method === 'DELETE')) {
@@ -969,6 +992,12 @@ export default {
           )
           .bind(body.member, token, name, month, JSON.stringify(body.sheets), Date.now(), version)
           .run();
+        // nachträglich geänderte Zettel des Vormonats
+        if (body.prev && body.prev.month === prevMonth && Array.isArray(body.prev.sheets))
+          await db
+            .prepare(`INSERT INTO history (member, month, name, data, updated) VALUES (?, ?, ?, ?, ?) ${HISTORY_SET}`)
+            .bind(body.member, prevMonth, name, JSON.stringify(body.prev.sheets), Date.now())
+            .run();
         return json({ ok: true }, 200, h);
       }
     } catch (e) {
