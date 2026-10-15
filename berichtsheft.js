@@ -189,14 +189,14 @@ const emptyMonth = () => ({ taet: { text: '' }, schule: { text: '' }, signed: {}
 const dayFilled = (d) => !!d?.lines?.some((l) => l.t.trim());
 const weekFilled = (w) => !!w && w.days?.some(dayFilled);
 const monthFilled = (m) => !!m && ['taet', 'schule'].some((k) => (m[k]?.text || '').trim() || m[k]?.img);
-/** Tag eines Wochenberichts fertig: eine Zeile mit mindestens 3 Wörtern oder 10 Zeichen und Gesamtstunden.
+/** Tag eines Wochenberichts fertig: eine Zeile mit mindestens 2 Wörtern oder 10 Zeichen und Gesamtstunden.
  *  Andere Tagesarten (Zeile beginnt mit Urlaub, Krank, Frei, Feiertag) und gesetzliche Feiertage brauchen beides nicht. */
 function dayComplete(d, date) {
   if (holidayName(date)) return true;
   const texts = (d?.lines || []).map((l) => l.t.trim()).filter(Boolean);
   const types = Object.values(DAY_STATUS_SHORT).map((t) => t.toLowerCase());
   if (texts.some((t) => types.includes(t.split(/[\s,.(]+/)[0].toLowerCase()))) return true;
-  return texts.some((t) => t.length >= 10 || t.split(/\s+/).length >= 3) && parseNum(d.hours) > 0;
+  return texts.some((t) => t.length >= 10 || t.split(/\s+/).length >= 2) && parseNum(d.hours) > 0;
 }
 /** Woche fertig: jeder Werktag im Heft (Samstag nur, wenn dort etwas steht) */
 function weekComplete(h, mon, w) {
@@ -206,28 +206,36 @@ function weekComplete(h, mon, w) {
     .filter((i) => i < 5 || dayFilled(w.days[5]))
     .every((i) => dayComplete(w.days[i], addDays(mo, i)));
 }
-/** Stand einer Woche: ein Haken erst, wenn sie fertig ist und der Azubi unterschrieben hat */
+/** Stand einer Woche: leer, offen (geschrieben), azubi (fertig und vom Azubi unterschrieben – ein Haken),
+ *  fertig (vom Ausbilder abgezeichnet – zwei Haken) */
 function weekState(h, mon) {
   const w = h.weeks[mon];
   if (!weekFilled(w)) return 'leer';
   if (w.signed?.ausbilder) return 'fertig';
   return w.signed?.azubi && weekComplete(h, mon, w) ? 'azubi' : 'offen';
 }
-/** Stand einer Seite: leer, offen (geschrieben), azubi (vom Azubi abgezeichnet), fertig (vom Ausbilder abgezeichnet) */
-function pageState(e, filled) {
-  if (!filled) return 'leer';
-  if (e.signed?.ausbilder) return 'fertig';
-  if (e.signed?.azubi) return 'azubi';
-  return 'offen';
+/** Monatsbericht fertig: Betriebliche Tätigkeit und Berufsschule zusammen mindestens 10 Wörter oder 50 Zeichen (Bilder egal) */
+function monthComplete(m) {
+  const t = ['taet', 'schule'].map((k) => (m?.[k]?.text || '').trim()).filter(Boolean).join(' ');
+  return t.length >= 50 || t.split(/\s+/).filter(Boolean).length >= 10;
 }
+function monthState(h, ym) {
+  const m = h.months[ym];
+  if (!monthFilled(m)) return 'leer';
+  if (m.signed?.ausbilder) return 'fertig';
+  return m.signed?.azubi && monthComplete(m) ? 'azubi' : 'offen';
+}
+/** Fortschritt eines Hefts: nur Seiten mit mindestens einem Haken zählen */
 function heftProgress(h) {
+  bhAutoSignAll();
   const weeks = heftWeeks(h);
   const months = heftMonths(h);
+  const done = (st) => st === 'azubi' || st === 'fertig';
   return {
     weeks: weeks.length,
-    weeksDone: weeks.filter((k) => weekFilled(h.weeks[k])).length,
+    weeksDone: weeks.filter((k) => done(weekState(h, k))).length,
     months: months.length,
-    monthsDone: months.filter((k) => monthFilled(h.months[k])).length,
+    monthsDone: months.filter((k) => done(monthState(h, k))).length,
   };
 }
 /** Unter 18 am Tag x? (dann zeichnet auch ein Erziehungsberechtigter ab) */
@@ -390,7 +398,7 @@ function renderHeft(h) {
     return `<a class="list-row bh-r bh-page" href="#/heft/${h.id}/monat/${ym}">
       <span class="list-kw bh-kw-month">Monat</span>
       <span class="list-main"><span class="list-title">Monatsbericht ${MONTHS[Number(ym.slice(5)) - 1]}</span></span>
-      ${stateHTML(pageState(mo, monthFilled(mo)))}
+      ${stateHTML(monthState(h, ym))}
     </a>`;
   };
   app.innerHTML = `
@@ -409,7 +417,7 @@ function renderHeft(h) {
         const g = groups.get(ym);
         // Je Seite des Monats ein Strich in der Farbe ihres Stands
         const states = [
-          ...(g.month ? [pageState(h.months[ym], monthFilled(h.months[ym]))] : []),
+          ...(g.month ? [monthState(h, ym)] : []),
           ...g.weeks.map(({ mon }) => weekState(h, mon)),
         ];
         return `<h2 class="section-title month-head"><span>${monthName(ym)}</span><span class="bh-segs">${states.map((st) => `<i class="${st}"></i>`).join('')}</span></h2>
@@ -423,7 +431,7 @@ function heftMoreMenu() {
   const h = currentHeft();
   const open = [
     ...heftWeeks(h).filter((k) => weekState(h, k) === 'azubi').map((k) => h.weeks[k]),
-    ...heftMonths(h).filter((k) => h.months[k]?.signed?.azubi && !h.months[k].signed.ausbilder).map((k) => h.months[k]),
+    ...heftMonths(h).filter((k) => monthState(h, k) === 'azubi').map((k) => h.months[k]),
   ];
   actionSheet([
     ...(open.length
@@ -513,15 +521,16 @@ let bhSatOpen = false;
 let bhEntry = null; // { kind, h, key } der geöffneten Seite
 let bhUnlocked = null; // Montag der abgezeichneten Woche, die der Azubi trotzdem ändern will
 
-/** Abgezeichnete Woche antippen: warnen; nach der Bestätigung lässt sie sich ändern */
+/** Abgezeichnete Seite antippen: warnen; nach der Bestätigung lässt sie sich ändern */
 function bhUnlockAsk() {
-  const { h, key } = bhEntry;
-  confirmDialog('Woche ist abgezeichnet', 'Eine Änderung entfernt die Unterschrift des Ausbilders. Er muss dann noch einmal unterschreiben.', 'Trotzdem ändern', () => {
+  const { kind, h, key } = bhEntry;
+  const title = kind === 'woche' ? 'Woche ist abgezeichnet' : 'Monatsbericht ist abgezeichnet';
+  confirmDialog(title, 'Eine Änderung entfernt die Unterschrift des Ausbilders. Er muss dann noch einmal unterschreiben.', 'Trotzdem ändern', () => {
     bhUnlocked = key;
-    renderBhWeek(h, key);
+    kind === 'woche' ? renderBhWeek(h, key) : renderBhMonth(h, key);
   });
 }
-/** Erste Änderung an einer abgezeichneten Woche: Unterschrift des Ausbilders fällt weg */
+/** Erste Änderung an einer abgezeichneten Seite: Unterschrift des Ausbilders fällt weg */
 function bhBreakSeal(w) {
   if (!w.signed?.ausbilder) return;
   delete w.signed.ausbilder;
@@ -533,13 +542,20 @@ function bhWeekChanged(w) {
   bhAutoSign(w, weekComplete(bhEntry.h, bhEntry.key, w));
   if (JSON.stringify(w.signed || {}) !== before) bhRefreshSigns();
 }
+/** Monat geändert: wie bhWeekChanged */
+function bhMonthChanged(mo) {
+  const before = JSON.stringify(mo.signed || {});
+  bhAutoSign(mo, monthComplete(mo));
+  if (JSON.stringify(mo.signed || {}) !== before) bhRefreshSigns();
+}
 /** Abzeichnen-Karte neu zeichnen, ohne die Seite (und den Fokus im Feld) zu verlieren */
 function bhRefreshSigns() {
   const el = document.querySelector('.bh-signs');
-  if (!el || bhEntry?.kind !== 'woche') return;
-  const w = bhCurrent(false);
+  if (!el || !bhEntry) return;
+  const { kind, h, key } = bhEntry;
+  const e = bhCurrent(false);
   const tmp = document.createElement('div');
-  tmp.innerHTML = signCardHTML(w, weekSpan(bhEntry.h, bhEntry.key, w)[1]);
+  tmp.innerHTML = signCardHTML(e, kind === 'woche' ? weekSpan(h, key, e)[1] : monthSpan(h, key)[1]);
   el.replaceWith(tmp.querySelector('.bh-signs'));
 }
 
@@ -604,8 +620,10 @@ function monthFitHTML(key, part) {
 }
 
 function renderBhMonth(h, ym) {
+  if (bhEntry?.key !== ym) bhUnlocked = null;
   if (!heftMonths(h).includes(ym)) return location.replace(`#/heft/${h.id}`);
   const mo = h.months[ym] || emptyMonth();
+  const locked = !!mo.signed?.ausbilder && bhUnlocked !== ym;
   const [a, b] = monthSpan(h, ym);
   // Fotos werden beim Start noch geladen: dann sobald sie da sind neu zeichnen
   if (!bhImagesLoaded)
@@ -629,10 +647,11 @@ function renderBhMonth(h, ym) {
     </header>
     <h1 class="large-title">${monthName(ym)}</h1>
     <p class="bh-sub muted">Monatsbericht · ${fmtDayMonth(a)} – ${fmtShort(b)}</p>
-    ${BH_PARTS.map(part).join('')}
+    <div class="${locked ? 'bh-locked' : ''}">${BH_PARTS.map(part).join('')}</div>
     ${signCardHTML(mo, b)}
     ${pdfThumbHTML('Bericht')}`;
   bhEntry = { kind: 'monat', h, key: ym };
+  if (locked) app.querySelectorAll('.bh-locked textarea').forEach((x) => (x.readOnly = true));
   fitRowTexts();
   updatePdfThumb(true);
 }
@@ -695,7 +714,10 @@ function bhAutoSignAll(force = false) {
       const done = weekComplete(h, mon, w);
       if (done !== !!w.signed?.azubi && !w.signed?.ausbilder) bhAutoSign(w, done), (changed = true);
     }
-    for (const m of Object.values(h.months)) if (monthFilled(m) && !m.signed?.azubi) bhAutoSign(m, true), (changed = true);
+    for (const m of Object.values(h.months)) {
+      const done = monthComplete(m);
+      if (done !== !!m.signed?.azubi && !m.signed?.ausbilder) bhAutoSign(m, done), (changed = true);
+    }
   }
   if (changed) saveBh();
 }
@@ -721,6 +743,7 @@ function signTap(role) {
   }
   if (!filled) return toast('Erst den Bericht schreiben');
   if (kind === 'woche' && !weekComplete(h, key, e)) return toast('Erst jeden Tag ausfüllen');
+  if (kind === 'monat' && !monthComplete(e)) return toast('Erst mehr schreiben');
   withSignature(role, () => {
     const cur = bhCurrent();
     cur.signed = { ...cur.signed, [role]: isoDate(new Date()) };
@@ -984,7 +1007,8 @@ document.addEventListener('click', (e) => {
       confirmDialog('Bild entfernen?', '', 'Entfernen', () => {
         bhDeleteImage(p.img.id);
         delete p.img;
-        bhAutoSign(mo, monthFilled(mo));
+        if (mo.signed?.ausbilder) delete mo.signed.ausbilder;
+        bhAutoSign(mo, monthComplete(mo));
         saveBh();
         renderBhMonth(bhEntry.h, bhEntry.key);
       }, true);
@@ -1021,7 +1045,8 @@ document.addEventListener('input', (e) => {
     const mo = bhCurrent();
     const k = t.dataset.bhMtext;
     mo[k] = { ...mo[k], text: t.value };
-    bhAutoSign(mo, monthFilled(mo));
+    bhBreakSeal(mo);
+    bhMonthChanged(mo);
     saveBh();
     t.closest('.bh-part').querySelector('.bh-over').textContent = monthFitHTML(k, mo[k]);
     updatePdfThumb();
@@ -1070,7 +1095,8 @@ document.addEventListener('change', async (e) => {
       const img = await bhImportImage(t.files[0]);
       const mo = h.months[key] || (h.months[key] = emptyMonth());
       mo[k] = { ...mo[k], img };
-      bhAutoSign(mo, true);
+      if (mo.signed?.ausbilder) delete mo.signed.ausbilder;
+      bhAutoSign(mo, monthComplete(mo));
       saveBh();
       if (currentView === 'bhMonth' && bhEntry?.h === h && bhEntry.key === key) renderBhMonth(h, key);
     } catch (err) {
