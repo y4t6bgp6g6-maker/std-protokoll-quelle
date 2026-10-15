@@ -22,6 +22,8 @@
 //                    richtige Schreibweisen; gleiche Buchstaben oder ein Tippfehler werden ersetzt). Antwortet die KI
 //                    nicht (Kontingent, Fehler), gilt nur das Wörterbuch (geprüft = false). v ändert sich mit dem Wörterbuch
 //                  ← { member, token, task: 'sites', names }   → { groups } welche Baustellen-Schreibweisen dieselbe meinen
+//                  ← { member, token, task: 'tr', to, items }  → { out: [[Eintrag, Übersetzung oder null]] } Einträge
+//                    russisch schreibender Kollegen ins Deutsche (fürs PDF) bzw. deutsche ins Russische (to: 'de' | 'ru')
 //                    Workers AI (kostenloses Tageskontingent); Ergebnisse in ai_cache (60 Tage), höchstens AI_PER_DAY
 //                    Anfragen je Person und Tag. Nur mit eigenem Eintrag im laufenden Monat
 //   POST   /error  ← { member, token, name, version, ua, reports: [{ message, stack, view, count, first, last }] }
@@ -58,6 +60,14 @@ const FREE_ROWS_READ = 5000000;
 const FREE_ROWS_WRITTEN = 100000;
 const AI_FREE = 10000;
 const AI_SPELL = "Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung, auch in Straßennamen (z. B. „Lindenwg“ → „Lindenweg“, „Hauptstrase“ → „Hauptstraße“). Formuliere nichts um, füge keine Wörter hinzu, lass Abkürzungen und Zahlen so. Namen bekannter Marken, Ketten und Unternehmen schreibst du genau in ihrer offiziellen Schreibweise – fehlende Apostrophe, Akzente und Großbuchstaben ergänzt du, auch wenn noch ein Ort oder anderes dabei steht (z. B. „loreal“ → „L'Oréal“, „starbucks Musterstadt“ → „Starbucks Musterstadt“, „ikea“ → „IKEA“). Namen von Personen, kleinen Firmen und Orten lässt du so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {\"out\": [\"…\", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.";
+// Fassung der Übersetzungs-Anweisungen (Teil des Speicher-Schlüssels)
+const AI_TR_V = 1;
+const AI_TR_RULES =
+  'Es sind kurze Einträge von Handwerkern (Tätigkeiten aus dem Stundenzettel, Berichte aus dem Ausbildungsnachweis, Nachrichten an Kollegen). Übersetze sinngemäß und knapp in der Fachsprache des Handwerks, nichts hinzufügen oder erklären. Zahlen, Maße und Uhrzeiten bleiben als Zahlen, alle Wörter werden übersetzt (auch „Uhr“, „Std.“). Namen von Personen, Firmen, Marken, Orten und Straßen werden nicht übersetzt';
+const AI_TR = {
+  de: `Du übersetzt ins Deutsche. ${AI_TR_RULES}; in kyrillischer Schrift geschriebene Namen schreibst du in lateinischer Schrift (z. B. „Иван“ → „Iwan“). Ist ein Eintrag schon deutsch, gib ihn unverändert zurück. Antworte nur mit JSON: {"out": ["…", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.`,
+  ru: `Du übersetzt ins Russische. ${AI_TR_RULES} und bleiben in ihrer Schreibweise. Ist ein Eintrag schon russisch, gib ihn unverändert zurück. Antworte nur mit JSON: {"out": ["…", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.`,
+};
 const AI_SITES = 'Du bekommst nummerierte Baustellen-Bezeichnungen, die Handwerker einer Firma in ihre Stundenzettel geschrieben haben. Fasse die zusammen, die sicher dieselbe Baustelle meinen (andere Schreibweise, Tippfehler, Abkürzung, Ort oder Kunde zusätzlich genannt oder weggelassen, Straße abgekürzt). Verschiedene Hausnummern, verschiedene Straßen, verschiedene Gebäude oder Kunden am selben Ort sind verschiedene Baustellen. Im Zweifel getrennt lassen. Antworte nur mit JSON: {"groups": [[Nummer, Nummer, …], …]} – nur Gruppen mit mindestens zwei Nummern.';
 
 /** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort */
@@ -412,6 +422,40 @@ export default {
             } catch {}
           }
           return json({ v, out: items.map((t) => [t, applyDict(ai.get(t) ?? t, dict), ai.has(t)]) }, 200, h);
+        }
+
+        if (body.task === 'tr') {
+          // Wie spell: jeder Eintrag einzeln gemerkt (für alle im Team); ohne Antwort der KI null (die App zeigt dann das Original)
+          const to = body.to === 'ru' ? 'ru' : 'de';
+          const s1000 = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 1000);
+          const items = [...new Set((Array.isArray(body.items) ? body.items : []).map(s1000).filter(Boolean))].slice(0, 20);
+          const keys = await Promise.all(items.map(async (t) => `tr${AI_TR_V}:${to}:${await sha256(t)}`));
+          const done = new Map();
+          if (items.length) {
+            const { results } = await db.prepare(`SELECT key, result FROM ai_cache WHERE key IN (${keys.map(() => '?').join(', ')})`).bind(...keys).all();
+            const found = new Map(results.map((r) => [r.key, r.result]));
+            items.forEach((t, i) => found.has(keys[i]) && done.set(t, found.get(keys[i])));
+          }
+          const todo = items.filter((t) => !done.has(t));
+          if (todo.length && !(used && used.n >= AI_PER_DAY)) {
+            try {
+              await count();
+              // Kyrillisch braucht mehr Tokens je Zeichen als Deutsch
+              const res = await aiJson(env, AI_TR[to], JSON.stringify(todo), 60 + todo.reduce((n, t) => n + t.length * 2 + 20, 0));
+              if (Array.isArray(res.out) && res.out.length === todo.length) {
+                const now = Date.now();
+                const rows = [];
+                todo.forEach((t, i) => {
+                  const x = s1000(res.out[i]);
+                  if (!x) return;
+                  done.set(t, x);
+                  rows.push(db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(keys[items.indexOf(t)], x, now));
+                });
+                if (rows.length) await db.batch(rows);
+              }
+            } catch {}
+          }
+          return json({ out: items.map((t) => [t, done.get(t) ?? null]) }, 200, h);
         }
 
         if (body.task === 'sites') {
