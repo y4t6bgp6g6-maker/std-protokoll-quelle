@@ -15,6 +15,7 @@
 //   GET    /team   → { month, members: [{ member, name, updated, sheets }], posts: [{ id, member, name, text, created }], spellV }
 //                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
 //   PUT    /me     ← { member, token, name, month, sheets, version }   eigener Eintrag (version: App-Version für die Admin-Seite)
+//                    nur, wenn ein Konto den Eintrag kennt (sonst 403 'konto')
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
@@ -946,6 +947,10 @@ export default {
         const token = await sha256(body.token);
         const row = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
         if (row && row.token !== token) return json({ error: 'token' }, 403, h);
+        // Zettel nur von Einträgen, die zu einem Konto gehören (seit dem Konto Pflicht; alte Apps mit gespeichertem
+        // Team-Code legten sonst eigene Einträge ohne Konto an). Verlassen geht immer
+        if (req.method === 'PUT' && !(await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first()))
+          return json({ error: 'konto' }, 403, h);
 
         if (req.method === 'DELETE') {
           await db.prepare('DELETE FROM members WHERE member = ?').bind(body.member).run();
