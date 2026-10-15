@@ -42,7 +42,12 @@ const STORAGE_LIMIT = 500 * 1024 * 1024; // D1 im kostenlosen Tarif: 500 MB je D
 const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
 const AI_PER_DAY = 300;
 const AI_CACHE_DAYS = 60;
-const AI_SPELL = 'Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere nur echte Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung. Formuliere nichts um, füge keine Wörter oder Satzzeichen hinzu, lass Abkürzungen, Zahlen und Eigennamen (Firmen, Personen, Straßen, Orte) so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {"out": ["…", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.';
+// Fassung der Anweisung: Teil des Speicher-Schlüssels, damit eine geänderte Anweisung alles neu prüft.
+// Dazu kommen eigene Schreibweisen aus dem Secret AI_HINTS (z. B. Ketten, die das Modell nicht sicher kennt) –
+// sie stehen nur bei Cloudflare, nicht im Repo, weil sie Baustellen verraten würden.
+const AI_SPELL_V = 3;
+const AI_SPELL = "Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung, auch in Straßennamen (z. B. „Lindenwg“ → „Lindenweg“, „Hauptstrase“ → „Hauptstraße“). Formuliere nichts um, füge keine Wörter hinzu, lass Abkürzungen und Zahlen so. Namen bekannter Marken, Ketten und Unternehmen schreibst du genau in ihrer offiziellen Schreibweise – fehlende Apostrophe, Akzente und Großbuchstaben ergänzt du, auch wenn noch ein Ort oder anderes dabei steht (z. B. „loreal“ → „L'Oréal“, „starbucks Musterstadt“ → „Starbucks Musterstadt“, „ikea“ → „IKEA“). Namen von Personen, kleinen Firmen und Orten lässt du so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {\"out\": [\"…\", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.";
+const spellPrompt = (env) => (env.AI_HINTS ? `${AI_SPELL} Weitere richtige Schreibweisen: ${env.AI_HINTS}` : AI_SPELL);
 const AI_SITES = 'Du bekommst nummerierte Baustellen-Bezeichnungen, die Handwerker einer Firma in ihre Stundenzettel geschrieben haben. Fasse die zusammen, die sicher dieselbe Baustelle meinen (andere Schreibweise, Tippfehler, Abkürzung, Ort oder Kunde zusätzlich genannt oder weggelassen, Straße abgekürzt). Verschiedene Hausnummern, verschiedene Straßen, verschiedene Gebäude oder Kunden am selben Ort sind verschiedene Baustellen. Im Zweifel getrennt lassen. Antworte nur mit JSON: {"groups": [[Nummer, Nummer, …], …]} – nur Gruppen mit mindestens zwei Nummern.';
 
 /** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort */
@@ -252,7 +257,8 @@ export default {
         if (body.task === 'spell') {
           // Jeder Eintrag einzeln im Speicher: was schon einmal geprüft wurde (auch bei Kollegen), kostet nichts mehr
           const items = [...new Set((Array.isArray(body.items) ? body.items : []).map(str).filter(Boolean))].slice(0, 20);
-          const keys = await Promise.all(items.map(async (t) => `spell:${await sha256(t)}`));
+          const v = `${AI_SPELL_V}${env.AI_HINTS ? (await sha256(env.AI_HINTS)).slice(0, 8) : ''}`;
+          const keys = await Promise.all(items.map(async (t) => `spell${v}:${await sha256(t)}`));
           const out = new Map();
           for (let i = 0; i < items.length; i++) {
             const row = await db.prepare('SELECT result FROM ai_cache WHERE key = ?').bind(keys[i]).first();
@@ -262,7 +268,7 @@ export default {
           if (todo.length) {
             if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
             await count();
-            const res = await aiJson(env, AI_SPELL, JSON.stringify(todo), 40 + todo.length * 40);
+            const res = await aiJson(env, spellPrompt(env), JSON.stringify(todo), 40 + todo.length * 40);
             if (!Array.isArray(res.out) || res.out.length !== todo.length) return json({ error: 'ai' }, 502, h);
             const now = Date.now();
             await db.batch(

@@ -40,10 +40,12 @@ async function teamRequest(method, path, body, code = team && team.code) {
 // Speicher (nicht in der Sicherung): spell: { Eintrag: Korrektur der KI }, sites: { key, groups: [[Schreibweisen]] }
 
 const AI_KEY = 'stdprotokoll.ai.v1';
+const AI_SPELL_V = 3; // wie im Worker: neue Fassung der Anweisung → gemerkte Prüfungen verwerfen
 let aiStore = { spell: {}, sites: null };
 try {
   Object.assign(aiStore, JSON.parse(localStorage.getItem(AI_KEY) || '{}'));
 } catch {}
+if (aiStore.spellV !== AI_SPELL_V) aiStore = { ...aiStore, spell: {}, spellV: AI_SPELL_V };
 const saveAi = () => {
   try {
     localStorage.setItem(AI_KEY, JSON.stringify(aiStore));
