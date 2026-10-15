@@ -362,9 +362,10 @@ export default {
           const v = await spellVersion(dict);
           const keys = await Promise.all(items.map(async (t) => `spell${AI_SPELL_V}:${await sha256(t)}`));
           const ai = new Map();
-          for (let i = 0; i < items.length; i++) {
-            const row = await db.prepare('SELECT result FROM ai_cache WHERE key = ?').bind(keys[i]).first();
-            if (row) ai.set(items[i], row.result);
+          if (items.length) {
+            const { results } = await db.prepare(`SELECT key, result FROM ai_cache WHERE key IN (${keys.map(() => '?').join(', ')})`).bind(...keys).all();
+            const found = new Map(results.map((r) => [r.key, r.result]));
+            items.forEach((t, i) => found.has(keys[i]) && ai.set(t, found.get(keys[i])));
           }
           const todo = items.filter((t) => !ai.has(t));
           if (todo.length && !(used && used.n >= AI_PER_DAY)) {
