@@ -26,6 +26,8 @@
   --holiday-ink: #7432ad;
   --off: #8e8e93;
   --off-ink: #5f6862;
+  --school: #1f9d8a;
+  --school-ink: #0f6e60;
   --vac-plan: #c06a08;
   /* Zahlen in der iPhone-Schrift mit gleich breiten Ziffern (siehe unten) */
   --mono: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
@@ -62,6 +64,8 @@
   --holiday-ink: #c9a0ff;
   --off: #97a2ac;
   --off-ink: #97a2ac;
+  --school: #3ccfb4;
+  --school-ink: #5fdcc4;
   --vac-plan: #b8680a;
   color-scheme: dark;
 }
@@ -716,6 +720,7 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .status-urlaub { --status: var(--vac); --status-ink: var(--vac-ink); }
 .status-feiertag { --status: var(--holiday); --status-ink: var(--holiday-ink); }
 .status-frei { --status: var(--off); --status-ink: var(--off-ink); }
+.status-schule { --status: var(--school); --status-ink: var(--school-ink); }
 .status-btn.set { background: color-mix(in srgb, var(--status) 18%, transparent); }
 /* Tage mit Tagesart: kompakte Zeile mit getöntem Etikett */
 .status-head { border-bottom: 0; padding: 10px 12px 10px 14px; gap: 10px; }

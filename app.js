@@ -1800,6 +1800,8 @@ const ICON = {
   krank: svg('<path d="M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0z"/>', 14),
   feiertag: svg('<path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>', 14),
   frei: svg('<path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5z"/><path d="M16 10h1.5a2 2 0 0 1 0 4H16M8 4v2M12 4v2"/>', 14),
+  // Berufsschule (nur Tagesart im Berichtsheft)
+  schule: svg('<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5M22 9v5"/>', 14),
   doc: svg('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>', 15),
   // Leiste: gefüllte Symbole (Übersicht als Kacheln, Zettel als zwei Blätter)
   tabZettel: fillIcon('M8 2h10.5A2.5 2.5 0 0 1 21 4.5V17h-2V4.5a.5.5 0 0 0-.5-.5H8zM5.5 5.5h9A2 2 0 0 1 16.5 7.5v12.5a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2zM6.5 10.2h7v1.8h-7zM6.5 14h7v1.8h-7zM6.5 17.8h4.5v1.8H6.5z'),

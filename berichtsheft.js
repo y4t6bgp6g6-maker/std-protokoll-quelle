@@ -201,13 +201,18 @@ const emptyMonth = () => ({ taet: { text: '' }, schule: { text: '' }, signed: {}
 const dayFilled = (d) => !!d?.type || !!d?.lines?.some((l) => l.t.trim());
 const weekFilled = (w) => !!w && w.days?.some(dayFilled);
 const monthFilled = (m) => !!m && ['taet', 'schule'].some((k) => (m[k]?.text || '').trim() || m[k]?.img);
+/** Tagesarten im Berichtsheft: wie im Stundenzettel und zusätzlich Schule (Berufsschultag; nur hier) */
+// (Funktion: berichtsheft.js lädt vor app.js, DAY_STATUS_SHORT gibt es erst beim Aufruf)
+const bhTypes = () => ({ ...DAY_STATUS_SHORT, schule: 'Schule' });
+/** Stunden einer Tagesart im Wochenbericht: Urlaub, Krank, Feiertag und Schule je ein voller Tag (8,00), Frei nichts */
+const bhTypeHours = (type) => (type === 'frei' ? '' : fmtHours(Math.round(settings.hoursPerDay * 60)));
 /** Tag eines Wochenberichts fertig: eine Zeile mit mindestens 2 Wörtern oder 10 Zeichen und Gesamtstunden.
- *  Andere Tagesarten (gewählt oder Zeile beginnt mit Urlaub, Krank, Frei, Feiertag) und gesetzliche Feiertage brauchen
- *  beides nicht. */
+ *  Andere Tagesarten (gewählt oder Zeile beginnt mit Urlaub, Krank, Frei, Feiertag, Schule) und gesetzliche Feiertage
+ *  brauchen beides nicht. */
 function dayComplete(d, date) {
   if (d?.type || holidayName(date)) return true;
   const texts = (d?.lines || []).map((l) => l.t.trim()).filter(Boolean);
-  const types = Object.values(DAY_STATUS_SHORT).map((t) => t.toLowerCase());
+  const types = Object.values(bhTypes()).map((t) => t.toLowerCase());
   if (texts.some((t) => types.includes(t.split(/[\s,.(]+/)[0].toLowerCase()))) return true;
   return texts.some((t) => t.length >= 10 || t.split(/\s+/).length >= 2) && parseNum(d.hours) > 0;
 }
@@ -537,11 +542,11 @@ function renderBhWeek(h, mon) {
   updatePdfThumb(true);
 }
 /** Tagesart-Knopf wie im Stundenzettel (nur Mo–Fr) */
-const bhTypeLabel = (type, date) => (type === 'feiertag' ? holidayName(date) || 'Feiertag' : DAY_STATUS_SHORT[type]);
+const bhTypeLabel = (type, date) => (type === 'feiertag' ? holidayName(date) || 'Feiertag' : bhTypes()[type]);
 const bhTypeBtn = (i, d) =>
   i < 5
     ? `<button class="chip-btn status-btn bh-type ${d.type ? `set status-tag status-${d.type}` : ''}" data-bh="type" data-i="${i}">${
-        d.type ? `${ICON[d.type]} ${DAY_STATUS_SHORT[d.type]}` : 'Arbeit'
+        d.type ? `${ICON[d.type]} ${bhTypes()[d.type]}${bhTypeHours(d.type) ? ` · ${bhTypeHours(d.type)} h` : ''}` : 'Arbeit'
       } ▾</button>`
     : '';
 /** Tagesart wählen; Zeilen und Stunden bleiben dabei gespeichert */
@@ -559,7 +564,7 @@ function bhChooseType(i) {
   };
   actionSheet([
     { label: `${d?.type ? '' : '✓ '}Arbeit`, run: () => set(null) },
-    ...Object.entries(DAY_STATUS_SHORT).map(([k, label]) => ({ label: `${d?.type === k ? '✓ ' : ''}${label}`, run: () => set(k) })),
+    ...Object.entries(bhTypes()).map(([k, label]) => ({ label: `${d?.type === k ? '✓ ' : ''}${label}`, run: () => set(k) })),
   ]);
 }
 let bhSatOpen = false;
@@ -920,8 +925,8 @@ function addWeekPage(doc, h, mon) {
     days: [0, 1, 2, 3, 4, 5].map((i) => {
       if (!days.includes(i) || !w) return null;
       const d = w.days[i];
-      // Tagesart: nur ihr Name (beim Feiertag der des Feiertags), ohne Stunden
-      if (d.type) return { lines: [{ t: bhTypeLabel(d.type, addDays(parseDate(mon), i)), h: '' }], total: '' };
+      // Tagesart: ihr Name (beim Feiertag der des Feiertags), Gesamtstunden 8,00 (Frei: keine)
+      if (d.type) return { lines: [{ t: bhTypeLabel(d.type, addDays(parseDate(mon), i)), h: '' }], total: bhTypeHours(d.type) };
       return { lines: d.lines.filter((l) => l.t.trim() || l.h.trim()), total: d.hours || '' };
     }),
     sigs: bhSigsFor(w),
