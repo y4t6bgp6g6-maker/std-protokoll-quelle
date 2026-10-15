@@ -850,14 +850,32 @@ function pdfItemsToParsed(items) {
 /** Woche aus dem Dateinamen, falls im Zettel kein Datum steht: „Stundenzettel 05.01.26 - 11.01.26“ */
 const dateFromFileName = (name) => parseDateText(name);
 
+/** Wochenzettel beginnen montags. Ist „Woche von“ bei einer ganzen Woche (bis = von + 6 Tage) kein Montag, ist meist das
+ *  Jahr vertippt („13.04.2025“ statt 2026 – dort ein Sonntag, die Woche rutschte sonst ins falsche Jahr und um einen Tag):
+ *  dann das Jahr aus dem Dateinamen, sonst ein Nachbarjahr, in dem der Tag ein Montag ist */
+function fixWeekYear(parsed, fileName) {
+  const from = parsed.from;
+  if (!from || from.getDay() === 1 || !parsed.to || Math.round((parsed.to - from) / 864e5) !== 6) return from;
+  const named = dateFromFileName(fileName);
+  const years = [named && named.getFullYear(), new Date().getFullYear(), from.getFullYear() + 1, from.getFullYear() - 1];
+  for (const y of years.filter(Boolean)) {
+    const d = new Date(y, from.getMonth(), from.getDate());
+    if (d.getDay() === 1) return d;
+  }
+  return from;
+}
+
 /**
  * Baut die Stundenzettel einer Woche; anchor = „Woche von“ (bestimmt die Woche). Geht die Woche über ein Monatsende,
  * entsteht wie in der App je Monat ein Zettel mit den Tagen dieses Monats – für jeden Monat mit Einträgen; steht
  * gar nichts im Zettel, ein leerer für den Monat von „Woche von“.
  */
 function parsedToSheets(parsed, fileName) {
-  const anchor = parsed.from || dateFromFileName(fileName);
+  const from = fixWeekYear(parsed, fileName);
+  const anchor = from || dateFromFileName(fileName);
   if (!anchor) throw new Error('Kein Datum („Woche von“) gefunden');
+  // Jahr korrigiert: in der Rückmeldung nennen
+  const yearFixed = from && from !== parsed.from ? parsed.from.getFullYear() : 0;
   // Eigener Name aus den Einstellungen hat Vorrang (z. B. beim Einlesen des Zettels eines Kollegen)
   const s = newSheet(anchor, settings.name.trim() || parsed.name || '');
   s.importedName = parsed.name || '';
@@ -892,6 +910,7 @@ function parsedToSheets(parsed, fileName) {
     const part = newSheet(sheetDate(s, i), s.name);
     if (parts.some((x) => x.year === part.year && x.month === part.month)) continue;
     part.importedName = s.importedName;
+    if (yearFixed) part.yearFixed = yearFixed;
     for (const k of sheetActiveDays(part)) part.days[k] = s.days[k];
     parts.push(part);
   }

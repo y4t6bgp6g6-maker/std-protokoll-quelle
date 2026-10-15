@@ -4346,7 +4346,9 @@ async function importBackup(input) {
       for (const s of await importTimesheetFile(file.name, buf)) {
         const existing = existingSheet(sheetFirstDate(s));
         const other = s.importedName && s.importedName.trim() !== s.name;
+        const yearFixed = s.yearFixed;
         delete s.importedName;
+        delete s.yearFixed;
         if (existing) {
           const range = `${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}`;
           // War die Woche vorher nicht in der App, stammt „vorhanden“ aus einer anderen Datei dieses Einlesens
@@ -4365,7 +4367,7 @@ async function importBackup(input) {
         saveSheets(s);
         total++;
         lines.push(
-          `${label}: ${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}, ${fmtH(sheetTotal(s))}${other ? ` · Name auf „${escapeHtml(s.name)}“ geändert` : ''}`
+          `${label}: ${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}, ${fmtH(sheetTotal(s))}${other ? ` · Name auf „${escapeHtml(s.name)}“ geändert` : ''}${yearFixed ? ` · im Zettel stand ${yearFixed}` : ''}`
         );
       }
     } catch (e) {
