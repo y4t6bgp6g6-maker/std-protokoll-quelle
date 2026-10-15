@@ -6,6 +6,7 @@
 //
 // Einrichtung im Cloudflare-Dashboard:
 //   - D1-Datenbank (Jurisdiction „EU“) als Binding mit dem Namen DB
+//   - Workers AI als Binding mit dem Namen AI (Rechtschreibung, gleiche Baustellen)
 //   - Secret TEAM_CODE: der Team-Code, den die Kollegen eingeben
 // Die Tabelle legt der Worker selbst an.
 //
@@ -15,6 +16,10 @@
 //   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
+//   POST   /ai     ← { member, token, task: 'spell', items }   → { out }    Rechtschreibung je Eintrag (Arbeit, Baustelle)
+//                  ← { member, token, task: 'sites', names }   → { groups } welche Baustellen-Schreibweisen dieselbe meinen
+//                    Workers AI (kostenloses Tageskontingent); Ergebnisse in ai_cache (60 Tage), höchstens AI_PER_DAY
+//                    Anfragen je Person und Tag. Nur mit eigenem Eintrag im laufenden Monat
 //   POST   /error  ← { member, token, name, version, ua, reports: [{ message, stack, view, count, first, last }] }
 //                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
@@ -34,6 +39,27 @@ const ERROR_DAYS = 180;
 const PUSH_GAP = 10;
 const VAPID_SUB = 'https://y4t6bgp6g6-maker.github.io/std-protokoll/';
 const STORAGE_LIMIT = 500 * 1024 * 1024; // D1 im kostenlosen Tarif: 500 MB je Datenbank
+const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
+const AI_PER_DAY = 300;
+const AI_CACHE_DAYS = 60;
+const AI_SPELL = 'Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere nur echte Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung. Formuliere nichts um, füge keine Wörter oder Satzzeichen hinzu, lass Abkürzungen, Zahlen und Eigennamen (Firmen, Personen, Straßen, Orte) so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {"out": ["…", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.';
+const AI_SITES = 'Du bekommst nummerierte Baustellen-Bezeichnungen, die Handwerker einer Firma in ihre Stundenzettel geschrieben haben. Fasse die zusammen, die sicher dieselbe Baustelle meinen (andere Schreibweise, Tippfehler, Abkürzung, Ort oder Kunde zusätzlich genannt oder weggelassen, Straße abgekürzt). Verschiedene Hausnummern, verschiedene Straßen, verschiedene Gebäude oder Kunden am selben Ort sind verschiedene Baustellen. Im Zweifel getrennt lassen. Antworte nur mit JSON: {"groups": [[Nummer, Nummer, …], …]} – nur Gruppen mit mindestens zwei Nummern.';
+
+/** Workers AI ohne „Nachdenken“ (schneller, weniger Verbrauch); Ergebnis: geparstes JSON aus der Antwort */
+async function aiJson(env, system, user, maxTokens) {
+  const r = await env.AI.run(AI_MODEL, {
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    max_tokens: maxTokens,
+    temperature: 0,
+    chat_template_kwargs: { enable_thinking: false },
+  });
+  const text = String(r?.choices?.[0]?.message?.content ?? r?.response ?? '');
+  const m = text.match(/\{[\s\S]*\}/);
+  return JSON.parse(m ? m[0] : text);
+}
 
 /** Spalte version nachträglich anlegen (ältere Tabelle ohne sie); einmal je Worker-Instanz */
 let versionColumn = false;
@@ -202,6 +228,70 @@ export default {
         if (n >= MAX_POSTS) return json({ error: 'limit' }, 429, h);
         await db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()).run();
         return json({ ok: true }, 200, h);
+      }
+
+      if (path === '/ai' && req.method === 'POST') {
+        const body = await readBody(req);
+        if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
+        const me = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
+        if (!me) return json({ error: 'join' }, 403, h);
+        if (me.token !== (await sha256(body.token))) return json({ error: 'token' }, 403, h);
+        if (!env.AI) return json({ error: 'ai' }, 503, h);
+        await db.exec('CREATE TABLE IF NOT EXISTS ai_cache (key TEXT PRIMARY KEY, result TEXT NOT NULL, created INTEGER NOT NULL)');
+        await db.exec('CREATE TABLE IF NOT EXISTS ai_use (member TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (member, day))');
+        const day = new Date().toISOString().slice(0, 10);
+        if (Math.random() < 0.05) {
+          await db.prepare('DELETE FROM ai_cache WHERE created < ?').bind(Date.now() - AI_CACHE_DAYS * 86400000).run();
+          await db.prepare('DELETE FROM ai_use WHERE day < ?').bind(day).run();
+        }
+        const used = await db.prepare('SELECT n FROM ai_use WHERE member = ? AND day = ?').bind(body.member, day).first();
+        const count = async () =>
+          db.prepare('INSERT INTO ai_use (member, day, n) VALUES (?, ?, 1) ON CONFLICT(member, day) DO UPDATE SET n = n + 1').bind(body.member, day).run();
+        const str = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+        if (body.task === 'spell') {
+          // Jeder Eintrag einzeln im Speicher: was schon einmal geprüft wurde (auch bei Kollegen), kostet nichts mehr
+          const items = [...new Set((Array.isArray(body.items) ? body.items : []).map(str).filter(Boolean))].slice(0, 20);
+          const keys = await Promise.all(items.map(async (t) => `spell:${await sha256(t)}`));
+          const out = new Map();
+          for (let i = 0; i < items.length; i++) {
+            const row = await db.prepare('SELECT result FROM ai_cache WHERE key = ?').bind(keys[i]).first();
+            if (row) out.set(items[i], row.result);
+          }
+          const todo = items.filter((t) => !out.has(t));
+          if (todo.length) {
+            if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
+            await count();
+            const res = await aiJson(env, AI_SPELL, JSON.stringify(todo), 40 + todo.length * 40);
+            if (!Array.isArray(res.out) || res.out.length !== todo.length) return json({ error: 'ai' }, 502, h);
+            const now = Date.now();
+            await db.batch(
+              todo.map((t, i) => {
+                const fixed = str(res.out[i]) || t;
+                out.set(t, fixed);
+                return db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(keys[items.indexOf(t)], fixed, now);
+              })
+            );
+          }
+          return json({ out: items.map((t) => [t, out.get(t)]) }, 200, h);
+        }
+
+        if (body.task === 'sites') {
+          const names = [...new Set((Array.isArray(body.names) ? body.names : []).map(str).filter(Boolean))].sort().slice(0, 200);
+          if (names.length < 2) return json({ groups: [] }, 200, h);
+          const key = `sites:${await sha256(names.join('\n'))}`;
+          const row = await db.prepare('SELECT result FROM ai_cache WHERE key = ?').bind(key).first();
+          if (row) return json({ groups: JSON.parse(row.result) }, 200, h);
+          if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
+          await count();
+          const res = await aiJson(env, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
+          const groups = (Array.isArray(res.groups) ? res.groups : [])
+            .map((g) => [...new Set((Array.isArray(g) ? g : []).map((i) => names[Number(i) - 1]).filter(Boolean))])
+            .filter((g) => g.length >= 2);
+          await db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(key, JSON.stringify(groups), Date.now()).run();
+          return json({ groups }, 200, h);
+        }
+        return json({ error: 'task' }, 400, h);
       }
 
       if (path === '/error' && req.method === 'POST') {

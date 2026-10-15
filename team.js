@@ -36,6 +36,74 @@ async function teamRequest(method, path, body, code = team && team.code) {
   return data;
 }
 
+// ───────── KI (Workers AI über den Team-Server, nur im Team) ─────────
+// Speicher (nicht in der Sicherung): spell: { Eintrag: Korrektur der KI }, sites: { key, groups: [[Schreibweisen]] }
+
+const AI_KEY = 'stdprotokoll.ai.v1';
+let aiStore = { spell: {}, sites: null };
+try {
+  Object.assign(aiStore, JSON.parse(localStorage.getItem(AI_KEY) || '{}'));
+} catch {}
+const saveAi = () => {
+  try {
+    localStorage.setItem(AI_KEY, JSON.stringify(aiStore));
+  } catch {}
+};
+const aiNorm = (t) => String(t ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+const aiReady = () => !!(team && team.member && team.token && navigator.onLine !== false);
+const teamAi = (task, data) => teamRequest('POST', '/ai', { member: team.member, token: team.token, task, ...data });
+
+/** Rechtschreibung der Einträge prüfen lassen, die noch nicht geprüft sind; Ergebnis: true = neue Antworten da */
+const aiSpellBusy = new Set();
+async function aiSpellCheck(items) {
+  if (!aiReady()) return false;
+  const todo = [...new Set(items.map(aiNorm))].filter((t) => t && !(t in aiStore.spell) && !aiSpellBusy.has(t));
+  if (!todo.length) return false;
+  todo.forEach((t) => aiSpellBusy.add(t));
+  try {
+    const { out } = await teamAi('spell', { items: todo });
+    for (const [t, fixed] of out || []) {
+      aiStore.spell[t] = fixed;
+      // die Korrektur selbst ist richtig geschrieben: nach dem Übernehmen nicht noch einmal fragen
+      if (fixed && fixed !== t) aiStore.spell[aiNorm(fixed)] = aiNorm(fixed);
+    }
+    // Speicher begrenzen: die ältesten Einträge zuerst raus
+    const keys = Object.keys(aiStore.spell);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 2000))) delete aiStore.spell[k];
+    saveAi();
+    return true;
+  } catch {
+    return false;
+  } finally {
+    todo.forEach((t) => aiSpellBusy.delete(t));
+  }
+}
+/** Korrektur der KI für einen Eintrag, nur wenn sie etwas ändert */
+function aiSpellFix(t) {
+  const k = aiNorm(t);
+  const fixed = aiStore.spell[k];
+  return fixed && fixed !== k ? fixed : null;
+}
+
+/** Welche Baustellen-Schreibweisen dieselbe meinen, einmal je Namensliste fragen (der Server merkt sich die Antwort auch) */
+let aiSitesAsked = '';
+function aiSitesRequest(names) {
+  const list = [...new Set(names.map(aiNorm))].filter(Boolean).sort();
+  const key = list.join('\n');
+  if (list.length < 2 || aiStore.sites?.key === key || aiSitesAsked === key || !aiReady()) return;
+  aiSitesAsked = key;
+  teamAi('sites', { names: list })
+    .then(({ groups }) => {
+      const changed = JSON.stringify(aiStore.sites?.groups || []) !== JSON.stringify(groups || []);
+      aiStore.sites = { key, groups: groups || [] };
+      saveAi();
+      if (!changed) return;
+      teamSitesKey = null;
+      teamRefreshView();
+    })
+    .catch(() => {});
+}
+
 // ───────── Eigene Zettel hochladen ─────────
 
 /** App-Version („std-protokoll-v30“) für die Server-Seite: aus der aktuellen sw.js, nicht aus dem Offline-Speicher
@@ -313,6 +381,7 @@ function teamGroupSites(people) {
   const key = names.join('\n');
   if (key === teamSitesKey) return;
   teamSitesKey = key;
+  aiSitesRequest(names);
   // Zusammenfassen nur, wenn jede Schreibweise der einen Gruppe zu jeder der anderen passt
   // (sonst würden z. B. „Musterstadt“, „Musterstadt Roma“ und „Musterstadt Rathaus“ über den Ort zu einer Baustelle)
   const parts = names.map(teamSiteParts);
@@ -326,6 +395,19 @@ function teamGroupSites(people) {
       groups[b].push(...groups[a]);
       groups[a] = [];
     }
+  // Dazu, was die KI als dieselbe Baustelle erkannt hat (andere Schreibweise, Abkürzung, Ort/Kunde dabei);
+  // auch eine ältere Antwort gilt für die Namen, die sie kennt. Verschiedene Hausnummern bleiben getrennt.
+  const index = new Map(names.map((n, i) => [aiNorm(n), i]));
+  for (const g of aiStore.sites?.groups || []) {
+    const ii = g.map((n) => index.get(aiNorm(n))).filter((i) => i != null);
+    for (const i of ii.slice(1)) {
+      const a = of[i], b = of[ii[0]];
+      if (a === b || (parts[i].nums && parts[ii[0]].nums && parts[i].nums !== parts[ii[0]].nums)) continue;
+      for (const x of groups[a]) of[x] = b;
+      groups[b].push(...groups[a]);
+      groups[a] = [];
+    }
+  }
   const ids = new Map();
   teamSites = new Map(names.map((n, i) => [n, ids.has(of[i]) ? ids.get(of[i]) : (ids.set(of[i], ids.size), ids.size - 1)]));
 }

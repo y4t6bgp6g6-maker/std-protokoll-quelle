@@ -5013,6 +5013,25 @@ function typoFor(field, row) {
   }
   return null;
 }
+/** Rechtschreibfehler laut KI (team.js, nur im Team und nach dem Verlassen des Feldes geprüft): { part, suggestion } oder null */
+function aiTypoFor(field, row) {
+  const value = row[field] || '';
+  if (settings.typoHints === false || !value.trim() || (row.typoOk && row.typoOk[field] === value)) return null;
+  for (const raw of field === 'work' ? value.split(',') : [value]) {
+    const part = raw.trim();
+    const fix = part && aiSpellFix(part);
+    if (fix) return { part, suggestion: fix };
+  }
+  return null;
+}
+/** Feld verlassen: Einträge von der KI prüfen lassen und den Hinweis zeigen, sobald die Antwort da ist */
+function aiCheckField(input) {
+  if (settings.typoHints === false) return;
+  const parts = input.dataset.f === 'work' ? input.value.split(',') : [input.value];
+  aiSpellCheck(parts).then((fresh) => {
+    if (fresh && input.isConnected && document.activeElement !== input && currentSheet()) refreshTypoHint(input);
+  });
+}
 const TYPO_PREFIXES = ['', 'ab', 'an', 'auf', 'aus', 'be', 'ein', 'ent', 'ge', 'mit', 'nach', 'um', 'ver', 'vor', 'weg', 'zer', 'zu'];
 /** Zwei Wörter, die sich nur in Endung (Mehrzahl, Beugung, Umlaut) oder Vorsilbe unterscheiden – so gewollt, kein Tippfehler */
 function sameStem(a, b) {
@@ -5046,7 +5065,7 @@ const typoHintHTML = (field, row) => {
   // Zeichen, die im PDF fehlen, gehen dem Tippfehler-Hinweis vor
   const pdf = pdfHintHTML(row[field]);
   if (pdf) return pdf.replace('class="typo-hint pdf-hint"', `class="typo-hint pdf-hint" data-typo="${field}"`);
-  const t = typoFor(field, row);
+  const t = typoFor(field, row) || aiTypoFor(field, row);
   return t
     ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
     : '';
@@ -5827,7 +5846,10 @@ document.addEventListener('focusout', (e) => {
   if (!e.target.matches('.txt')) return;
   trimWorkInput(e.target);
   if (suggestInput === e.target) hideChips();
-  if (e.target.dataset.f && currentSheet()) refreshTypoHint(e.target);
+  if (e.target.dataset.f && currentSheet()) {
+    refreshTypoHint(e.target);
+    aiCheckField(e.target);
+  }
 });
 document.addEventListener('focusout', (e) => {
   if (e.target.matches('textarea.trip-text, [data-tp="place"], [data-s="name"]')) refreshPdfHint(e.target);
