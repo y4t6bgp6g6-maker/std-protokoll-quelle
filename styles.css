@@ -954,6 +954,17 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
   transition: box-shadow 0.15s;
 }
 
+/* Tage tauschen (lange auf die Karte drücken, auf einen anderen Tag ziehen) */
+#days .day { -webkit-touch-callout: none; }
+#days .day-head { -webkit-user-select: none; user-select: none; }
+.day.day-lifted { opacity: 0.45; transform: scale(0.98); transition: opacity 0.15s, transform 0.15s; }
+.day.day-target { outline: 2.5px solid var(--accent); outline-offset: 2px; }
+.day-ghost {
+  position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none;
+  padding: 8px 14px; border-radius: 999px; background: var(--accent-fill); color: var(--on-accent);
+  font-weight: 600; font-size: 15px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3); white-space: nowrap;
+}
+
 /* Warnzeichen in Tagesleiste und Liste */
 .db-name { position: relative; }
 .db-warn { position: absolute; left: 100%; top: 0; font-size: 10px; margin-left: 1px; }

@@ -6100,6 +6100,137 @@ document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.day .row') && !e.target.closest('input, textarea')) e.preventDefault();
 });
 
+// ───────────────────────── Tage tauschen ─────────────────────────
+// Lange auf eine Tageskarte drücken (nicht auf eine Zeile – die zieht man einzeln), dann auf einen anderen Tag der Woche
+// ziehen: beide tauschen Zeilen, Pause und Tagesart. Feiertage bleiben an ihrem Datum; Urlaub, Krank … nicht auf Sa/So.
+// Wie jede Änderung: danach haben beide Tage „Speichern“.
+
+let dayPress = null; // { dayEl, timer, x, y }
+let dayDrag = null; // { from, ghost, target, scroll }
+
+/** Was am Tag mitwandert (Feiertag gehört zum Datum) */
+const dayMoveStatus = (d) => (d.status && d.status !== 'feiertag' ? d.status : undefined);
+const dayHasContent = (d) => !!dayMoveStatus(d) || d.pause != null || d.rows.some((r) => !rowIsEmpty(r));
+/** Ziel erlaubt? Anderer Tag dieses Monats; keine Tagesart (außer Feiertag) auf Sa/So */
+function daySwapOk(s, a, b) {
+  if (a === b || !sheetIsActive(s, b)) return false;
+  return !((b >= 5 && dayMoveStatus(s.days[a])) || (a >= 5 && dayMoveStatus(s.days[b])));
+}
+function swapDays(s, a, b) {
+  const A = s.days[a];
+  const B = s.days[b];
+  const take = (d) => ({ rows: d.rows, pause: d.pause, status: dayMoveStatus(d) });
+  const put = (d, x) => {
+    d.rows = x.rows.length ? x.rows : [emptyRow()];
+    d.pause = x.pause;
+    if (d.status !== 'feiertag') {
+      if (x.status) d.status = x.status;
+      else delete d.status;
+    }
+  };
+  const ta = take(A);
+  put(A, take(B));
+  put(B, ta);
+}
+
+function startDayDrag() {
+  const { dayEl, x, y } = dayPress;
+  dayPress = null;
+  const s = currentSheet();
+  const from = Number(dayEl.dataset.day);
+  if (!s || !dayHasContent(s.days[from])) return;
+  document.activeElement && document.activeElement.blur && document.activeElement.blur();
+  const ghost = document.createElement('div');
+  ghost.className = 'day-ghost';
+  ghost.textContent = `${WEEKDAYS_SHORT[from]} ${fmtDayMonth(sheetDate(s, from))}`;
+  document.body.append(ghost);
+  dayEl.classList.add('day-lifted');
+  for (const el of document.querySelectorAll('#days .day')) if (daySwapOk(s, from, Number(el.dataset.day))) el.classList.add('day-drop');
+  dayDrag = { from, dayEl, ghost, target: null, y, scroll: setInterval(dayDragScroll, 30) };
+  moveDayDrag(x, y);
+  haptic();
+}
+/** Am oberen/unteren Rand mitscrollen (die Woche ist länger als der Bildschirm) */
+function dayDragScroll() {
+  if (!dayDrag) return;
+  const edge = 90;
+  const y = dayDrag.y;
+  const v = y < edge ? -(edge - y) / 4 : y > innerHeight - edge - 60 ? (y - (innerHeight - edge - 60)) / 4 : 0;
+  if (v) {
+    window.scrollBy(0, v);
+    moveDayDrag(dayDrag.x, y);
+  }
+}
+function moveDayDrag(x, y) {
+  const d = dayDrag;
+  d.x = x;
+  d.y = y;
+  d.ghost.style.transform = `translate(${x}px, ${y}px) translate(-50%, -130%)`;
+  d.ghost.style.visibility = 'hidden';
+  const el = document.elementFromPoint(x, y)?.closest('#days .day.day-drop') || null;
+  d.ghost.style.visibility = '';
+  if (el === d.target) return;
+  d.target?.classList.remove('day-target');
+  el?.classList.add('day-target');
+  d.target = el;
+  if (el) haptic();
+}
+function endDayDrag() {
+  const d = dayDrag;
+  dayDrag = null;
+  clearInterval(d.scroll);
+  d.ghost.remove();
+  d.dayEl.classList.remove('day-lifted');
+  for (const el of document.querySelectorAll('#days .day-drop')) el.classList.remove('day-drop', 'day-target');
+  const s = currentSheet();
+  if (!s || !d.target) return;
+  const to = Number(d.target.dataset.day);
+  if (!daySwapOk(s, d.from, to)) return;
+  swapDays(s, d.from, to);
+  saveSheets(s);
+  refreshDay(d.from);
+  refreshDay(to);
+  toast(`${WEEKDAYS_SHORT[d.from]} und ${WEEKDAYS_SHORT[to]} getauscht`);
+}
+
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    const dayEl = e.target.closest('#days .day');
+    if (!dayEl || e.touches.length > 1 || e.target.closest('.row, input, textarea, button, a, select')) return;
+    const t = e.touches[0];
+    dayPress = { dayEl, x: t.clientX, y: t.clientY, timer: setTimeout(startDayDrag, 450) };
+  },
+  { passive: true }
+);
+document.addEventListener(
+  'touchmove',
+  (e) => {
+    const t = e.touches[0];
+    if (dayDrag) {
+      e.preventDefault();
+      moveDayDrag(t.clientX, t.clientY);
+    } else if (dayPress && (Math.abs(t.clientX - dayPress.x) > 8 || Math.abs(t.clientY - dayPress.y) > 8)) {
+      clearTimeout(dayPress.timer);
+      dayPress = null;
+    }
+  },
+  { passive: false }
+);
+const endDayPress = (e) => {
+  if (dayPress) clearTimeout(dayPress.timer);
+  dayPress = null;
+  if (dayDrag) {
+    e.preventDefault();
+    endDayDrag();
+  }
+};
+document.addEventListener('touchend', endDayPress, { passive: false });
+document.addEventListener('touchcancel', endDayPress, { passive: false });
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest('#days .day') && !e.target.closest('input, textarea')) e.preventDefault();
+});
+
 // ───────────────────────── Leiste: Glas-Linse beim Umschalten, Vibration ─────────────────────────
 // Wie die Leiste unter iOS 26: Beim Antippen wird die Markierung zur klaren Glas-Linse, bläht sich über die Leiste hinaus
 // auf, gleitet in Bewegungsrichtung gedehnt zum neuen Symbol und schrumpft dort wieder zur Markierung. Unter der Linse

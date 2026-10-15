@@ -317,6 +317,7 @@ if (LANG === 'ru') {
       [/^Zweiter Durchgang: (\d+) %$/, 'Второй проход: $1 %'],
       [/^neu um (.+) Uhr$/, 'сброс в $1'],
       [/^Löschung am (.+)$/, 'Удаление $1'],
+      [/^(\S+) und (\S+) getauscht$/, (m, a, b) => `${tr(a)} и ${tr(b)} поменяны местами`],
       [/^Auf dem Team-Server gesichert: (.+)$/, (m, t) => `Сохранено на сервере команды: ${tr(t)}`],
       [/^Noch nicht auf dem Team-Server gesichert · (.+)$/, (m, e) => `Ещё не сохранено на сервере команды · ${tr(e)}`],
       [/^Stand: (.+)$/, (m, t) => `Состояние: ${tr(t)}`],
