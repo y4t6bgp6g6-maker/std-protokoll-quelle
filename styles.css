@@ -911,14 +911,14 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  /* Milchige Glas-Ablage unter den Vorschlägen, damit sie sich vom Zettel abheben */
+  /* Glas-Ablage unter den Vorschlägen: durchscheinend, Lichtkante oben und feiner Rand, damit sie sich vom Zettel abhebt */
   margin: 0 8px;
   padding: 8px;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--fill) 70%, transparent);
-  -webkit-backdrop-filter: blur(20px) saturate(1.8);
-  backdrop-filter: blur(20px) saturate(1.8);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18), inset 0 0 0 0.5px rgba(255, 255, 255, 0.4);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.9);
+  backdrop-filter: blur(14px) saturate(1.9);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.75), inset 0 0 0 1px rgba(255, 255, 255, 0.4), inset 0 -1px 0 rgba(0, 0, 0, 0.06);
   overflow-x: auto;
   scrollbar-width: none;
   overscroll-behavior: contain;
@@ -930,10 +930,10 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .chip {
   padding: 7px 13px;
   border-radius: 17px;
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
   color: var(--accent);
   border: 0;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.14);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.6);
   font-size: 15px;
   font-weight: 500;
   white-space: nowrap;
@@ -942,6 +942,12 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
   text-overflow: ellipsis;
 }
 .chip:active { background: color-mix(in srgb, var(--accent) 15%, var(--card)); }
+:root[data-theme='dark'] .suggest-grid {
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+:root[data-theme='dark'] .chip { background: color-mix(in srgb, var(--text) 10%, var(--card)); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12); }
+:root[data-theme='dark'] .chip:active { background: color-mix(in srgb, var(--accent) 25%, var(--card)); }
 
 /* Warnzeichen bei den Uhrzeiten */
 .time-warn { display: none; font-size: 16px; line-height: 1; }
