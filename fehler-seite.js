@@ -375,7 +375,7 @@ function adminDictNear(a, b) {
 
 /** Schreibweisen aus den Zetteln (laufender Monat und Vormonat), die sich nur in Groß-/Kleinschreibung, Satzzeichen
  *  oder einem Tippfehler unterscheiden. Vorschlag = die Schreibweise, die die meisten Personen benutzen (dann die
- *  häufigste). Baustellen als Ganzes (bis 4 Wörter), Arbeiten Wort für Wort. Ohne, was schon im Wörterbuch steht
+ *  häufigste). Nur Baustellen (als Ganzes, bis 4 Wörter) – bei Arbeiten kamen nur Beugungsformen heraus. Ohne, was schon im Wörterbuch steht
  *  oder verworfen wurde, und ohne Schreibweisen, die die KI-Prüfung schon richtig korrigiert (dieselbe Prüfung wie bei
  *  den Kollegen, Ergebnis gemerkt in aiStore; ungeprüfte werden nachgefragt, bis dahin fehlt der Vorschlag).
  *  → [{ word, others: [Schreibweisen], n }] */
@@ -398,10 +398,7 @@ function adminDictSuggest() {
   for (const m of [...(c.members || []), ...(c.prevMembers || [])])
     for (const s of m.sheets || [])
       for (const d of s.days || [])
-        for (const r of d.rows || []) {
-          if (r.site && r.site.trim().split(/\s+/).length <= 4) add(r.site, m.member);
-          for (const w of String(r.work || '').split(/[\s,;:/()+&]+/)) add(w, m.member);
-        }
+        for (const r of d.rows || []) if (r.site && r.site.trim().split(/\s+/).length <= 4) add(r.site, m.member);
   // Schreibweisen zu Gruppen verbinden (gleicher Schlüssel oder ein Tippfehler)
   const list = [...forms.entries()].map(([word, f]) => ({ word, ...f }));
   const keys = [...new Set(list.map((f) => f.key))];
