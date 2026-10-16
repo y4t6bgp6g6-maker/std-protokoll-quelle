@@ -609,6 +609,17 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .wp { padding: 6px 12px 0; }
 /* Wochenauswahl reicht weiter nach unten: nur so viel Abstand, dass der Text über dem Home-Balken bleibt */
 .modal.sheet.wp-sheet { padding-bottom: max(10px, calc(env(safe-area-inset-bottom) - 12px)); }
+/* Wochenauswahl als Glas: durchscheinend, Lichtkante oben, feiner heller Rand */
+.modal.sheet.wp-sheet {
+  background: color-mix(in srgb, var(--sheet) 55%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(1.8);
+  backdrop-filter: blur(24px) saturate(1.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 -10px 40px rgba(0, 0, 0, 0.18);
+}
+:root[data-theme='dark'] .modal.sheet.wp-sheet {
+  background: color-mix(in srgb, var(--sheet) 60%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 -10px 40px rgba(0, 0, 0, 0.5);
+}
 .wp-nav { display: flex; align-items: center; justify-content: space-between; padding: 4px 0 8px; font-size: 18px; }
 .icon-btn { width: 44px; height: 44px; display: grid; place-items: center; color: var(--accent); }
 .wp-grid { display: grid; grid-template-columns: 34px repeat(7, 1fr); row-gap: 4px; }
@@ -621,8 +632,10 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
   position: relative;
 }
 .wp-day.out { color: var(--muted); opacity: 0.55; }
-.wp-day.in-week { background: var(--fill); color: var(--muted); opacity: 1; }
-.wp-day.in-sheet { background: var(--accent-fill); color: var(--on-accent); font-weight: 600; }
+.wp-day.in-week { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--muted); opacity: 1; }
+/* Gewählte Woche: gläserne Leiste mit blauen Zahlen */
+.wp-day.in-sheet { background: color-mix(in srgb, var(--card) 75%, transparent); color: var(--accent); font-weight: 600; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.06); }
+:root[data-theme='dark'] .wp-day.in-sheet { background: color-mix(in srgb, var(--text) 14%, transparent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); }
 .wp-day.in-week:nth-child(8n + 2) { border-radius: 10px 0 0 10px; }
 .wp-day.in-week:nth-child(8n + 8) { border-radius: 0 10px 10px 0; }
 .wp-day.sel::after {
@@ -638,20 +651,15 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 }
 .wp-day.today:not(.in-sheet) { color: var(--accent); font-weight: 700; }
 .wp-num { display: inline-grid; place-items: center; width: 38px; height: 34px; border-radius: 10px; }
-/* Heute und Feiertage: Rahmen mit runden Ecken wie die gewählte Woche, nicht ausgefüllt */
-.wp-day.today .wp-num { box-shadow: inset 0 0 0 2px var(--accent); }
-.wp-day.holiday:not(.in-sheet) { color: #af52de; }
-.wp-day.holiday .wp-num { box-shadow: inset 0 0 0 1.5px #af52de; }
-/* Heute und Feiertag zugleich: außen blau, innen lila */
-.wp-day.today.holiday .wp-num { box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 3.5px #af52de; }
-/* In der blauen Woche: weiße Rahmen, Feiertag gestrichelt */
-.wp-day.in-sheet.today .wp-num { box-shadow: inset 0 0 0 2px #fff; }
-.wp-day.in-sheet.holiday .wp-num { box-shadow: none; outline: 1.5px dashed #fff; outline-offset: -2px; }
-.wp-day.in-sheet.today.holiday .wp-num { box-shadow: inset 0 0 0 2px #fff; outline-offset: -5px; }
-/* Wochen mit vorhandenem Zettel bzw. Abrechnung: KW grün (gesendet) oder orange (offen) */
-.wp-kw span { display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 3px; border-radius: 7px; }
-.wp-kw.sent span { background: var(--success); color: #fff; font-weight: 600; }
-.wp-kw.open span { background: var(--warning); color: #fff; font-weight: 600; }
+/* Heute: dünner blauer Rahmen; Feiertage nur lila Schrift (auch in der gewählten Woche) */
+.wp-day.today .wp-num { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.wp-day.holiday { color: #af52de; }
+/* Wochen mit vorhandenem Zettel bzw. Abrechnung: Punkt an der KW, grün (gesendet) oder orange (offen) */
+.wp-kw span { position: relative; display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 3px; }
+.wp-kw.sent span::after,
+.wp-kw.open span::after { content: ''; position: absolute; right: -4px; top: 2px; width: 6px; height: 6px; border-radius: 50%; }
+.wp-kw.sent span::after { background: var(--success); }
+.wp-kw.open span::after { background: var(--warning); }
 .wp-hol-line { font-size: 13px; line-height: 18px; min-height: 36px; color: #af52de; }
 /* Monate nebeneinander, mit dem Finger verschiebbar */
 .wp-viewport { overflow: hidden; touch-action: pan-y; }
