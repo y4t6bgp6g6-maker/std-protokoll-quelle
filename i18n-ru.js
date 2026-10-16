@@ -290,7 +290,8 @@ if (LANG === 'ru') {
       Anfragen: 'Запросы', Gelesen: 'Прочитано', Geschrieben: 'Записано', KI: 'ИИ', 'Löschung am': 'Удаление',
       'Team-Code': 'Код команды', 'Neuer Team-Code': 'Новый код команды', 
       'Alle müssen danach den neuen Code eingeben.': 'Потом всем нужно ввести новый код.', 'Mindestens 6 Zeichen, ohne Leerzeichen': 'Минимум 6 символов, без пробелов',
-      'Das ist der Admin-Code': 'Это код администратора', statt: 'вместо', 'Ins Wörterbuch': 'В словарь', Ändern: 'Изменить',
+      'Das ist der Admin-Code': 'Это код администратора', statt: 'вместо', 'ohne Konto': 'без аккаунта', 'nicht im Team': 'не в команде', 'keine Sicherung': 'нет копии',
+      'Aus dem Team entfernen': 'Удалить из команды', 'Ins Wörterbuch': 'В словарь', Ändern: 'Изменить',
     },
 
     patterns: [

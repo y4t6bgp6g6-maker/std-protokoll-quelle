@@ -123,17 +123,16 @@ function renderFehler(full = false) {
     ${adminServerHTML()}
     ${adminStorageHTML(adminStorage)}
     ${adminUsageHTML(adminUsage)}
-    ${adminTeamHTML(adminTeam)}
+    ${adminTeamHTML(adminTeam, adminAccounts)}
     ${adminCodeHTML(adminCode)}
     ${adminOpenHTML(adminOpen)}
-    ${adminAccountsHTML(adminAccounts)}
     <h2 class="section-title">Fehlerberichte</h2>
-    <div class="fb-list">${list}</div>
-    <label class="card fb-row">
+    <label class="card fb-row fb-push">
       <span>Mitteilungen</span>
       <input type="checkbox" class="toggle" data-fb-push ${push ? 'checked' : ''} ${adminBusy ? 'disabled' : ''}>
     </label>
     ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
+    <div class="fb-list">${list}</div>
     ${adminDictHTML(adminDict)}`;
   if (body) body.innerHTML = html;
   else app.innerHTML = `${nav}<div id="fb-body">${html}</div>`;
@@ -149,26 +148,61 @@ function adminServerHTML() {
 /** Nummer aus „std-protokoll-v29“ (0 = unbekannt) */
 const adminVer = (v) => Number(String(v || '').split('-v')[1]) || 0;
 
-/** Team diesen Monat: Zahlen, Tag der Löschung, je Person App-Version (veraltete gelb) und letzter Upload;
- *  Antippen entfernt die Person (z. B. doppelt nach Neuinstallation) */
-function adminTeamHTML(tm) {
+/** Team diesen Monat mit den Konten: je Person App-Version (veraltete gelb) und letzter Upload, darunter Benutzername
+ *  und letzte Sicherung bzw. „ohne Konto“ (orange); Konten ohne Eintrag in diesem Monat unten („nicht im Team“).
+ *  Lang drücken → Menü: aus dem Team entfernen (z. B. doppelt nach Neuinstallation) bzw. Konto löschen */
+function adminTeamHTML(tm, accounts) {
   if (!tm) return '';
   const people = tm.people || [];
+  const list = accounts || [];
+  const byMember = new Map(list.filter((a) => a.member).map((a) => [a.member, a]));
   const sheets = people.reduce((n, p) => n + (p.sheets || 0), 0);
   const newest = Math.max(adminVer(teamAppVersion), ...people.map((p) => adminVer(p.version)));
   const [y, m] = String(tm.month).split('-').map(Number);
   const cleanup = y && m ? fmtDayMonth(new Date(y, m, 1)) : '';
+  const sub = (a) =>
+    a
+      ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>`
+      : '<span class="fb-sub fb-noacc">ohne Konto</span>';
   const rows = people
     .map((p) => {
       const v = adminVer(p.version);
-      return `<div class="fb-person" data-fb="person-del" data-member="${escapeHtml(p.member || '')}"><b>${escapeHtml(p.name || '?')}</b><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
+      const a = byMember.get(p.member);
+      return `<div class="fb-person" data-fb-hold data-member="${escapeHtml(p.member || '')}" data-user="${escapeHtml(a ? a.user : '')}"><span><b>${escapeHtml(p.name || '?')}</b>${sub(a)}</span><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
     })
+    .join('');
+  const loose = list
+    .filter((a) => !people.some((p) => p.member && p.member === a.member))
+    .map(
+      (a) =>
+        `<div class="fb-person" data-fb-hold data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.name || a.fullname || a.user)}</b>${sub(a)}</span><span></span><span class="muted">nicht im Team</span></div>`
+    )
     .join('');
   return `<div class="card fb-store">
       <div class="fb-store-h"><span>Team diesen Monat</span><span class="muted">Löschung am ${cleanup}</span></div>
-      <div class="fb-count"><span><b>${people.length}</b> ${people.length === 1 ? 'Person' : 'Personen'}</span><span><b>${sheets}</b> Zettel</span><span><b>${tm.posts || 0}</b> ${tm.posts === 1 ? 'Nachricht' : 'Nachrichten'}</span></div>
-      ${rows}
+      <div class="fb-count"><span><b>${people.length}</b> ${people.length === 1 ? 'Person' : 'Personen'}</span><span><b>${list.length}</b> ${list.length === 1 ? 'Konto' : 'Konten'}</span><span><b>${sheets}</b> Zettel</span><span><b>${tm.posts || 0}</b> ${tm.posts === 1 ? 'Nachricht' : 'Nachrichten'}</span></div>
+      ${rows}${loose}
     </div>`;
+}
+
+/** Menü nach langem Drücken auf eine Person bzw. ein Konto */
+function adminPersonMenu(el) {
+  const member = el.dataset.member;
+  const user = el.dataset.user;
+  const actions = [];
+  if (member)
+    actions.push({
+      label: 'Aus dem Team entfernen',
+      destructive: true,
+      run: () => confirmDialog('Aus dem Team entfernen?', 'Wird die App dort noch benutzt, kommt der Eintrag zurück.', 'Entfernen', () => adminPersonDelete(member), true),
+    });
+  if (user)
+    actions.push({
+      label: 'Konto löschen',
+      destructive: true,
+      run: () => confirmDialog('Konto löschen?', 'Die Sicherungen auf dem Server werden gelöscht.', 'Löschen', () => adminAccountDelete(user), true),
+    });
+  if (actions.length) actionSheet(actions);
 }
 
 /** Team-Code der Kollegen; Antippen → neuer Code. Gilt sofort, alle müssen ihn danach neu eingeben (der Admin-Code bleibt) */
@@ -214,19 +248,6 @@ function adminCodeChange() {
   setTimeout(() => input.focus(), 50);
 }
 
-/** Konten mit letzter Sicherung auf dem Server; Antippen löscht das Konto (z. B. Passwort vergessen) */
-function adminAccountsHTML(list) {
-  if (!list) return '';
-  const rows = list
-    .map(
-      (a) => `<div class="fb-person" data-fb="account-del" data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.user)}</b> <span class="muted" translate="no">${escapeHtml(a.fullname || a.name || '')}</span></span><span class="muted">${a.bytes ? adminBytes(a.bytes) : '–'}</span><span class="muted">${a.last ? teamAgo(a.last) : 'nie'}</span></div>`
-    )
-    .join('');
-  return `<div class="card fb-store">
-      <div class="fb-store-h"><span>Konten</span><span class="muted">${list.length}</span></div>
-      ${rows}
-    </div>`;
-}
 /** Arbeitsscheine mit Namen, die keinem Konto eindeutig gehören; Antippen ordnet zu (wird gemerkt) */
 function adminOpenHTML(list) {
   if (!list || !list.length) return '';
@@ -643,14 +664,42 @@ document.addEventListener('click', (e) => {
     case 'open-assign':
       adminOpenAssign(el.dataset.key);
       break;
-    case 'account-del':
-      confirmDialog('Konto löschen?', 'Die Sicherungen auf dem Server werden gelöscht.', 'Löschen', () => adminAccountDelete(el.dataset.user), true);
-      break;
-    case 'person-del':
-      confirmDialog('Aus dem Team entfernen?', 'Wird die App dort noch benutzt, kommt der Eintrag zurück.', 'Entfernen', () => adminPersonDelete(el.dataset.member), true);
-      break;
   }
 });
+// Person bzw. Konto lang drücken → Menü (Antippen allein tut nichts, damit nichts aus Versehen gelöscht wird)
+const ADMIN_HOLD = 450;
+let adminPress = null; // { el, x, y, timer }
+function adminPressEnd() {
+  if (!adminPress) return;
+  clearTimeout(adminPress.timer);
+  adminPress.el.classList.remove('pressing');
+  adminPress = null;
+}
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest?.('[data-fb-hold]');
+  if (!el || e.button > 0 || adminBusy) return;
+  adminPressEnd();
+  el.classList.add('pressing');
+  adminPress = {
+    el,
+    x: e.clientX,
+    y: e.clientY,
+    timer: setTimeout(() => {
+      adminPressEnd();
+      haptic();
+      adminPersonMenu(el);
+    }, ADMIN_HOLD),
+  };
+});
+document.addEventListener('pointermove', (e) => {
+  if (adminPress && Math.hypot(e.clientX - adminPress.x, e.clientY - adminPress.y) > 10) adminPressEnd();
+});
+['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, adminPressEnd));
+window.addEventListener('scroll', adminPressEnd, { passive: true });
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest?.('[data-fb-hold]')) e.preventDefault();
+});
+
 // Schalter „Mitteilungen“: Einschalten muss direkt aus dem Antippen kommen (sonst fragt iOS nicht)
 document.addEventListener('change', (e) => {
   if (!e.target.matches('[data-fb-push]')) return;

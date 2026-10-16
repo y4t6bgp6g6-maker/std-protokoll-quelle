@@ -926,7 +926,7 @@ export default {
             db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
             db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
             // Konten: Name, letzte Sicherung, Größe aller Sicherungen
-            db.prepare('SELECT a.user, a.name, a.fullname, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
+            db.prepare('SELECT a.user, a.member, a.name, a.fullname, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
             // Arbeitsscheine: Namen, die noch keinem Konto zugeordnet sind (je Name, Zahl der Scheine)
             db.prepare('SELECT key, MAX(name) AS name, COUNT(*) AS n, MAX(changed) AS last FROM report_open GROUP BY key ORDER BY last DESC'),
           ]);
