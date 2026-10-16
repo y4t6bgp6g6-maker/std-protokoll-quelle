@@ -144,6 +144,18 @@
     timer = setTimeout(upload, ms);
   }
 
+  /** Abgefangene Fehler, die der Nutzer nur als kurze Meldung sieht („PDF konnte nicht erstellt werden“):
+   *  trotzdem melden, mit der Stelle davor (z. B. „pdf: …“) */
+  window.fehlerMelden = (err, where) =>
+    record(`${where}: ${(err && (err.name && err.name !== 'Error' ? `${err.name}: ` : '') + (err.message || '')) || String(err)}`, (err && err.stack) || '', '');
+
+  /** Unerwartete Antwort des Team-Servers. Erwartete Ablehnungen (falscher Code, Passwort falsch, kein Eintrag,
+   *  zu viele, Konto unbekannt) und Funklöcher (fetch wirft) zählen nicht. */
+  window.serverFehler = (method, path, status, error) => {
+    if (!(status >= 500 || status === 400 || status === 405 || status === 413 || (status === 403 && (error === 'konto' || error === 'token')))) return;
+    record(`Server ${status}${error ? ` ${error}` : ''}: ${method} ${path}`, String(new Error().stack || '').split('\n').slice(1).join('\n'), '');
+  };
+
   window.addEventListener('error', (e) => record(e.message, e.error && e.error.stack, e.filename));
   window.addEventListener('unhandledrejection', (e) => {
     const r = e.reason;

@@ -340,7 +340,8 @@ let payslips = readJson(PAYSLIP_KEY, {});
 function savePayslips() {
   try {
     localStorage.setItem(PAYSLIP_KEY, JSON.stringify(payslips));
-  } catch {
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
 }
@@ -1022,7 +1023,8 @@ function saveSheets(changed) {
   if (currentView === 'editor') updateSaveBar();
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(savedSheets()));
-  } catch {
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
   teamQueueUpload();
@@ -1030,7 +1032,8 @@ function saveSheets(changed) {
 function saveSettings() {
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch {
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
   teamQueueUpload();
@@ -1112,7 +1115,8 @@ const reports = () => reportStore.items;
 function saveReports() {
   try {
     localStorage.setItem(REPORT_KEY, JSON.stringify(reportStore));
-  } catch {
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
 }
@@ -3226,6 +3230,7 @@ async function sharePdf(s, isSend) {
   try {
     file = pdfFileFor(s);
   } catch (e) {
+    window.fehlerMelden?.(e, 'pdf');
     toast('PDF konnte nicht erstellt werden');
     return;
   }
@@ -3268,7 +3273,8 @@ function saveTrips(changed) {
   if (currentView === 'trip') updatePdfThumb();
   try {
     localStorage.setItem(TRIP_KEY, JSON.stringify(trips));
-  } catch {
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
 }
@@ -3772,6 +3778,7 @@ async function shareTripPdf(t) {
   try {
     file = tripPdfFile(t);
   } catch (e) {
+    window.fehlerMelden?.(e, 'pdf');
     toast('PDF konnte nicht erstellt werden');
     return;
   }
@@ -4088,6 +4095,7 @@ async function exportBackup() {
   try {
     data = await sealBackup(backupJson(2));
   } catch (e) {
+    window.fehlerMelden?.(e, 'sicherung');
     infoDialog('Sicherung nicht möglich', escapeHtml(e.message));
     return;
   }

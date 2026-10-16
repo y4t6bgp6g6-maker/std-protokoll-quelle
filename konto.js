@@ -216,6 +216,7 @@ async function accountBackup(force = false) {
       cache: 'no-store',
     });
     const out = await res.json().catch(() => ({}));
+    if (!res.ok) window.serverFehler?.('PUT', '/backup', res.status, out.error);
     if (!res.ok) throw Object.assign(new Error(out.error || 'fehler'), { status: res.status });
     if (account) Object.assign(account, { at: out.at || Date.now(), hash, error: '' });
     done = true;

@@ -38,6 +38,7 @@ function saveBh() {
   try {
     localStorage.setItem(BH_KEY, JSON.stringify(bh));
   } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen – Speicher voll?');
   }
 }
@@ -84,7 +85,10 @@ function bhPutImage(id, data) {
   bhImages.set(id, data);
   return bhDb()
     .then((db) => db.transaction('img', 'readwrite').objectStore('img').put(data, id))
-    .catch(() => toast('Bild konnte nicht gespeichert werden'));
+    .catch((e) => {
+      window.fehlerMelden?.(e, 'bild speichern');
+      toast('Bild konnte nicht gespeichert werden');
+    });
 }
 function bhDeleteImage(id) {
   bhImages.delete(id);
@@ -1002,6 +1006,7 @@ async function bhPdf(page) {
   try {
     files = page ? [buildHeftPdf(h, bhEntry.kind, page)] : [buildHeftPdf(h, 'woche'), buildHeftPdf(h, 'monat')];
   } catch (e) {
+    window.fehlerMelden?.(e, 'pdf');
     toast('PDF konnte nicht erstellt werden');
     return;
   }
@@ -1212,6 +1217,7 @@ document.addEventListener('change', async (e) => {
       saveBh();
       if (currentView === 'bhMonth' && bhEntry?.h === h && bhEntry.key === key) renderBhMonth(h, key);
     } catch (err) {
+      window.fehlerMelden?.(err, 'bild lesen');
       toast('Bild konnte nicht gelesen werden');
     }
   }

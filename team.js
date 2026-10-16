@@ -32,7 +32,10 @@ async function teamRequest(method, path, body, code = team && team.code) {
     cache: 'no-store',
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || 'fehler'), { status: res.status });
+  if (!res.ok) {
+    window.serverFehler?.(method, path + (body && (body.action || body.task) ? ` ${body.action || body.task}` : ''), res.status, data.error);
+    throw Object.assign(new Error(data.error || 'fehler'), { status: res.status });
+  }
   return data;
 }
 
