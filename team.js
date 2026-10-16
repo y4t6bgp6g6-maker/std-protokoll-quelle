@@ -420,6 +420,7 @@ function teamClean(members) {
         month: num(s.month),
         days: s.days.map((d) => ({
           status: Object.hasOwn(DAY_STATUS_SHORT, d && d.status) ? d.status : undefined,
+          credit: num(d && d.credit),
           pause: num(d && d.pause),
           rows: (Array.isArray(d && d.rows) ? d.rows : []).map((r) => ({
             start: num(r && r.start),

@@ -232,9 +232,9 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
     const tops = hs.map((_, k) => y + hs.slice(0, k).reduce((a, b) => a + b, 0));
     const h = hs.reduce((a, b) => a + b, 0);
     const active = sheetIsActive(sheet, i);
-    // Sa/So: Feiertag erscheint nicht im PDF, der Tag steht dort wie ein normaler Arbeitstag
-    const status = active && i < 5 ? day.status : null;
-    const hw = active && i < 5 && holidayWork(day);
+    // Sa/So: Feiertag erscheint nicht im PDF, der Tag steht dort wie ein normaler Arbeitstag (außer von Hand gesetzt)
+    const status = active && (i < 5 || day.manual) ? day.status : null;
+    const hw = active && (i < 5 || day.manual) && holidayWork(day);
     dayTops.push(y);
 
     doc.fill(xs[0], y, xs[1] - xs[0], h, 0.87);
@@ -254,7 +254,7 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
       doc.textBox(fmtHours(dayTotal(day, i)), xs[7] + 3, y, xs[8] - xs[7] - 6, rowH, fs, false, 'right');
     } else if (active) {
       if (hw) {
-        doc.textBox(fmtHours(statusCredit(status, i)), xs[3] + 3, y, xs[4] - xs[3] - 6, rowH, fs, false, 'right');
+        doc.textBox(fmtHours(dayCredit(day, i)), xs[3] + 3, y, xs[4] - xs[3] - 6, rowH, fs, false, 'right');
         doc.textBox(DAY_STATUS_SHORT[status], xs[5] + 3, y, xs[6] - xs[5] - 6, rowH, fs, true);
       }
       day.rows.forEach((row, r) => {

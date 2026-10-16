@@ -2001,7 +2001,7 @@ a.s-row:active { background: var(--fill); }
 .tm-chip b { margin-left: 3px; font-size: 14px; font-variant-numeric: tabular-nums; }
 /* Warnzeichen, Arbeitsschein- und Team-Kapsel passen auch beim Donnerstag neben „Arbeit ▾“ */
 .day-when .ws-chip { padding: 4px 7px; margin-left: 3px; }
-.status-btn { white-space: nowrap; }
+.status-btn { white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .modal.tm-dw-sheet { display: flex; flex-direction: column; max-height: calc(100% - 40px); }
 .tm-dw { display: flex; flex-direction: column; min-height: 0; }
 .tm-dw-body { overflow-y: auto; padding: 14px 16px 6px; }

@@ -53,7 +53,8 @@ const escapeHtml = (s) =>
 
 // ───────────────────────── Datenmodell ─────────────────────────
 // Zettel: { id, weekStart: 'YYYY-MM-DD' (Montag), year, month, name, days[7], sentAt, createdAt, updatedAt }
-// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }] }
+// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }],
+//           credit?: Minuten der Tagesart (nur von Hand gesetzt, sonst 8 h bzw. Frei 0), manual?: true (Tagesart von Hand, siehe chooseStatusHold) }
 //         (start/end: Minuten seit 00:00; bei gesetztem status werden die Zeilen ignoriert, bleiben aber erhalten)
 
 const DAY_STATUS = {
@@ -73,7 +74,9 @@ const statusCredit = (status, i) => (status === 'frei' || i >= 5 ? 0 : Math.roun
 /** An einem Feiertag kann trotzdem gearbeitet werden (z. B. Notdienst): die Stunden kommen zu den 8 gutgeschriebenen dazu */
 const canWork = (d) => !d.status || d.status === 'feiertag';
 const workedNet = (d) => Math.max(0, dayWorked(d) - (d.pause || 0));
-const dayTotal = (d, i) => (d.status ? statusCredit(d.status, i) + (canWork(d) ? workedNet(d) : 0) : workedNet(d));
+/** Stunden der Tagesart an diesem Tag: von Hand gewählt (8 h oder 0) oder die Vorgabe */
+const dayCredit = (d, i) => (d.credit != null ? d.credit : statusCredit(d.status, i));
+const dayTotal = (d, i) => (d.status ? dayCredit(d, i) + (canWork(d) ? workedNet(d) : 0) : workedNet(d));
 const dayHasTimes = (d) => d.rows.some((r) => r.start != null || r.end != null);
 /** Am Tag wurde schon etwas eingetragen, aber noch keine Pause (nur neue Zettel haben pause: null) */
 const pauseMissing = (d) => !d.status && d.pause == null && d.rows.some((r) => !rowIsEmpty(r));
@@ -117,7 +120,7 @@ const emptySentWorkday = (s, i) =>
 /** Tagesart passt nicht zum Kalender (Mo–Fr): Feiertag an einem Tag ohne Feiertag, erkannter Feiertag mit anderer Tagesart */
 const statusWarning = (s, i) => {
   const d = s.days[i];
-  if (!sheetIsActive(s, i) || i >= 5) return '';
+  if (!sheetIsActive(s, i) || i >= 5 || d.manual) return '';
   const holiday = holidayName(sheetDate(s, i));
   if (d.status === 'feiertag') return holiday ? '' : 'kein gesetzlicher Feiertag';
   return holiday ? `${holiday} nicht als Feiertag eingetragen` : '';
@@ -427,8 +430,8 @@ function monthHoursSplit(year, month) {
     const entry = byDate.get(isoDate(d));
     if (holidayName(d)) h.feiertag += day;
     else if (!entry) continue;
-    else if (entry.status === 'urlaub') h.urlaub += day;
-    else if (entry.status === 'krank') h.krank += day;
+    else if (entry.status === 'urlaub') h.urlaub += dayCredit(entry, (d.getDay() + 6) % 7) / 60;
+    else if (entry.status === 'krank') h.krank += dayCredit(entry, (d.getDay() + 6) % 7) / 60;
   }
   const ot = ((overtimeAccount().get(year) || new Map()).get(month) || 0) / 60;
   h.ueber = Math.max(0, ot);
@@ -921,7 +924,8 @@ function askPayslipMonth(month, done, year = null, chosen = false) {
 /** „+3,50 h“ / „−2,00 h“ */
 const fmtSigned = (min) => (min > 0 ? '+' : min < 0 ? '−' : '') + fmtH(Math.abs(min));
 
-/** Sa/So: Tagesart lässt sich nicht wählen – nur ein Feiertag, den die App selbst einträgt (zählt 0 Stunden, im PDF wie Arbeit).
+/** Sa/So: Tagesart lässt sich nicht wählen – nur ein Feiertag, den die App selbst einträgt (zählt 0 Stunden, im PDF wie Arbeit),
+ *  oder eine von Hand gesetzte (3 s drücken, manual), die bleibt.
  *  Andere Tagesarten (aus älteren Fassungen oder eingelesenen Dateien) werden entfernt, ebenso die frühere Tagesart
  *  „Schule“ (kurz in v2–v4). true = geändert */
 function fixWeekend(s) {
@@ -934,20 +938,22 @@ function fixWeekend(s) {
   }
   for (const i of [5, 6]) {
     const d = s.days[i];
-    if (d.status && !(d.status === 'feiertag' && holidayName(sheetDate(s, i)))) {
+    if (d.status && !d.manual && !(d.status === 'feiertag' && holidayName(sheetDate(s, i)))) {
       delete d.status;
       changed = true;
     }
   }
-  const before = s.days.slice(5).map((d) => d.status).join();
-  markHolidays(s, true);
-  return changed || before !== s.days.slice(5).map((d) => d.status).join();
+  // Mo–Fr nur in offenen Zetteln (gesendete bleiben, wie sie verschickt wurden): die Tagesart Feiertag ist nicht mehr wählbar
+  const before = s.days.map((d) => d.status).join();
+  markHolidays(s, !!s.sentAt);
+  return changed || before !== s.days.map((d) => d.status).join();
 }
 
-/** Feiertage eines Zettels als „Feiertag“ markieren, nur an Tagen ohne Einträge (Sa/So zählen dann 0 Stunden) */
+/** Feiertage eines Zettels als „Feiertag“ markieren, nur an Tagen ohne Einträge (Sa/So zählen dann 0 Stunden)
+ *  und nicht an Tagen, deren Tagesart von Hand gesetzt wurde (langes Drücken) */
 function markHolidays(s, weekendOnly) {
   s.days.forEach((d, i) => {
-    if ((weekendOnly && i < 5) || !sheetIsActive(s, i) || d.status || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
+    if ((weekendOnly && i < 5) || !sheetIsActive(s, i) || d.status || d.manual || dayHasTimes(d) || d.rows.some((r) => r.site || r.work)) return;
     if (holidayName(sheetDate(s, i))) d.status = 'feiertag';
   });
 }
@@ -2588,9 +2594,11 @@ function dayHTML(s, i) {
   const date = sheetDate(s, i);
   const head = `<div class="day-head">
       <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}${teamDayChipHTML(s, i)}</div>
-      ${i < 5 ? `<div class="day-actions">
-        <button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>
-      </div>` : ''}
+      <div class="day-actions">
+        ${i >= 5 || holidayName(date)
+          ? `<span class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-hold="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'}</span>`
+          : `<button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status" data-hold="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>`}
+      </div>
     </div>`;
   if (dayCollapsed(s, i)) {
     return `<section class="day collapsed wd-${i}" data-day="${i}">
@@ -2618,9 +2626,9 @@ function dayHTML(s, i) {
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
         <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${teamDayChipHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
-        ${i < 5
-          ? `<button class="chip-btn status-btn set status-tag" data-act="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))} ▾</button>`
-          : `<span class="chip-btn status-btn set status-tag">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(statusCredit(day.status, i))}</span>`}
+        ${i < 5 && day.status !== 'feiertag' && !holidayName(date)
+          ? `<button class="chip-btn status-btn set status-tag" data-act="status" data-hold="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(dayCredit(day, i))} ▾</button>`
+          : `<span class="chip-btn status-btn set status-tag" data-hold="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(dayCredit(day, i))}</span>`}
       </div>
       ${extra}
     </section>`;
@@ -2631,23 +2639,95 @@ function dayHTML(s, i) {
   </section>`;
 }
 
+/** Tagesart wählen (Antippen): Feiertage trägt die App selbst ein – an einem Feiertag gibt es keine Auswahl,
+ *  sonst ist Feiertag nicht dabei. Von Hand gesetzte Stunden und „von Hand“ fallen damit weg */
 function chooseStatus(btn) {
   const { s, dayIndex, day } = rowContext(btn);
-  if (dayIndex >= 5) return;
+  if (dayIndex >= 5 || holidayName(sheetDate(s, dayIndex))) return;
   const set = (status) => {
     if (status) day.status = status;
     else delete day.status;
+    delete day.credit;
+    delete day.manual;
     saveSheets(s);
     refreshDay(dayIndex);
   };
+  const plain = day.credit == null;
   actionSheet([
-    { label: `${day.status ? '' : '✓ '}Arbeit`, run: () => set(null) },
-    ...Object.entries(DAY_STATUS_SHORT).map(([key, label]) => ({
-      label: `${day.status === key ? '✓ ' : ''}${label}`,
-      run: () => set(key),
-    })),
+    { label: `${day.status || !plain ? '' : '✓ '}Arbeit`, run: () => set(null) },
+    ...Object.entries(DAY_STATUS_SHORT)
+      .filter(([key]) => key !== 'feiertag')
+      .map(([key, label]) => ({
+        label: `${day.status === key && plain ? '✓ ' : ''}${label}`,
+        run: () => set(key),
+      })),
   ]);
 }
+
+/** Für den Notfall (nicht sichtbar): Kapsel 3 s drücken → jede Tagesart, auch Feiertag, je mit 8 Stunden und ohne,
+ *  auch an Sa/So. Der Tag gilt dann als von Hand gesetzt: kein automatischer Feiertag, keine Warnung, an Sa/So bleibt sie */
+function chooseStatusHold(el) {
+  const { s, dayIndex, day } = rowContext(el);
+  const full = Math.round(settings.hoursPerDay * 60);
+  const set = (status, credit) => {
+    if (status) day.status = status;
+    else delete day.status;
+    if (status) day.credit = credit;
+    else delete day.credit;
+    day.manual = true;
+    saveSheets(s);
+    refreshDay(dayIndex);
+  };
+  const cur = (status, credit) => (day.status || null) === status && (!status || dayCredit(day, dayIndex) === credit);
+  actionSheet([
+    { label: `${cur(null) ? '✓ ' : ''}Arbeit`, run: () => set(null) },
+    ...Object.entries(DAY_STATUS_SHORT).flatMap(([key, label]) =>
+      [full, 0].map((credit) => ({
+        label: `${cur(key, credit) ? '✓ ' : ''}${label} <span class="muted">· ${fmtH(credit)}</span>`,
+        run: () => set(key, credit),
+      }))
+    ),
+  ]);
+}
+
+// Tagesart-Kapsel 3 Sekunden drücken → Auswahl mit allen Tagesarten (chooseStatusHold); nichts davon sichtbar
+const STATUS_HOLD = 3000;
+let statusPress = null; // { el, x, y, timer }
+let statusPressDone = false;
+const statusPressEnd = () => {
+  if (!statusPress) return;
+  clearTimeout(statusPress.timer);
+  statusPress = null;
+};
+document.addEventListener('pointerdown', (e) => {
+  const el = e.target.closest?.('[data-hold="status"]');
+  if (!el || e.button > 0) return;
+  statusPressEnd();
+  statusPress = {
+    el,
+    x: e.clientX,
+    y: e.clientY,
+    timer: setTimeout(() => {
+      statusPress = null;
+      statusPressDone = true;
+      setTimeout(() => (statusPressDone = false), 800);
+      haptic();
+      chooseStatusHold(el);
+    }, STATUS_HOLD),
+  };
+});
+document.addEventListener('pointermove', (e) => {
+  if (statusPress && Math.hypot(e.clientX - statusPress.x, e.clientY - statusPress.y) > 10) statusPressEnd();
+});
+['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, statusPressEnd));
+window.addEventListener('scroll', statusPressEnd, { passive: true });
+// Nach dem langen Drücken nicht noch die normale Auswahl öffnen
+document.addEventListener('click', (e) => {
+  if (statusPressDone && e.target.closest?.('[data-hold="status"]')) (e.preventDefault(), e.stopPropagation());
+}, true);
+document.addEventListener('contextmenu', (e) => {
+  if (e.target.closest?.('[data-hold="status"]')) e.preventDefault();
+});
 
 function rowHTML(day, r) {
   const rowCount = day.rows.length;
