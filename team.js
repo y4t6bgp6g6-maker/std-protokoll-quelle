@@ -864,12 +864,15 @@ function renderTeamNav() {
   // gesperrt (ohne Konto): keine Knöpfe
   const on = !!(team && accountOk());
   const n = on ? teamUnread() : 0;
+  const pin = `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>`;
   nav.innerHTML =
     on && teamPinOpen
       ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
       : `${on && admin ? `<button class="nav-btn" data-team="fehler" aria-label="Fehlerberichte">${adminIcon()}</button>` : '<span class="nav-btn"></span>'}<span class="nav-title"></span>${
           on
-            ? `<span class="nav-actions"><button class="nav-btn tm-arena" data-team="arena" aria-label="Arena">${arenaIcon()}</button><button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button></span>`
+            ? ARENA_ON
+              ? `<span class="nav-actions"><button class="nav-btn tm-arena" data-team="arena" aria-label="Arena">${arenaIcon()}</button>${pin}</span>`
+              : pin
             : '<span class="nav-btn"></span>'
         }`;
   document.getElementById('team-title').textContent = on && teamPinOpen ? 'Teammeeting' : 'Team';

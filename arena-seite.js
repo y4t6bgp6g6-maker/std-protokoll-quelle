@@ -1,6 +1,10 @@
 // Arena: Live-Kampf in 3D für das Team (Knopf auf der Team-Seite neben dem Teammeeting).
 // Das Spiel selbst (arena/arena.js mit Three.js und Figur) lädt erst beim Öffnen.
 
+// Vorerst ausgeblendet (16.10.): kein Knopf auf der Team-Seite, #/arena führt zum Team. Server (Worker, Durable Object
+// ARENA, Bestenliste) läuft weiter – zum Wiedereinschalten nur hier true setzen.
+const ARENA_ON = false;
+
 let arenaStop = null;
 let arenaEl = null;
 
@@ -9,6 +13,10 @@ const arenaIcon = () => svg('<path d="M4 20l8.5-8.5M20 20l-8.5-8.5"/><path d="M5
 
 function arenaRoute(hash) {
   if (hash !== '#/arena') return false;
+  if (!ARENA_ON) {
+    location.replace('#/team');
+    return true;
+  }
   // nur im Team mit Konto
   if (!team || !accountOk()) {
     location.replace('#/team');
