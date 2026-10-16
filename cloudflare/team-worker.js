@@ -690,7 +690,9 @@ async function backupPut(db, req, h) {
 // Bestenliste (K.o. und Niederlagen je Konto, alle Zeiten) liegt in D1 (Tabelle arena_scores).
 // Nachrichten (JSON, t = Art). iPhone → Server: s (x, z, r Blickrichtung, m 0/1/2 Tempo, b Block), atk (k: jab | cross |
 // heavy, r), roll, emo. Server → iPhone: hi (id, r Radius, hp, players, lb), join, left, w (Stand aller, 15/s), atk, roll,
-// emo, hit (a, v, k, d Schaden, hp, b geblockt, px/pz Rückstoß), die (v, a, k, d), spawn, lb (Bestenliste), voll, raus
+// emo, hit (a, v, k, d Schaden, hp, b geblockt, px/pz Rückstoß), die (v, a, k, d), spawn, lb (Bestenliste), item (it: neuer
+// Erste-Hilfe-Koffer), take (id, by, hp), voll, raus. hi enthält auch items. Ist nur eine Person da, kämpft ein Bot mit
+// (bot: true in den Angaben, zählt nicht in der Bestenliste).
 
 const ARENA_R = 13; // Radius der Arena in Metern
 const ARENA_MAX = 12;
@@ -708,6 +710,13 @@ const ARENA_HITS = {
 const ARENA_ROLL = 450; // ms unverwundbar
 const ARENA_ROLL_CD = 900;
 const ARENA_LB = 10; // Plätze in der Bestenliste
+const ARENA_HEAL = 35; // Erste-Hilfe-Koffer
+const ARENA_ITEMS = 2; // höchstens so viele liegen gleichzeitig
+const ARENA_ITEM_GAP = 15000;
+const ARENA_BOT_SPEED = 2.6; // m/s
+const ARENA_BOT_DMG = 0.7; // der Bot schlägt etwas schwächer zu
+// Deckung in der Arena [x, z, Radius] – gleich wie OBST in arena/arena.js
+const ARENA_OBST = [[4.6, 4.6, 0.9], [-4.6, 4.6, 0.8], [-4.6, -4.6, 0.9], [4.6, -4.6, 0.8]];
 
 const arenaKey = (env) => crypto.subtle.importKey('raw', enc('arena|' + env.ADMIN_CODE), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
 /** Eintrittskarte für den WebSocket (Browser können dort keine Header setzen): Konto + Name, 2 min gültig */
@@ -731,8 +740,10 @@ export class Arena {
   constructor(state, env) {
     this.env = env;
     this.lb = null; // Konto → { name, k, d } (aus D1)
-    this.players = new Map(); // id → Spieler
+    this.players = new Map(); // id → Spieler (auch der Bot, ohne ws)
     this.scores = new Map(); // Konto → { k, d } (bleibt bei neuer Verbindung)
+    this.items = new Map(); // id → Erste-Hilfe-Koffer { id, x, z }
+    this.nextItem = 0;
     this.next = 1;
     this.timer = null;
   }
@@ -745,28 +756,88 @@ export class Arena {
     ws.accept();
     const user = req.headers.get('X-Arena-User') || '?';
     // dasselbe Konto ein zweites Mal (neu verbunden, zweites Gerät): die alte Verbindung gilt nicht mehr
-    for (const p of this.players.values()) if (p.user === user) this.drop(p, 'doppelt');
-    if (this.players.size >= ARENA_MAX) {
+    for (const p of [...this.players.values()]) if (p.user === user) this.drop(p, 'doppelt');
+    if (this.humans().length >= ARENA_MAX) {
       ws.send(JSON.stringify({ t: 'voll' }));
       ws.close(1013, 'voll');
       return new Response(null, { status: 101, webSocket: client });
     }
-    // Farbe: möglichst die eigene (aus dem Konto), sonst die nächste freie
-    const used = new Set([...this.players.values()].map((p) => p.color));
-    let color = [...user].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % ARENA_COLORS;
-    for (let i = 0; i < ARENA_COLORS && used.has(color); i++) color = (color + 1) % ARENA_COLORS;
-    const score = this.scores.get(user) || { k: 0, d: 0 };
-    this.scores.set(user, score);
-    const p = { id: this.next++, ws, user, name: (req.headers.get('X-Arena-Name') || user).slice(0, 24), color, score, x: 0, z: 0, r: 0, m: 0, b: 0, hp: ARENA_HP, dead: 0, roll: 0, cd: 0, seen: Date.now() };
-    this.place(p);
-    this.players.set(p.id, p);
+    const p = this.add({ ws, user, name: (req.headers.get('X-Arena-Name') || user).slice(0, 24), seen: Date.now() });
     ws.addEventListener('message', (e) => this.onMsg(p, e.data));
     ws.addEventListener('close', () => this.drop(p));
     ws.addEventListener('error', () => this.drop(p));
-    this.send(p, { t: 'hi', id: p.id, r: ARENA_R, hp: ARENA_HP, players: [...this.players.values()].map((q) => this.info(q)), lb: this.top() });
+    this.send(p, { t: 'hi', id: p.id, r: ARENA_R, hp: ARENA_HP, players: [...this.players.values()].map((q) => this.info(q)), lb: this.top(), items: [...this.items.values()] });
     this.all({ t: 'join', p: this.info(p) }, p);
+    this.botCheck();
     if (!this.timer) this.timer = setInterval(() => this.tick(), ARENA_TICK);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Spieler anlegen (Farbe: möglichst die eigene aus dem Konto, sonst die nächste freie) */
+  add(base) {
+    const used = new Set([...this.players.values()].map((p) => p.color));
+    let color = [...base.user].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % ARENA_COLORS;
+    for (let i = 0; i < ARENA_COLORS && used.has(color); i++) color = (color + 1) % ARENA_COLORS;
+    const score = this.scores.get(base.user) || { k: 0, d: 0 };
+    this.scores.set(base.user, score);
+    const p = { id: this.next++, color, score, x: 0, z: 0, r: 0, m: 0, b: 0, hp: ARENA_HP, dead: 0, roll: 0, cd: 0, ...base };
+    this.place(p);
+    this.players.set(p.id, p);
+    return p;
+  }
+  humans() {
+    return [...this.players.values()].filter((p) => !p.bot);
+  }
+
+  // ───── Trainings-Bot: nur, solange genau eine Person da ist ─────
+  botCheck() {
+    const bot = [...this.players.values()].find((p) => p.bot);
+    const n = this.humans().length;
+    if (n === 1 && !bot) {
+      const b = this.add({ bot: true, user: '~bot', name: 'Bot', next: 0, guard: 0 });
+      this.all({ t: 'join', p: this.info(b) });
+    } else if (n !== 1 && bot) this.drop(bot);
+  }
+  botStep(b, now, dt) {
+    if (b.dead) return;
+    const t = this.humans().find((q) => !q.dead);
+    if (!t) {
+      b.m = 0;
+      return;
+    }
+    const dx = t.x - b.x, dz = t.z - b.z, dist = Math.hypot(dx, dz);
+    b.r = Math.atan2(dx, dz);
+    b.m = 0;
+    b.b = now < b.guard ? 1 : 0;
+    if (now < b.cd) return;
+    if (dist > 1.5) {
+      const sp = (dist > 5 ? ARENA_BOT_SPEED * 1.4 : ARENA_BOT_SPEED) * dt;
+      b.x += (dx / dist) * sp;
+      b.z += (dz / dist) * sp;
+      b.m = dist > 5 ? 2 : 1;
+      this.collide(b);
+    } else if (now > b.next) {
+      // mal blocken, mal schlagen, selten der Hammer
+      const r = Math.random();
+      if (r < 0.25) b.guard = now + 900;
+      else this.attack(b, r > 0.85 ? 'heavy' : r > 0.55 ? 'cross' : 'jab', b.r, now);
+      b.next = now + 700 + Math.random() * 900;
+    }
+  }
+  /** nicht durch Deckung und Arenarand (für Bot und Koffer; die iPhones prüfen selbst) */
+  collide(p) {
+    for (const o of ARENA_OBST) {
+      const dx = p.x - o[0], dz = p.z - o[1], d = Math.hypot(dx, dz), min = o[2] + 0.4;
+      if (d < min && d > 0.001) {
+        p.x = o[0] + (dx / d) * min;
+        p.z = o[1] + (dz / d) * min;
+      }
+    }
+    const len = Math.hypot(p.x, p.z);
+    if (len > ARENA_R) {
+      p.x *= ARENA_R / len;
+      p.z *= ARENA_R / len;
+    }
   }
 
   async loadLb() {
@@ -780,8 +851,9 @@ export class Arena {
   top() {
     return [...this.lb.values()].sort((a, b) => b.k - a.k || a.d - b.d).slice(0, ARENA_LB).map((e) => [e.name, e.k, e.d]);
   }
-  /** K.o. dauerhaft zählen (Sieger +1 K.o., Verlierer +1 Niederlage) und allen die neue Liste schicken */
+  /** K.o. dauerhaft zählen (Sieger +1 K.o., Verlierer +1 Niederlage) und allen die neue Liste schicken; der Bot zählt nicht */
   record(win, lose) {
+    if (win.bot || lose.bot) return;
     const now = Date.now();
     const sql = 'INSERT INTO arena_scores (user, name, k, d, updated) VALUES (?, ?, ?, ?, ?) ' +
       'ON CONFLICT(user) DO UPDATE SET name = excluded.name, k = arena_scores.k + excluded.k, d = arena_scores.d + excluded.d, updated = excluded.updated';
@@ -800,9 +872,10 @@ export class Arena {
   }
 
   info(p) {
-    return { id: p.id, name: p.name, color: p.color, x: p.x, z: p.z, r: p.r, hp: p.hp, k: p.score.k, d: p.score.d, dead: !!p.dead };
+    return { id: p.id, name: p.name, color: p.color, x: p.x, z: p.z, r: p.r, hp: p.hp, k: p.score.k, d: p.score.d, dead: !!p.dead, bot: !!p.bot };
   }
   send(p, msg) {
+    if (p.bot) return;
     try {
       p.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
     } catch {
@@ -816,13 +889,17 @@ export class Arena {
   drop(p, why) {
     if (!this.players.has(p.id)) return;
     this.players.delete(p.id);
-    try {
-      if (why) p.ws.send(JSON.stringify({ t: 'raus', why }));
-      p.ws.close(1000, why || 'ende');
-    } catch {}
+    if (!p.bot)
+      try {
+        if (why) p.ws.send(JSON.stringify({ t: 'raus', why }));
+        p.ws.close(1000, why || 'ende');
+      } catch {}
     this.all({ t: 'left', id: p.id });
-    if (!this.players.size && this.timer) {
-      clearInterval(this.timer);
+    if (!p.bot) this.botCheck();
+    if (!this.humans().length) {
+      for (const b of [...this.players.values()]) this.players.delete(b.id);
+      this.items.clear();
+      if (this.timer) clearInterval(this.timer);
       this.timer = null;
     }
   }
@@ -832,7 +909,7 @@ export class Arena {
     let best = null;
     for (let i = 0; i < 10; i++) {
       const a = Math.random() * Math.PI * 2;
-      const c = { x: Math.sin(a) * ARENA_R * 0.7, z: Math.cos(a) * ARENA_R * 0.7, r: a + Math.PI };
+      const c = { x: Math.sin(a) * ARENA_R * 0.72, z: Math.cos(a) * ARENA_R * 0.72, r: a + Math.PI };
       c.min = Math.min(99, ...[...this.players.values()].filter((q) => q !== p).map((q) => Math.hypot(q.x - c.x, q.z - c.z)));
       if (!best || c.min > best.min) best = c;
     }
@@ -859,13 +936,9 @@ export class Arena {
       p.r = Number.isFinite(+d.r) ? +d.r : p.r;
       p.m = Math.max(0, Math.min(2, +d.m || 0));
       p.b = d.b ? 1 : 0;
+      this.pickup(p);
     } else if (d.t === 'atk') {
-      const hit = ARENA_HITS[d.k];
-      if (!hit || p.dead || now < p.cd || now < p.roll) return;
-      p.cd = now + hit.cd;
-      if (Number.isFinite(+d.r)) p.r = +d.r;
-      this.all({ t: 'atk', id: p.id, k: d.k }, p);
-      setTimeout(() => this.resolve(p, d.k, hit), hit.delay);
+      this.attack(p, d.k, +d.r, now);
     } else if (d.t === 'roll') {
       if (p.dead || now < p.cd) return;
       p.roll = now + ARENA_ROLL;
@@ -876,12 +949,34 @@ export class Arena {
     }
   }
 
+  attack(p, kind, r, now) {
+    const hit = ARENA_HITS[kind];
+    if (!hit || p.dead || now < p.cd || now < p.roll) return;
+    p.cd = now + hit.cd;
+    if (Number.isFinite(r)) p.r = r;
+    this.all({ t: 'atk', id: p.id, k: kind }, p);
+    setTimeout(() => this.resolve(p, kind, hit), hit.delay);
+  }
+
+  /** Erste-Hilfe-Koffer aufheben (nur mit weniger als vollem Leben) */
+  pickup(p) {
+    if (p.hp >= ARENA_HP) return;
+    for (const it of this.items.values()) {
+      if (Math.hypot(it.x - p.x, it.z - p.z) > 1) continue;
+      this.items.delete(it.id);
+      p.hp = Math.min(ARENA_HP, p.hp + ARENA_HEAL);
+      this.nextItem = Math.max(this.nextItem, Date.now() + ARENA_ITEM_GAP);
+      this.all({ t: 'take', id: it.id, by: p.id, hp: p.hp });
+      return;
+    }
+  }
+
   /** Treffer prüfen, wenn der Schlag ankommt: alle in Reichweite vor dem Angreifer */
   resolve(p, kind, hit) {
     if (!this.players.has(p.id) || p.dead) return;
     const now = Date.now();
     const fx = Math.sin(p.r), fz = Math.cos(p.r);
-    for (const q of this.players.values()) {
+    for (const q of [...this.players.values()]) {
       if (q === p || q.dead || now < q.roll) continue;
       const dx = q.x - p.x, dz = q.z - p.z, dist = Math.hypot(dx, dz);
       // etwas großzügiger als die Animation (Verzögerung im Netz)
@@ -889,10 +984,16 @@ export class Arena {
       // Block hilft nur, wenn man dem Angreifer zugewandt ist; der schwere Schlag bricht ihn
       const facing = dist < 0.01 || -(dx * Math.sin(q.r) + dz * Math.cos(q.r)) / dist > 0.2;
       const blocked = !!(q.b && facing);
-      const dmg = Math.round(hit.dmg * (blocked ? (kind === 'heavy' ? 0.5 : 0.15) : 1));
+      const dmg = Math.round(hit.dmg * (blocked ? (kind === 'heavy' ? 0.5 : 0.15) : 1) * (p.bot ? ARENA_BOT_DMG : 1));
       q.hp = Math.max(0, q.hp - dmg);
       const nx = dist > 0.01 ? dx / dist : fx, nz = dist > 0.01 ? dz / dist : fz;
       const push = hit.push * (blocked ? 0.4 : 1);
+      if (q.bot) {
+        q.x += nx * push * 0.25;
+        q.z += nz * push * 0.25;
+        this.collide(q);
+        q.cd = Math.max(q.cd, now + 350); // kurz benommen
+      }
       this.all({ t: 'hit', a: p.id, v: q.id, k: kind, d: dmg, hp: q.hp, b: blocked ? 1 : 0, px: +(nx * push).toFixed(2), pz: +(nz * push).toFixed(2) });
       if (!q.hp) {
         q.dead = now;
@@ -912,8 +1013,22 @@ export class Arena {
 
   tick() {
     const now = Date.now();
-    for (const p of [...this.players.values()]) if (now - p.seen > ARENA_IDLE) this.drop(p, 'weg');
+    for (const p of [...this.players.values()]) if (!p.bot && now - p.seen > ARENA_IDLE) this.drop(p, 'weg');
     if (!this.players.size) return;
+    for (const p of this.players.values()) if (p.bot) this.botStep(p, now, ARENA_TICK / 1000);
+    // neuer Koffer an einer freien Stelle
+    if (this.items.size < ARENA_ITEMS && now > this.nextItem) {
+      const it = { id: this.next++, x: 0, z: 0 };
+      for (let i = 0; i < 20; i++) {
+        const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * (ARENA_R - 4);
+        it.x = +(Math.sin(a) * r).toFixed(2);
+        it.z = +(Math.cos(a) * r).toFixed(2);
+        if (ARENA_OBST.every((o) => Math.hypot(o[0] - it.x, o[1] - it.z) > o[2] + 1.2)) break;
+      }
+      this.items.set(it.id, it);
+      this.nextItem = now + ARENA_ITEM_GAP;
+      this.all({ t: 'item', it });
+    }
     const r2 = (v) => Math.round(v * 100) / 100;
     this.all({ t: 'w', s: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.z), r2(p.r), p.m, p.b, p.hp]) });
   }

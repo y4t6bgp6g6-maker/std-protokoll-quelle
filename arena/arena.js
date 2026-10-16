@@ -16,6 +16,9 @@ const ROLL_TIME = 0.5;
 const BODY_R = 0.42; // Abstand zwischen zwei Figuren (Hälfte)
 const SEND_GAP = 0.066;
 const INTERP = 0.11; // Kollegen etwas verzögert zeigen, dafür flüssig
+// Deckung in der Arena [x, z, Radius] – gleich wie ARENA_OBST im Team-Worker
+const OBST = [[4.6, 4.6, 0.9], [-4.6, 4.6, 0.8], [-4.6, -4.6, 0.9], [4.6, -4.6, 0.8]];
+const HFOV = 72; // höchstens so viel Blickwinkel in der Breite (Grad), sonst wirkt quer alles verzerrt
 // Animationen: Name im Modell, Geschwindigkeit, nach wie vielen Sekunden (bei Geschwindigkeit 1) man wieder frei ist
 const ONE = {
   jab: { clip: 'Punch_Jab', ts: 1.7, free: 0.5 },
@@ -57,6 +60,18 @@ function sound(kind, vol = 1) {
     src.connect(f).connect(g);
     g.gain.value = (kind === 'whoosh' ? 0.12 : 0.5) * vol;
     src.start(t);
+  }
+  if (kind === 'heal') {
+    [660, 880].forEach((f, i) => {
+      const o = audio.createOscillator(), og = audio.createGain();
+      o.frequency.value = f;
+      og.gain.setValueAtTime(0.0001, t + i * 0.09);
+      og.gain.exponentialRampToValueAtTime(0.25, t + i * 0.09 + 0.02);
+      og.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.09 + 0.25);
+      o.connect(og).connect(audio.destination);
+      o.start(t + i * 0.09);
+      o.stop(t + i * 0.09 + 0.3);
+    });
   }
   if (kind === 'hit' || kind === 'block' || kind === 'ko') {
     const o = audio.createOscillator();
@@ -309,7 +324,86 @@ function buildWorld(scene, R) {
     lamp.lookAt(0, 0, 0);
     scene.add(lamp);
   }
+  // Deckung: Kabeltrommeln und Kistenstapel
+  const drumSide = canvasTex(256, (c, s) => {
+    c.fillStyle = '#9c7446';
+    c.fillRect(0, 0, s, s);
+    for (let y = 0; y < s; y += 4) {
+      c.fillStyle = `rgba(60,35,10,${Math.random() * 0.3})`;
+      c.fillRect(0, y, s, 2);
+    }
+    c.fillStyle = '#2b2b2b';
+    for (let x = 0; x < s; x += 9) c.fillRect(x, s * 0.2, 6, s * 0.6);
+  });
+  const crate = canvasTex(256, (c, s) => {
+    c.fillStyle = '#b8925d';
+    c.fillRect(0, 0, s, s);
+    for (let y = 0; y < s; y += 32) {
+      c.fillStyle = 'rgba(70,45,15,0.5)';
+      c.fillRect(0, y, s, 2);
+      for (let i = 0; i < 40; i++) {
+        c.fillStyle = `rgba(80,50,20,${Math.random() * 0.2})`;
+        c.fillRect(Math.random() * s, y + Math.random() * 30, 20 + Math.random() * 40, 1);
+      }
+    }
+    c.strokeStyle = '#6d4c26';
+    c.lineWidth = 14;
+    c.strokeRect(7, 7, s - 14, s - 14);
+    c.beginPath();
+    c.moveTo(10, 10);
+    c.lineTo(s - 10, s - 10);
+    c.stroke();
+  });
+  OBST.forEach(([x, z, r], i) => {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = i * 0.9;
+    if (i % 2 === 0) {
+      const side = new THREE.MeshStandardMaterial({ color: '#7d5a33', roughness: 0.9 });
+      const drum = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.12, 28), side);
+      const core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.55, r * 0.55, 0.9, 20), new THREE.MeshStandardMaterial({ map: drumSide, roughness: 0.85 }));
+      core.position.y = 0.55;
+      const top = drum.clone();
+      drum.position.y = 0.06;
+      top.position.y = 1.04;
+      g.add(drum, core, top);
+    } else {
+      const mat = new THREE.MeshStandardMaterial({ map: crate, roughness: 0.85 });
+      const a = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.1, 1.1), mat);
+      a.position.set(0, 0.55, 0);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), mat);
+      b.position.set(0.1, 1.5, -0.05);
+      b.rotation.y = 0.4;
+      g.add(a, b);
+    }
+    g.traverse((o) => (o.castShadow = o.receiveShadow = true));
+    scene.add(g);
+  });
   return sun;
+}
+
+/** Erste-Hilfe-Koffer (schwebt und dreht sich) */
+function kitMesh() {
+  const tex = canvasTex(128, (c, s) => {
+    c.fillStyle = '#f4f4f2';
+    c.fillRect(0, 0, s, s);
+    c.fillStyle = '#d8312b';
+    c.fillRect(s * 0.4, s * 0.18, s * 0.2, s * 0.64);
+    c.fillRect(s * 0.18, s * 0.4, s * 0.64, s * 0.2);
+  });
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.36, 0.22), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.4, emissive: '#ffffff', emissiveIntensity: 0.15 }));
+  box.castShadow = true;
+  const grip = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.02, 6, 12, Math.PI), new THREE.MeshStandardMaterial({ color: '#333' }));
+  grip.position.y = 0.18;
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 32), new THREE.MeshBasicMaterial({ color: '#7dffa0', transparent: true, opacity: 0.45, depthWrite: false }));
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.02;
+  const top = new THREE.Group();
+  top.add(box, grip);
+  const g = new THREE.Group();
+  g.add(top, ring);
+  g.userData = { box: top, ring };
+  return g;
 }
 
 // ───────── Figuren ─────────
@@ -535,7 +629,7 @@ export async function start(el, api) {
   });
 
   // ───── Grafik ─────
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: devicePixelRatio < 2, powerPreference: 'high-performance' });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -543,12 +637,19 @@ export async function start(el, api) {
   renderer.toneMappingExposure = 1.05;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 400);
+  // Größe in jedem Bild prüfen: iOS meldet resize beim Drehen/Öffnen teils, bevor die neue Größe gilt
+  let size = '';
+  let camDist = 6;
   const resize = () => {
     const w = el.clientWidth, h = el.clientHeight;
+    if (!w || !h || size === w + 'x' + h) return;
+    size = w + 'x' + h;
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    // hochkant: etwas weiter weg und breiter, damit man genug sieht
-    camera.fov = w < h ? 62 : 50;
+    // quer: Blickwinkel in der Breite begrenzen (sonst Weitwinkel-Verzerrung am Rand), dafür etwas weiter weg
+    const rad = Math.PI / 180;
+    camera.fov = Math.min(58, (2 * Math.atan(Math.tan((HFOV / 2) * rad) / camera.aspect)) / rad);
+    camDist = 6.4 * Math.pow(Math.tan(29 * rad) / Math.tan((camera.fov / 2) * rad), 0.3);
     camera.updateProjectionMatrix();
   };
   resize();
@@ -587,6 +688,16 @@ export async function start(el, api) {
     f.remove(scene);
     st.fighters.delete(id);
     updateHud();
+  }
+
+  const items = new Map();
+  function addItem(it) {
+    if (items.has(it.id)) return;
+    const k = kitMesh();
+    k.position.set(it.x, 0, it.z);
+    k.userData.kid = it.id;
+    scene.add(k);
+    items.set(it.id, k);
   }
 
   // ───── HUD ─────
@@ -665,6 +776,8 @@ export async function start(el, api) {
       if (st.ws !== ws) return;
       st.ws = null;
       for (const id of [...st.fighters.keys()]) dropFighter(id);
+      for (const k of items.values()) scene.remove(k);
+      items.clear();
       if (!st.alive || st.status === 'raus') return;
       // kurz weg (Funkloch): von selbst neu verbinden, dann mit Knopf
       if (st.retry++ < 3) setTimeout(connect, 1000 * st.retry);
@@ -682,6 +795,7 @@ export async function start(el, api) {
         st.status = 'on';
         st.lb = d.lb || [];
         for (const p of d.players) addFighter(p);
+        for (const it of d.items || []) addItem(it);
         st.camYaw = me().yaw;
         msg('');
         break;
@@ -713,6 +827,23 @@ export async function start(el, api) {
         }
         updateHud();
         break;
+      case 'item':
+        addItem(d.it);
+        break;
+      case 'take': {
+        const it = items.get(d.id), by = st.fighters.get(d.by);
+        if (it) {
+          scene.remove(it);
+          items.delete(d.id);
+        }
+        if (by) {
+          by.hp = d.hp;
+          popNumber(by, '+35', 'heal');
+          if (by.me) sound('heal');
+        }
+        updateHud();
+        break;
+      }
       case 'lb':
         st.lb = d.lb;
         updateHud();
@@ -954,6 +1085,7 @@ export async function start(el, api) {
     raf = requestAnimationFrame(frame);
     const dt = Math.min(clock.getDelta(), 0.05);
     st.t += dt;
+    resize();
     const m = me();
     if (m && !m.dead) {
       m.block = st.blockHeld && st.roll <= 0 && st.t >= m.busy;
@@ -974,6 +1106,9 @@ export async function start(el, api) {
         if (st.t >= m.busy && !m.block) m.yaw += angDiff(Math.atan2(mv.x, mv.y), m.yaw) * Math.min(1, dt * 14);
         m.m = st.t < m.busy ? 0 : sprint ? 2 : 1;
         m.dance = false;
+        // Kamera dreht beim Laufen langsam hinter die Figur (nicht beim Laufen auf die Kamera zu)
+        const off = angDiff(m.yaw, st.camYaw);
+        if (!camTouch && Math.abs(off) < 2.2) st.camYaw += off * Math.min(1, dt * 1.6 * amt);
       } else m.m = 0;
       // Rückstoß
       m.pos.x += m.push.x * dt;
@@ -986,6 +1121,13 @@ export async function start(el, api) {
         if (d < BODY_R * 2 && d > 0.001) {
           m.pos.x += (dx / d) * (BODY_R * 2 - d);
           m.pos.z += (dz / d) * (BODY_R * 2 - d);
+        }
+      }
+      for (const [ox, oz, or] of OBST) {
+        const dx = m.pos.x - ox, dz = m.pos.z - oz, d = Math.hypot(dx, dz), min = or + 0.38;
+        if (d < min && d > 0.001) {
+          m.pos.x = ox + (dx / d) * min;
+          m.pos.z = oz + (dz / d) * min;
         }
       }
       const len = Math.hypot(m.pos.x, m.pos.z);
@@ -1022,12 +1164,12 @@ export async function start(el, api) {
     }
     // Kamera hinter der eigenen Figur
     const focus = m ? m.pos : tmp.set(0, 0, 0);
-    const dist = camera.aspect < 1 ? 6.8 : 5.6;
-    const want = new THREE.Vector3(
-      focus.x - Math.sin(st.camYaw) * dist * Math.cos(st.camPitch),
-      1.2 + Math.sin(st.camPitch) * dist + 0.6,
-      focus.z - Math.cos(st.camYaw) * dist * Math.cos(st.camPitch)
-    );
+    // nicht hinter den Bauzaun: am Rand näher heran (und dafür etwas höher)
+    let dist = camDist;
+    const bx = -Math.sin(st.camYaw) * Math.cos(st.camPitch), bz = -Math.cos(st.camYaw) * Math.cos(st.camPitch);
+    const lim = st.R + 1.6;
+    while (dist > 2.6 && Math.hypot(focus.x + bx * dist, focus.z + bz * dist) > lim) dist -= 0.1;
+    const want = new THREE.Vector3(focus.x + bx * dist, 1.8 + Math.sin(st.camPitch) * dist + (camDist - dist) * 0.1, focus.z + bz * dist);
     camPos.lerp(want, Math.min(1, dt * 10));
     camera.position.copy(camPos);
     if (st.shake > 0) {
@@ -1039,6 +1181,12 @@ export async function start(el, api) {
     sun.position.set(focus.x + 12, 22, focus.z + 8);
     sun.target.position.set(focus.x, 0, focus.z);
     sun.target.updateMatrixWorld();
+    // Koffer schweben und drehen sich
+    for (const it of items.values()) {
+      it.userData.box.position.y = 0.55 + Math.sin(st.t * 2.4 + it.userData.kid) * 0.08;
+      it.userData.box.rotation.y = st.t * 1.5;
+      it.userData.ring.material.opacity = 0.3 + Math.sin(st.t * 3) * 0.15;
+    }
     // Funken
     for (let i = sparks.length - 1; i >= 0; i--) {
       const s = sparks[i], age = st.t - s.t;
