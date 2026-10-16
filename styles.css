@@ -943,7 +943,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 }
 .chip:active { background: color-mix(in srgb, var(--accent) 15%, var(--card)); }
 :root[data-theme='dark'] .suggest-grid {
-  background: color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--bg) 45%, transparent);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.14);
 }
 :root[data-theme='dark'] .chip { background: color-mix(in srgb, var(--text) 10%, var(--card)); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12); }
