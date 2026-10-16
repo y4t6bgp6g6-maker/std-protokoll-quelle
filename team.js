@@ -286,6 +286,9 @@ function teamQueueUpload(delay = 3000) {
   teamUploadTimer = setTimeout(teamUpload, delay);
 }
 async function teamUpload() {
+  // app.js (settings, Zettel) ist beim ersten Start nach einem Update teils noch nicht geladen, wenn die
+  // Zeitgeber aus team.js schon ablaufen (langsames Netz): dann etwas später noch einmal
+  if (typeof settings === 'undefined') return teamQueueUpload(1000);
   if (!team || !TEAM_URL || teamUploading || !navigator.onLine || accountRestorePending()) return;
   const payload = teamPayload();
   const text = JSON.stringify(payload);
