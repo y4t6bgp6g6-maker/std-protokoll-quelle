@@ -3,7 +3,8 @@
 // ob der Code ein Admin-Code ist. Nur dann zeigt die Team-Seite oben links ein Symbol zur Seite #/fehler.
 // Ohne Admin-Code (Secret ADMIN_CODE im Worker) liefert der Server nichts; nur angemeldete Geräte bekommen Mitteilungen.
 //
-// Eigener Speicher (nicht in der Sicherung): { code, push } – push: dieses Gerät ist für Mitteilungen angemeldet
+// Eigener Speicher (nicht in der Sicherung): { code, push, dictIgnore } – push: dieses Gerät ist für Mitteilungen angemeldet;
+// dictIgnore: verworfene Wörterbuch-Vorschläge (Schlüssel)
 
 const ADMIN_KEY = 'stdprotokoll.admin.v1';
 /** Öffentlicher VAPID-Schlüssel (der private liegt als Secret VAPID_JWK im Worker) */
@@ -122,7 +123,6 @@ function renderFehler(full = false) {
     ${adminServerHTML()}
     ${adminStorageHTML(adminStorage)}
     ${adminUsageHTML(adminUsage)}
-    ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
     ${adminCodeHTML(adminCode)}
     ${adminOpenHTML(adminOpen)}
@@ -133,7 +133,8 @@ function renderFehler(full = false) {
       <span>Mitteilungen</span>
       <input type="checkbox" class="toggle" data-fb-push ${push ? 'checked' : ''} ${adminBusy ? 'disabled' : ''}>
     </label>
-    ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}`;
+    ${adminPushPossible() ? '' : '<p class="footnote">Mitteilungen nur in der App vom Home-Bildschirm.</p>'}
+    ${adminDictHTML(adminDict)}`;
   if (body) body.innerHTML = html;
   else app.innerHTML = `${nav}<div id="fb-body">${html}</div>`;
 }
@@ -338,7 +339,175 @@ function adminDictHTML(dict) {
       <div class="fb-store-h"><span>Wörterbuch</span><span class="muted">${dict.length}</span></div>
       <form class="fb-dict-add" data-fb-form="dict"><input data-fb-word placeholder="Richtige Schreibweise" maxlength="80" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"><button class="fb-dict-btn" aria-label="Hinzufügen">${ICON.plus}</button></form>
       ${dict.length ? `<div class="fb-chips">${dict.map((w) => `<span class="fb-chip">${escapeHtml(w)}<button data-fb="dict-del" data-word="${escapeHtml(w)}" aria-label="Löschen">${ICON.close}</button></span>`).join('')}</div>` : ''}
+      ${adminDictSuggestHTML()}
     </div>`;
+}
+
+// ───────── Vorschläge fürs Wörterbuch aus den Zetteln auf dem Server ─────────
+
+/** Wie dictKey im Worker: nur Buchstaben und Ziffern, klein, ohne Akzente */
+const adminDictKey = (s) =>
+  String(s ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+/** Abstand wie im Worker (ohne Vertauschen), damit nur vorgeschlagen wird, was das Wörterbuch dort auch ersetzt */
+function adminDictDistance(a, b) {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const t = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = t;
+    }
+  }
+  return row[b.length];
+}
+/** Gleiche Regel wie dictFuzzy im Worker: ab 6 Buchstaben, erster Buchstabe und Ziffern gleich, ein Tippfehler (ab 12 zwei) */
+function adminDictNear(a, b) {
+  if (a.length < 6 || b.length < 6 || a[0] !== b[0] || a.replace(/\D/g, '') !== b.replace(/\D/g, '')) return false;
+  const max = Math.min(a.length, b.length) >= 12 ? 2 : 1;
+  return Math.abs(a.length - b.length) <= max && adminDictDistance(a, b) <= max;
+}
+
+/** Schreibweisen aus den Zetteln (laufender Monat und Vormonat), die sich nur in Groß-/Kleinschreibung, Satzzeichen
+ *  oder einem Tippfehler unterscheiden. Vorschlag = die Schreibweise, die die meisten Personen benutzen (dann die
+ *  häufigste). Baustellen als Ganzes (bis 4 Wörter), Arbeiten Wort für Wort. Ohne, was schon im Wörterbuch steht
+ *  oder verworfen wurde, und ohne Schreibweisen, die die KI-Prüfung schon richtig korrigiert (dieselbe Prüfung wie bei
+ *  den Kollegen, Ergebnis gemerkt in aiStore; ungeprüfte werden nachgefragt, bis dahin fehlt der Vorschlag).
+ *  → [{ word, others: [Schreibweisen], n }] */
+const adminAiAsking = new Set();
+/** Ohne Antwort der KI (Kontingent, Fehler): bis zum nächsten Start nicht neu fragen */
+const adminAiNoAnswer = new Set();
+function adminDictSuggest() {
+  const c = team && team.cache;
+  if (!c) return [];
+  const forms = new Map(); // Schreibweise → { key, n, who }
+  const add = (text, who) => {
+    const t = String(text || '').replace(/\s+/g, ' ').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    const key = adminDictKey(t);
+    if (key.length < 6 || !/\p{L}/u.test(key)) return;
+    const f = forms.get(t) || { key, n: 0, who: new Set() };
+    f.n++;
+    f.who.add(who);
+    forms.set(t, f);
+  };
+  for (const m of [...(c.members || []), ...(c.prevMembers || [])])
+    for (const s of m.sheets || [])
+      for (const d of s.days || [])
+        for (const r of d.rows || []) {
+          if (r.site && r.site.trim().split(/\s+/).length <= 4) add(r.site, m.member);
+          for (const w of String(r.work || '').split(/[\s,;:/()+&]+/)) add(w, m.member);
+        }
+  // Schreibweisen zu Gruppen verbinden (gleicher Schlüssel oder ein Tippfehler)
+  const list = [...forms.entries()].map(([word, f]) => ({ word, ...f }));
+  const keys = [...new Set(list.map((f) => f.key))];
+  const parent = new Map(keys.map((k) => [k, k]));
+  const root = (k) => (parent.get(k) === k ? k : root(parent.get(k)));
+  for (let i = 0; i < keys.length; i++)
+    for (let j = i + 1; j < keys.length; j++) if (adminDictNear(keys[i], keys[j])) parent.set(root(keys[i]), root(keys[j]));
+  const groups = new Map();
+  for (const f of list) {
+    const g = groups.get(root(f.key)) || [];
+    g.push(f);
+    groups.set(root(f.key), g);
+  }
+  const known = new Set([...(adminDict || []), ...((admin && admin.dictIgnore) || [])].map(adminDictKey));
+  const people = (f) => f.who.size;
+  const cand = [...groups.values()]
+    .filter((g) => g.length >= 2 && !g.some((f) => known.has(f.key)))
+    .map((g) => g.sort((a, b) => people(b) - people(a) || b.n - a.n || a.word.localeCompare(b.word)))
+    .map((g) => ({ word: g[0].word, others: g.slice(1).map((f) => f.word), n: g.reduce((x, f) => x + f.n, 0) }))
+    .sort((a, b) => b.n - a.n);
+  const ai = typeof aiStore !== 'undefined' && aiReady();
+  const ask = [];
+  const out = [];
+  for (const x of cand) {
+    if (out.length >= 8) break;
+    if (ai) {
+      const open = x.others.filter((w) => !(aiNorm(w) in aiStore.spell) && !adminAiAsking.has(aiNorm(w)) && !adminAiNoAnswer.has(aiNorm(w)));
+      if (open.length) {
+        // erst die KI fragen (höchstens 20 je Anfrage), danach neu zeichnen
+        if (ask.length + open.length <= 20) ask.push(...open);
+        continue;
+      }
+      if (x.others.some((w) => adminAiAsking.has(aiNorm(w)))) continue;
+      // Ohne Antwort der KI (Kontingent, Fehler) bleibt die Schreibweise drin
+      x.others = x.others.filter((w) => {
+        const fixed = aiStore.spell[aiNorm(w)];
+        return fixed == null || adminDictKey(fixed) !== adminDictKey(x.word);
+      });
+      if (!x.others.length) continue;
+    }
+    out.push(x);
+  }
+  if (ask.length) {
+    const items = ask.map(aiNorm);
+    items.forEach((t) => adminAiAsking.add(t));
+    aiSpellCheck(items).finally(() => {
+      // nicht beantwortet: nur hier merken (nicht in aiStore, das gilt auch für die eigenen Einträge)
+      for (const t of items) {
+        adminAiAsking.delete(t);
+        if (!(t in aiStore.spell)) adminAiNoAnswer.add(t);
+      }
+      if (currentView === 'fehler' && admin) renderFehler();
+    });
+  }
+  return out;
+}
+
+function adminDictSuggestHTML() {
+  const list = adminDictSuggest();
+  if (!list.length) return '';
+  return `<div class="fb-sugg-h">Vorschläge</div>
+    ${list
+      .map(
+        (x) => `<div class="fb-sugg"><span class="fb-sugg-t" data-fb="dict-edit" data-word="${escapeHtml(x.word)}"><b translate="no">${escapeHtml(x.word)}</b> <span class="muted">statt</span> <span class="muted" translate="no">${escapeHtml(x.others.join(', '))}</span></span>
+          <button data-fb="dict-ignore" data-word="${escapeHtml(x.word)}" aria-label="Verwerfen">${ICON.close}</button>
+          <button class="fb-sugg-add" data-fb="dict-take" data-word="${escapeHtml(x.word)}" aria-label="Hinzufügen">${ICON.plus}</button></div>`
+      )
+      .join('')}`;
+}
+
+/** Vorschlag vor dem Übernehmen anpassen (Antippen auf den Text) */
+function adminDictEdit(word) {
+  if (adminBusy) return;
+  const modal = openModal(
+    `<div class="alert-body"><b>Ins Wörterbuch</b>
+      <input class="pw-input" data-fb-edit maxlength="80" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
+    </div>
+    <div class="alert-buttons"><button data-c="no">Abbrechen</button><button data-c="yes" class="strong">Hinzufügen</button></div>`,
+    'alert'
+  );
+  const input = modal.querySelector('[data-fb-edit]');
+  input.value = word;
+  const send = () => {
+    const w = input.value.replace(/\s+/g, ' ').trim();
+    if (!w) return;
+    closeModal();
+    // anders geschrieben als vorgeschlagen: der Vorschlag ist damit erledigt
+    if (adminDictKey(w) !== adminDictKey(word)) adminDictIgnore(word);
+    adminDictChange('PUT', w);
+  };
+  modal.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-c]');
+    if (!b) return;
+    if (b.dataset.c === 'no') closeModal();
+    else send();
+  });
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && send());
+  setTimeout(() => input.focus(), 50);
+}
+
+/** Vorschlag verwerfen: wird auf diesem Gerät gemerkt (Schlüssel), kommt nicht wieder */
+function adminDictIgnore(word) {
+  if (!admin) return;
+  admin.dictIgnore = [...new Set([...(admin.dictIgnore || []), adminDictKey(word)])].slice(-300);
+  saveAdmin();
+  renderFehler();
 }
 
 async function adminDictChange(method, word) {
@@ -461,6 +630,15 @@ document.addEventListener('click', (e) => {
   switch (el.dataset.fb) {
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
+      break;
+    case 'dict-take':
+      adminDictChange('PUT', el.dataset.word);
+      break;
+    case 'dict-edit':
+      adminDictEdit(el.dataset.word);
+      break;
+    case 'dict-ignore':
+      adminDictIgnore(el.dataset.word);
       break;
     case 'code':
       adminCodeChange();

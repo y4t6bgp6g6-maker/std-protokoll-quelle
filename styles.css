@@ -1968,6 +1968,13 @@ a.s-row:active { background: var(--fill); }
 .fb-chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 6px 6px 12px; border-radius: 16px; background: var(--fill); font-size: 15px; }
 .fb-chip button { display: grid; place-items: center; width: 22px; height: 22px; color: var(--muted); }
 .fb-chip button svg { width: 13px; height: 13px; }
+.fb-sugg-h { margin-top: 14px; font-size: 13px; color: var(--muted); }
+.fb-sugg { display: flex; align-items: center; gap: 6px; padding: 8px 0; border-top: 0.5px solid var(--sep); }
+.fb-sugg-h + .fb-sugg { border-top: 0; }
+.fb-sugg-t { flex: 1; min-width: 0; cursor: pointer; font-size: 15px; overflow-wrap: anywhere; }
+.fb-sugg button { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 16px; color: var(--muted); }
+.fb-sugg button svg { width: 14px; height: 14px; }
+.fb-sugg .fb-sugg-add { background: var(--accent-fill); color: #fff; }
 
 /* Team im Zettel: Kapsel je Tag und Fenster mit den Einträgen der Kollegen */
 .tm-chip svg { width: 17px; height: 17px; }
