@@ -81,6 +81,8 @@ async function accountLink() {
     }
     if (accountRestorePending()) accountOfferRestore(out.backups);
     else teamQueueUpload(0);
+    // Lesen geht erst mit bestätigtem Konto
+    teamLoad();
   } catch (e) {
     if (e.status === 401) leaveTeamLocal('Team-Code ungültig');
     else if (e.status) {
@@ -211,7 +213,7 @@ async function accountBackup(force = false) {
     if (!data.startsWith('{"app":"std-protokoll","enc"')) throw new Error('plain');
     const res = await fetch(TEAM_URL + '/backup', {
       method: 'PUT',
-      headers: { 'X-Team-Code': team.code, 'X-User': account.user, 'X-Auth': account.auth, 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'X-Team-Code': team.code, 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth, 'Content-Type': 'text/plain;charset=utf-8' },
       body: data,
       cache: 'no-store',
     });

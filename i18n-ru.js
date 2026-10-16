@@ -288,6 +288,9 @@ if (LANG === 'ru') {
       Server: 'Сервер', Antwortzeit: 'Время ответа', Speicher: 'Память', Fehlerberichte: 'Отчёты об ошибках', 'Keine Fehler': 'Ошибок нет',
       Codestelle: 'Место в коде', Datenbank: 'База данных', Wörterbuch: 'Словарь', 'Richtige Schreibweise': 'Правильное написание',
       Anfragen: 'Запросы', Gelesen: 'Прочитано', Geschrieben: 'Записано', KI: 'ИИ', 'Löschung am': 'Удаление',
+      'Team-Code': 'Код команды', 'Neuer Team-Code': 'Новый код команды', 
+      'Alle müssen danach den neuen Code eingeben.': 'Потом всем нужно ввести новый код.', 'Mindestens 6 Zeichen, ohne Leerzeichen': 'Минимум 6 символов, без пробелов',
+      'Das ist der Admin-Code': 'Это код администратора', Ändern: 'Изменить',
     },
 
     patterns: [

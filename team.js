@@ -27,7 +27,12 @@ const teamMonth = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1
 async function teamRequest(method, path, body, code = team && team.code) {
   const res = await fetch(TEAM_URL + path, {
     method,
-    headers: { 'X-Team-Code': code, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    // mit Konto immer dabei (Lesen verlangt es); Name kodiert, Header erlauben keine kyrillischen Buchstaben
+    headers: {
+      'X-Team-Code': code,
+      ...(account && account.auth ? { 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
     cache: 'no-store',
   });
@@ -428,7 +433,8 @@ function teamClean(members) {
 }
 
 async function teamLoad() {
-  if (!team || !TEAM_URL || teamLoading) return;
+  // Lesen nur mit Konto (Server prüft); ohne bestätigtes Konto nicht fragen, sonst zählen Fehlversuche bis zur Sperre
+  if (!team || !TEAM_URL || teamLoading || !accountOk()) return;
   teamLoading = true;
   const before = teamDrawnKey();
   try {
@@ -457,6 +463,13 @@ async function teamLoad() {
     if (e.status === 401) {
       leaveTeamLocal('Team-Code ungültig');
       return;
+    }
+    // Passwort anderswo geändert oder Konto gelöscht: neu anmelden (Team-Seite zeigt „Erst anmelden“)
+    if (account && ['auth', 'unknown', 'konto'].includes(e.message)) {
+      account.ok = false;
+      account.error = accountError(e);
+      saveAccount();
+      accountRerender();
     }
     teamData = { ...(team.cache || { members: [] }), offline: true };
   } finally {

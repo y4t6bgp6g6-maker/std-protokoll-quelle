@@ -1,18 +1,18 @@
 // Std-Protokoll – Team-Speicher (Cloudflare Worker mit D1-Datenbank in der EU)
 //
 // Jedes iPhone legt hier die Stundenzettel des laufenden Monats ab (ein Eintrag je Gerät, wird bei jeder
-// Änderung überschrieben). Wer den Team-Code kennt, kann alle Einträge lesen. Einträge aus älteren Monaten
-// löscht der Worker bei jeder Anfrage; damit ist der Speicher nach einem Monatswechsel leer.
+// Änderung überschrieben). Lesen nur mit Team-Code und Konto. Einträge aus älteren Monaten (außer dem Vormonat)
+// löscht der Worker bei jeder Anfrage.
 //
 // Einrichtung im Cloudflare-Dashboard:
 //   - D1-Datenbank (Jurisdiction „EU“) als Binding mit dem Namen DB
 //   - Workers AI als Binding mit dem Namen AI (Rechtschreibung, gleiche Baustellen)
-//   - Secret TEAM_CODE: der Team-Code, den die Kollegen eingeben
+//   - Secret TEAM_CODE: der Team-Code, den die Kollegen eingeben (bis er auf der Server-Seite geändert wird, siehe PUT /code)
 // Die Tabelle legt der Worker selbst an.
 //
 // Anfragen (Code im Header X-Team-Code):
 //   GET    /ping   → { ok }   nur zum Messen der Antwortzeit
-//   GET    /team   → { month, members: [{ member, name, updated, sheets }], prev: { month, members }, posts: [{ id, member, name, text, created }], spellV }
+//   GET    /team   Header X-User, X-Auth (Konto, sonst 403 'konto') → { month, members: [{ member, name, updated, sheets }], prev: { month, members }, posts: [{ id, member, name, text, created }], spellV }
 //                    prev: Zettel des Vormonats (Tabelle history); posts: die letzten POSTS_KEEP Nachrichten (nicht mehr monatlich gelöscht)
 //                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
 //   PUT    /me     ← { member, token, name, month, sheets, version, prev: { month, sheets } }   eigener Eintrag (version: App-Version für die Admin-Seite)
@@ -56,13 +56,14 @@
 //   Abholen mit Konto: POST /account { action: 'reports', since, fullname } → { reports: [{ id, data, changed, deleted }], names }
 //   Tabellen reports (je Empfänger eine Zeile), report_open (wartende Namen), report_alias (Zuordnungen); 60 Tage
 // Nur mit Admin-Code (Header X-Admin-Code, Secret ADMIN_CODE; er gilt auch als Team-Code):
-//   GET    /errors → { errors, storage, team, dict, accounts, usage }   die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
+//   GET    /errors → { errors, storage, team, dict, accounts, code, usage } die letzten Fehlerberichte, Speicherbelegung, Team diesen Monat,
 //                                                              Wörterbuch, Tagesgrenzen von Cloudflare (siehe cfUsage)
 //   PUT    /dict   ← { word }                                  richtige Schreibweise ins Wörterbuch
 //   DELETE /dict   ← { word }                                  aus dem Wörterbuch löschen
 //   DELETE /account ← { user }                                 Konto samt Sicherungen löschen (z. B. Passwort vergessen)
 //   PUT    /alias  ← { key, user }                             wartenden Namen einem Konto zuordnen (wird gemerkt, Scheine zugestellt)
 //   DELETE /alias  ← { key }                                   wartenden Namen verwerfen (z. B. Aushilfe ohne Konto)
+//   PUT    /code   ← { code }                                  neuer Team-Code (gilt sofort; alle müssen ihn neu eingeben) → { code }
 //   DELETE /member ← { member }                                Person aus dem Team entfernen (z. B. doppelt nach Neuinstallation;
 //                                                              benutzt sie die App noch, erscheint sie beim nächsten Upload wieder)
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
@@ -264,6 +265,25 @@ function currentMonth() {
   return `${p.find((x) => x.type === 'year').value}-${p.find((x) => x.type === 'month').value}`;
 }
 
+/** Team-Code: auf der Server-Seite änderbar (Tabelle config), sonst das Secret TEAM_CODE.
+ *  Kurz zwischengespeichert, damit nicht jede Anfrage die Datenbank fragt (andere Instanzen nehmen den alten Code
+ *  danach noch bis zu TEAM_CODE_CACHE ms an) */
+const TEAM_CODE_CACHE = 30000;
+let teamCodeCache = null;
+async function currentTeamCode(env) {
+  if (teamCodeCache && Date.now() - teamCodeCache.at < TEAM_CODE_CACHE) return teamCodeCache.code;
+  let code = env.TEAM_CODE;
+  try {
+    const row = await env.DB.prepare("SELECT value FROM config WHERE key = 'team_code'").first();
+    if (row && row.value) code = row.value;
+  } catch (e) {
+    // Tabelle gibt es erst nach der ersten Änderung; jeder andere Fehler darf nicht zum alten Code zurückfallen
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+  }
+  teamCodeCache = { code, at: Date.now() };
+  return code;
+}
+
 /** Vergleich ohne Zeitunterschied, damit sich der Code nicht Zeichen für Zeichen erraten lässt */
 function sameCode(a, b) {
   const x = new TextEncoder().encode(String(a ?? '').trim().toLowerCase());
@@ -378,6 +398,15 @@ const ACCOUNT_TABLES = [
 const userKey = (s) => {
   const u = String(s ?? '').trim().toLowerCase();
   return /^[\p{L}\p{N}._-]{3,32}$/u.test(u) ? u : '';
+};
+/** Benutzername aus dem Header X-User (kodiert, Header erlauben keine kyrillischen Buchstaben) */
+const headerUser = (req) => {
+  const v = req.headers.get('X-User') || '';
+  try {
+    return userKey(decodeURIComponent(v));
+  } catch {
+    return userKey(v);
+  }
 };
 const validAuth = (s) => typeof s === 'string' && /^[A-Za-z0-9+/=]{40,64}$/.test(s);
 
@@ -634,7 +663,7 @@ async function reportsRequest(db, req, env, h) {
 
 /** Verschlüsselte Sicherung speichern (Inhalt roh, nicht als JSON verpackt: spart Rechenzeit bei großen Dateien) */
 async function backupPut(db, req, h) {
-  const row = await checkAccount(db, userKey(req.headers.get('X-User')), req.headers.get('X-Auth'));
+  const row = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'));
   if (row.error) return json({ error: row.error }, row.status, h);
   const data = await req.text();
   if (data.length > BACKUP_MAX) return json({ error: 'size' }, 413, h);
@@ -665,7 +694,7 @@ export default {
 
     // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei)
     const teamCode = req.headers.get('X-Team-Code');
-    if (!sameCode(teamCode, env.TEAM_CODE) && !sameCode(teamCode, env.ADMIN_CODE)) {
+    if (!sameCode(teamCode, env.ADMIN_CODE) && !sameCode(teamCode, await currentTeamCode(env))) {
       // kurze Pause erschwert das Durchprobieren von Codes
       await new Promise((r) => setTimeout(r, 400));
       return json({ error: 'code' }, 401, h);
@@ -695,6 +724,10 @@ export default {
         return path === '/backup' ? await backupPut(db, req, h) : await accountRequest(db, await readBody(req), h);
       }
       if (path === '/team' && req.method === 'GET') {
+        // Lesen nur mit Konto (Team-Code allein reicht nicht); ohne Angaben 'konto', sonst wie beim Anmelden
+        const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'));
+        if (acc.error === 'id') return json({ error: 'konto' }, 403, h);
+        if (acc.error) return json({ error: acc.error }, acc.status, h);
         const [cur, prev, posts] = await db.batch([
           db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month),
           db.prepare('SELECT member, name, updated, data FROM history WHERE month = ? ORDER BY name').bind(prevMonth),
@@ -862,7 +895,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias' || path === '/code') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -900,7 +933,21 @@ export default {
           const s = size.results[0];
           const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors, backups: s.backups };
           const team = { month, people: people.results, posts: posts.results[0].n };
-          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, open: open.results, usage: await usage }, 200, h);
+          return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, open: open.results, code: await currentTeamCode(env), usage: await usage }, 200, h);
+        }
+
+        if (path === '/code' && req.method === 'PUT') {
+          const body = await readBody(req);
+          const code = String(body.code ?? '').trim();
+          if (!/^[\p{L}\p{N}._-]{6,40}$/u.test(code)) return json({ error: 'code' }, 400, h);
+          // sonst wären alle Kollegen Admin
+          if (sameCode(code, env.ADMIN_CODE)) return json({ error: 'admin' }, 400, h);
+          await db.batch([
+            db.prepare('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)'),
+            db.prepare("INSERT INTO config (key, value) VALUES ('team_code', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(code),
+          ]);
+          teamCodeCache = { code, at: Date.now() };
+          return json({ code }, 200, h);
         }
         if (path === '/alias' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);

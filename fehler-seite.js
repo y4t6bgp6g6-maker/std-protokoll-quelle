@@ -34,6 +34,8 @@ let adminUsage = null;
 let adminAccounts = null;
 /** Arbeitsscheine: Namen ohne eindeutiges Konto [{ key, name, n, last }] */
 let adminOpen = null;
+/** Team-Code der Kollegen (wie ihn der Server gerade annimmt) */
+let adminCode = null;
 let adminBusy = false;
 
 async function adminRequest(method, path, body, code = admin && admin.code) {
@@ -122,6 +124,7 @@ function renderFehler(full = false) {
     ${adminUsageHTML(adminUsage)}
     ${adminDictHTML(adminDict)}
     ${adminTeamHTML(adminTeam)}
+    ${adminCodeHTML(adminCode)}
     ${adminOpenHTML(adminOpen)}
     ${adminAccountsHTML(adminAccounts)}
     <h2 class="section-title">Fehlerberichte</h2>
@@ -165,6 +168,49 @@ function adminTeamHTML(tm) {
       <div class="fb-count"><span><b>${people.length}</b> ${people.length === 1 ? 'Person' : 'Personen'}</span><span><b>${sheets}</b> Zettel</span><span><b>${tm.posts || 0}</b> ${tm.posts === 1 ? 'Nachricht' : 'Nachrichten'}</span></div>
       ${rows}
     </div>`;
+}
+
+/** Team-Code der Kollegen; Antippen → neuer Code. Gilt sofort, alle müssen ihn danach neu eingeben (der Admin-Code bleibt) */
+function adminCodeHTML(code) {
+  if (!code) return '';
+  return `<button class="card fb-row fb-code" data-fb="code"><span>Team-Code</span><span class="fb-ping"><b translate="no">${escapeHtml(code)}</b>${ICON.chevronRight}</span></button>`;
+}
+
+function adminCodeChange() {
+  if (adminBusy || !adminCode) return;
+  const modal = openModal(
+    `<div class="alert-body"><b>Neuer Team-Code</b><div class="alert-msg">Alle müssen danach den neuen Code eingeben.</div>
+      <input class="pw-input" data-fb-code placeholder="Team-Code" maxlength="40" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="done">
+    </div>
+    <div class="alert-buttons"><button data-c="no">Abbrechen</button><button data-c="yes" class="strong">Ändern</button></div>`,
+    'alert'
+  );
+  const input = modal.querySelector('[data-fb-code]');
+  const msg = modal.querySelector('.alert-msg');
+  const send = async () => {
+    const code = input.value.trim();
+    if (!code || adminBusy) return;
+    if (code.toLowerCase() === adminCode.toLowerCase()) return closeModal();
+    if (!/^[\p{L}\p{N}._-]{6,40}$/u.test(code)) return (msg.textContent = 'Mindestens 6 Zeichen, ohne Leerzeichen');
+    adminBusy = true;
+    try {
+      adminCode = (await adminRequest('PUT', '/code', { code })).code || code;
+      closeModal();
+      haptic();
+    } catch (e) {
+      msg.textContent = e.message === 'admin' ? 'Das ist der Admin-Code' : e.message === 'code' ? 'Mindestens 6 Zeichen, ohne Leerzeichen' : 'Keine Verbindung';
+    }
+    adminBusy = false;
+    if (currentView === 'fehler' && admin) renderFehler();
+  };
+  modal.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-c]');
+    if (!b) return;
+    if (b.dataset.c === 'no') closeModal();
+    else send();
+  });
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && send());
+  setTimeout(() => input.focus(), 50);
 }
 
 /** Konten mit letzter Sicherung auf dem Server; Antippen löscht das Konto (z. B. Passwort vergessen) */
@@ -332,6 +378,7 @@ async function adminLoad() {
     adminUsage = data.usage || null;
     adminAccounts = data.accounts || null;
     adminOpen = data.open || null;
+    adminCode = data.code || null;
   } catch (e) {
     if (e.status === 403) {
       adminForget();
@@ -414,6 +461,9 @@ document.addEventListener('click', (e) => {
   switch (el.dataset.fb) {
     case 'dict-del':
       adminDictChange('DELETE', el.dataset.word);
+      break;
+    case 'code':
+      adminCodeChange();
       break;
     case 'open-assign':
       adminOpenAssign(el.dataset.key);
