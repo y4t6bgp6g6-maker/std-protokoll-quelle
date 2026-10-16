@@ -1,0 +1,9 @@
+Arena – fremde Bestandteile
+
+three.module.min.js, three.core.min.js, GLTFLoader.js, BufferGeometryUtils.js, SkeletonUtils.js
+  three.js r180 (https://threejs.org), MIT-Lizenz, Copyright 2010-2025 three.js authors.
+  Importpfade auf diesen Ordner angepasst.
+
+figur.glb
+  Figur und Animationen aus der „Universal Animation Library“ von Quaternius (https://quaternius.com),
+  CC0 1.0 (gemeinfrei). Auf die benötigten Animationen zugeschnitten.

@@ -868,7 +868,9 @@ function renderTeamNav() {
     on && teamPinOpen
       ? `<button class="nav-btn back" data-team="pin-close" aria-label="Zurück">${ICON.back}</button><span class="nav-title"></span><span class="nav-btn"></span>`
       : `${on && admin ? `<button class="nav-btn" data-team="fehler" aria-label="Fehlerberichte">${adminIcon()}</button>` : '<span class="nav-btn"></span>'}<span class="nav-title"></span>${
-          on ? `<button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button>` : '<span class="nav-btn"></span>'
+          on
+            ? `<span class="nav-actions"><button class="nav-btn tm-arena" data-team="arena" aria-label="Arena">${arenaIcon()}</button><button class="nav-btn tm-pin" data-team="pin" aria-label="Teammeeting">${teamChatIcon()}${n ? `<i class="tm-badge">${n}</i>` : ''}</button></span>`
+            : '<span class="nav-btn"></span>'
         }`;
   document.getElementById('team-title').textContent = on && teamPinOpen ? 'Teammeeting' : 'Team';
   // Monat wählen: laufender Monat oder Vormonat (Kapsel wie das Jahr auf der Übersicht)
@@ -1145,6 +1147,10 @@ document.addEventListener('click', (e) => {
       break;
     case 'fehler':
       location.hash = '#/fehler';
+      break;
+    case 'arena':
+      haptic();
+      location.hash = '#/arena';
       break;
   }
 });

@@ -23,7 +23,7 @@ if (LANG === 'ru') {
       // ── Leiste, Navigation, allgemeine Knöpfe ──
       Übersicht: 'Обзор', Zettel: 'Табели', Team: 'Команда', Optionen: 'Настройки', Einstellungen: 'Настройки',
       Zurück: 'Назад', Weiter: 'Далее', Fertig: 'Готово', Abbrechen: 'Отмена', Löschen: 'Удалить', Speichern: 'Сохранить',
-      Übernehmen: 'Применить', Entfernen: 'Убрать', Schließen: 'Закрыть', Senden: 'Отправить', Teilen: 'Поделиться',
+      Übernehmen: 'Применить', Entfernen: 'Убрать', Schließen: 'Закрыть', Bestenliste: 'Лучшие', Senden: 'Отправить', Teilen: 'Поделиться',
       Kopieren: 'Копировать', Ersetzen: 'Заменить', Verwerfen: 'Отменить изменения', Wiederholen: 'Повторить', Mehr: 'Ещё',
       'Weitere Aktionen': 'Другие действия', Hinzufügen: 'Добавить', Suchen: 'Поиск', Neu: 'Новый', 'Nach oben': 'Наверх',
       Eintragen: 'Внести', Ausblenden: 'Скрыть', Wiederherstellen: 'Восстановить', Verlassen: 'Выйти', Beitreten: 'Вступить',
@@ -426,5 +426,13 @@ if (LANG === 'ru') {
       }],
     ],
   });
+  // ── Arena ──
+  i18nAdd({
+    exact: {
+      Arena: 'Арена', 'Lade …': 'Загрузка …', 'Verbinde …': 'Подключение …', 'Keine Verbindung': 'Нет связи', Nochmal: 'Ещё раз',
+      'Erst anmelden': 'Сначала войдите', 'Arena voll': 'Арена заполнена', 'Auf einem anderen Gerät geöffnet': 'Открыто на другом устройстве',
+      Getrennt: 'Отключено', 'Laden fehlgeschlagen': 'Ошибка загрузки', 'K.o.': 'Нокаут', Schlag: 'Удар', Hammer: 'Молот', Block: 'Блок',
+      Rolle: 'Кувырок', Tanzen: 'Танец', Punkte: 'Очки', Schließen: 'Закрыть', Bestenliste: 'Лучшие',
+    },
+  });
 }
-

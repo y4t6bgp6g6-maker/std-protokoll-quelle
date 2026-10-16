@@ -7,6 +7,7 @@
 // Einrichtung im Cloudflare-Dashboard:
 //   - D1-Datenbank (Jurisdiction „EU“) als Binding mit dem Namen DB
 //   - Workers AI als Binding mit dem Namen AI (Rechtschreibung, gleiche Baustellen)
+//   - Durable Object als Binding mit dem Namen ARENA, Klasse Arena (SQLite-Klasse, im kostenlosen Tarif)
 //   - Secret TEAM_CODE: der Team-Code, den die Kollegen eingeben (bis er auf der Server-Seite geändert wird, siehe PUT /code)
 // Die Tabelle legt der Worker selbst an.
 //
@@ -33,6 +34,8 @@
 //                    Fehlerberichte der App; bleiben beim Monatswechsel erhalten (Tabelle errors), werden nach
 //                    ERROR_DAYS Tagen gelöscht. Danach Mitteilung an die angemeldeten Admin-Geräte (Web Push),
 //                    höchstens alle PUSH_GAP Minuten
+//   POST   /arena  Header X-User, X-Auth ← { name }            → { ticket } Eintrittskarte für die Arena (2 min)
+//   GET    /arena/ws?t=<ticket>  WebSocket zur Arena (Durable Object ARENA, Klasse Arena; Nachrichten siehe dort)
 // Konten (Benutzername + Passwort, für das Team Pflicht) und verschlüsselte Sicherungen. Das iPhone leitet aus dem
 // Passwort zwei Schlüssel ab: auth (hier nur als SHA-256 gespeichert) und den Sicherungs-Schlüssel (verlässt das iPhone
 // nie). Sicherungen kommen also schon verschlüsselt an; der Server kann sie nicht lesen.
@@ -681,11 +684,256 @@ async function backupPut(db, req, h) {
   return json({ at }, 200, h);
 }
 
+// ───────── Arena (Live-Kampf in 3D, alle gleichzeitig; Durable Object ARENA) ─────────
+// Bewegung meldet jedes iPhone selbst (Kollegen untereinander, kein Schummelschutz nötig); Treffer, Leben, Block,
+// Rolle und Punkte rechnet nur der Server. Eine Arena für alle (idFromName('team')), Stand im Speicher; nur die
+// Bestenliste (K.o. und Niederlagen je Konto, alle Zeiten) liegt in D1 (Tabelle arena_scores).
+// Nachrichten (JSON, t = Art). iPhone → Server: s (x, z, r Blickrichtung, m 0/1/2 Tempo, b Block), atk (k: jab | cross |
+// heavy, r), roll, emo. Server → iPhone: hi (id, r Radius, hp, players, lb), join, left, w (Stand aller, 15/s), atk, roll,
+// emo, hit (a, v, k, d Schaden, hp, b geblockt, px/pz Rückstoß), die (v, a, k, d), spawn, lb (Bestenliste), voll, raus
+
+const ARENA_R = 13; // Radius der Arena in Metern
+const ARENA_MAX = 12;
+const ARENA_TICK = 66; // ms, also etwa 15 Mal je Sekunde
+const ARENA_HP = 100;
+const ARENA_RESPAWN = 3500;
+const ARENA_IDLE = 90000; // ohne Lebenszeichen hinauswerfen
+const ARENA_COLORS = 8;
+// Angriffe: Zeit bis zum Treffer, Reichweite (m), Schaden, Winkel (cos zur Blickrichtung), Rückstoß, Pause danach
+const ARENA_HITS = {
+  jab: { delay: 250, range: 1.8, dmg: 8, cos: 0.45, push: 2, cd: 280 },
+  cross: { delay: 300, range: 1.9, dmg: 12, cos: 0.45, push: 3.5, cd: 360 },
+  heavy: { delay: 620, range: 2.5, dmg: 28, cos: 0.25, push: 7, cd: 1300 },
+};
+const ARENA_ROLL = 450; // ms unverwundbar
+const ARENA_ROLL_CD = 900;
+const ARENA_LB = 10; // Plätze in der Bestenliste
+
+const arenaKey = (env) => crypto.subtle.importKey('raw', enc('arena|' + env.ADMIN_CODE), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+/** Eintrittskarte für den WebSocket (Browser können dort keine Header setzen): Konto + Name, 2 min gültig */
+async function arenaTicket(env, user, name) {
+  const body = b64u(enc(JSON.stringify({ u: user, n: name, e: Date.now() + 120000 })));
+  return body + '.' + b64u(await crypto.subtle.sign('HMAC', await arenaKey(env), enc(body)));
+}
+async function arenaCheck(env, t) {
+  const [body, sig] = String(t || '').split('.');
+  if (!body || !sig) return null;
+  try {
+    if (!(await crypto.subtle.verify('HMAC', await arenaKey(env), unb64u(sig), enc(body)))) return null;
+    const d = JSON.parse(new TextDecoder().decode(unb64u(body)));
+    return d.e > Date.now() ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+export class Arena {
+  constructor(state, env) {
+    this.env = env;
+    this.lb = null; // Konto → { name, k, d } (aus D1)
+    this.players = new Map(); // id → Spieler
+    this.scores = new Map(); // Konto → { k, d } (bleibt bei neuer Verbindung)
+    this.next = 1;
+    this.timer = null;
+  }
+
+  async fetch(req) {
+    if (req.headers.get('Upgrade') !== 'websocket') return new Response('websocket', { status: 426 });
+    await this.loadLb();
+    const pair = new WebSocketPair();
+    const [client, ws] = [pair[0], pair[1]];
+    ws.accept();
+    const user = req.headers.get('X-Arena-User') || '?';
+    // dasselbe Konto ein zweites Mal (neu verbunden, zweites Gerät): die alte Verbindung gilt nicht mehr
+    for (const p of this.players.values()) if (p.user === user) this.drop(p, 'doppelt');
+    if (this.players.size >= ARENA_MAX) {
+      ws.send(JSON.stringify({ t: 'voll' }));
+      ws.close(1013, 'voll');
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    // Farbe: möglichst die eigene (aus dem Konto), sonst die nächste freie
+    const used = new Set([...this.players.values()].map((p) => p.color));
+    let color = [...user].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7) % ARENA_COLORS;
+    for (let i = 0; i < ARENA_COLORS && used.has(color); i++) color = (color + 1) % ARENA_COLORS;
+    const score = this.scores.get(user) || { k: 0, d: 0 };
+    this.scores.set(user, score);
+    const p = { id: this.next++, ws, user, name: (req.headers.get('X-Arena-Name') || user).slice(0, 24), color, score, x: 0, z: 0, r: 0, m: 0, b: 0, hp: ARENA_HP, dead: 0, roll: 0, cd: 0, seen: Date.now() };
+    this.place(p);
+    this.players.set(p.id, p);
+    ws.addEventListener('message', (e) => this.onMsg(p, e.data));
+    ws.addEventListener('close', () => this.drop(p));
+    ws.addEventListener('error', () => this.drop(p));
+    this.send(p, { t: 'hi', id: p.id, r: ARENA_R, hp: ARENA_HP, players: [...this.players.values()].map((q) => this.info(q)), lb: this.top() });
+    this.all({ t: 'join', p: this.info(p) }, p);
+    if (!this.timer) this.timer = setInterval(() => this.tick(), ARENA_TICK);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async loadLb() {
+    if (this.lb) return;
+    const db = this.env.DB;
+    await db.prepare('CREATE TABLE IF NOT EXISTS arena_scores (user TEXT PRIMARY KEY, name TEXT, k INTEGER NOT NULL, d INTEGER NOT NULL, updated INTEGER NOT NULL)').run();
+    const rows = (await db.prepare('SELECT user, name, k, d FROM arena_scores').all()).results;
+    this.lb = new Map(rows.map((r) => [r.user, { name: r.name, k: r.k, d: r.d }]));
+  }
+  /** Bestenliste: meiste K.o., bei Gleichstand weniger Niederlagen */
+  top() {
+    return [...this.lb.values()].sort((a, b) => b.k - a.k || a.d - b.d).slice(0, ARENA_LB).map((e) => [e.name, e.k, e.d]);
+  }
+  /** K.o. dauerhaft zählen (Sieger +1 K.o., Verlierer +1 Niederlage) und allen die neue Liste schicken */
+  record(win, lose) {
+    const now = Date.now();
+    const sql = 'INSERT INTO arena_scores (user, name, k, d, updated) VALUES (?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(user) DO UPDATE SET name = excluded.name, k = arena_scores.k + excluded.k, d = arena_scores.d + excluded.d, updated = excluded.updated';
+    const db = this.env.DB;
+    const ops = [];
+    for (const [p, k, d] of [[win, 1, 0], [lose, 0, 1]]) {
+      const e = this.lb.get(p.user) || { name: p.name, k: 0, d: 0 };
+      e.name = p.name;
+      e.k += k;
+      e.d += d;
+      this.lb.set(p.user, e);
+      ops.push(db.prepare(sql).bind(p.user, p.name, k, d, now));
+    }
+    db.batch(ops).catch(() => {});
+    this.all({ t: 'lb', lb: this.top() });
+  }
+
+  info(p) {
+    return { id: p.id, name: p.name, color: p.color, x: p.x, z: p.z, r: p.r, hp: p.hp, k: p.score.k, d: p.score.d, dead: !!p.dead };
+  }
+  send(p, msg) {
+    try {
+      p.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } catch {
+      this.drop(p);
+    }
+  }
+  all(msg, except) {
+    const s = JSON.stringify(msg);
+    for (const p of [...this.players.values()]) if (p !== except) this.send(p, s);
+  }
+  drop(p, why) {
+    if (!this.players.has(p.id)) return;
+    this.players.delete(p.id);
+    try {
+      if (why) p.ws.send(JSON.stringify({ t: 'raus', why }));
+      p.ws.close(1000, why || 'ende');
+    } catch {}
+    this.all({ t: 'left', id: p.id });
+    if (!this.players.size && this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+  }
+
+  /** Startplatz am Rand, möglichst weit weg von den anderen */
+  place(p) {
+    let best = null;
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const c = { x: Math.sin(a) * ARENA_R * 0.7, z: Math.cos(a) * ARENA_R * 0.7, r: a + Math.PI };
+      c.min = Math.min(99, ...[...this.players.values()].filter((q) => q !== p).map((q) => Math.hypot(q.x - c.x, q.z - c.z)));
+      if (!best || c.min > best.min) best = c;
+    }
+    Object.assign(p, { x: best.x, z: best.z, r: best.r, hp: ARENA_HP, dead: 0, b: 0, m: 0 });
+  }
+
+  onMsg(p, raw) {
+    if (!this.players.has(p.id) || typeof raw !== 'string' || raw.length > 300) return;
+    let d;
+    try {
+      d = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    const now = Date.now();
+    p.seen = now;
+    if (d.t === 's') {
+      if (p.dead) return;
+      const x = Number(d.x), z = Number(d.z);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+      const len = Math.hypot(x, z), k = len > ARENA_R ? ARENA_R / len : 1;
+      p.x = x * k;
+      p.z = z * k;
+      p.r = Number.isFinite(+d.r) ? +d.r : p.r;
+      p.m = Math.max(0, Math.min(2, +d.m || 0));
+      p.b = d.b ? 1 : 0;
+    } else if (d.t === 'atk') {
+      const hit = ARENA_HITS[d.k];
+      if (!hit || p.dead || now < p.cd || now < p.roll) return;
+      p.cd = now + hit.cd;
+      if (Number.isFinite(+d.r)) p.r = +d.r;
+      this.all({ t: 'atk', id: p.id, k: d.k }, p);
+      setTimeout(() => this.resolve(p, d.k, hit), hit.delay);
+    } else if (d.t === 'roll') {
+      if (p.dead || now < p.cd) return;
+      p.roll = now + ARENA_ROLL;
+      p.cd = now + ARENA_ROLL_CD;
+      this.all({ t: 'roll', id: p.id }, p);
+    } else if (d.t === 'emo') {
+      if (!p.dead) this.all({ t: 'emo', id: p.id }, p);
+    }
+  }
+
+  /** Treffer prüfen, wenn der Schlag ankommt: alle in Reichweite vor dem Angreifer */
+  resolve(p, kind, hit) {
+    if (!this.players.has(p.id) || p.dead) return;
+    const now = Date.now();
+    const fx = Math.sin(p.r), fz = Math.cos(p.r);
+    for (const q of this.players.values()) {
+      if (q === p || q.dead || now < q.roll) continue;
+      const dx = q.x - p.x, dz = q.z - p.z, dist = Math.hypot(dx, dz);
+      // etwas großzügiger als die Animation (Verzögerung im Netz)
+      if (dist > hit.range + 0.35 || (dist > 0.6 && (dx * fx + dz * fz) / dist < hit.cos)) continue;
+      // Block hilft nur, wenn man dem Angreifer zugewandt ist; der schwere Schlag bricht ihn
+      const facing = dist < 0.01 || -(dx * Math.sin(q.r) + dz * Math.cos(q.r)) / dist > 0.2;
+      const blocked = !!(q.b && facing);
+      const dmg = Math.round(hit.dmg * (blocked ? (kind === 'heavy' ? 0.5 : 0.15) : 1));
+      q.hp = Math.max(0, q.hp - dmg);
+      const nx = dist > 0.01 ? dx / dist : fx, nz = dist > 0.01 ? dz / dist : fz;
+      const push = hit.push * (blocked ? 0.4 : 1);
+      this.all({ t: 'hit', a: p.id, v: q.id, k: kind, d: dmg, hp: q.hp, b: blocked ? 1 : 0, px: +(nx * push).toFixed(2), pz: +(nz * push).toFixed(2) });
+      if (!q.hp) {
+        q.dead = now;
+        q.b = 0;
+        q.score.d++;
+        p.score.k++;
+        this.all({ t: 'die', v: q.id, a: p.id, k: p.score.k, d: q.score.d });
+        this.record(p, q);
+        setTimeout(() => {
+          if (!this.players.has(q.id)) return;
+          this.place(q);
+          this.all({ t: 'spawn', id: q.id, x: q.x, z: q.z, r: q.r, hp: q.hp });
+        }, ARENA_RESPAWN);
+      }
+    }
+  }
+
+  tick() {
+    const now = Date.now();
+    for (const p of [...this.players.values()]) if (now - p.seen > ARENA_IDLE) this.drop(p, 'weg');
+    if (!this.players.size) return;
+    const r2 = (v) => Math.round(v * 100) / 100;
+    this.all({ t: 'w', s: [...this.players.values()].map((p) => [p.id, r2(p.x), r2(p.z), r2(p.r), p.m, p.b, p.hp]) });
+  }
+}
+
 export default {
   async fetch(req, env, ctx) {
     const isReports = new URL(req.url).pathname === '/reports';
     const h = isReports ? REPORT_CORS : cors(req);
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: h });
+    // Arena: WebSocket mit Eintrittskarte (POST /arena), ohne Team-Code und Datenbank
+    if (new URL(req.url).pathname === '/arena/ws') {
+      if (!cors(req)['Access-Control-Allow-Origin']) return new Response('origin', { status: 403 });
+      const t = await arenaCheck(env, new URL(req.url).searchParams.get('t'));
+      if (!t) return new Response('ticket', { status: 403 });
+      const headers = new Headers(req.headers);
+      headers.set('X-Arena-User', t.u);
+      headers.set('X-Arena-Name', t.n);
+      return env.ARENA.get(env.ARENA.idFromName('team')).fetch(new Request(req, { headers }));
+    }
     // Arbeitsschein-App: eigener Schlüssel statt Team-Code
     if (isReports) {
       if (req.method !== 'POST' && req.method !== 'DELETE') return json({ error: 'method' }, 405, h);
@@ -735,6 +983,15 @@ export default {
         ]);
         const list = (rows) => rows.results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
         return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)) }, 200, h);
+      }
+
+      if (path === '/arena' && req.method === 'POST') {
+        const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'));
+        if (acc.error === 'id') return json({ error: 'konto' }, 403, h);
+        if (acc.error) return json({ error: acc.error }, acc.status, h);
+        const body = await readBody(req);
+        const name = String(body.name ?? '').trim().slice(0, 24) || acc.name || acc.user;
+        return json({ ticket: await arenaTicket(env, acc.user, name) }, 200, h);
       }
 
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
