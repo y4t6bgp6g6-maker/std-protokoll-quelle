@@ -1892,7 +1892,6 @@ function route() {
   if (currentView === 'team') teamScroll = window.scrollY;
   if (currentView === 'trip') dropEmptyTrip();
   closeModal(true);
-  if (hash !== '#/arena') arenaClose();
   trimWorkInput(suggestInput);
   hideChips();
   if (tm) {
@@ -1914,7 +1913,7 @@ function route() {
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
-  } else if (bhRoute(hash) || fehlerRoute(hash) || arenaRoute(hash)) {
+  } else if (bhRoute(hash) || fehlerRoute(hash)) {
     syncNav();
     window.scrollTo(0, 0);
   } else if (hash === '#/team') {
@@ -1985,7 +1984,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2, arena: 1 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
