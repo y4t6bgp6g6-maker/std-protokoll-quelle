@@ -2931,11 +2931,19 @@ function editPause(btn) {
   const { s, dayIndex, day } = rowContext(btn);
   const step = settings.minuteStep;
   const values = Array.from({ length: 240 / step + 1 }, (_, i) => i * step);
-  wheelPicker('Pause', [{ values, label: (v) => `${fmtH(v)}` }], [day.pause], ([v]) => {
+  const set = (v) => {
     day.pause = v;
     saveSheets(s);
     refreshDay(dayIndex);
-  });
+  };
+  wheelPicker(
+    'Pause',
+    [{ values, label: (v) => `${fmtH(v)}` }],
+    [day.pause],
+    ([v]) => set(v),
+    day.pause != null ? `<button class="modal-wide destructive" data-m="extra">Pause löschen</button>` : '',
+    () => set(null)
+  );
 }
 
 function changeWeek() {

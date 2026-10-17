@@ -50,7 +50,7 @@ if (LANG === 'ru') {
       Baustelle: 'Объект', Baustellen: 'Объекты', Ort: 'Место', Tätigkeiten: 'Работы', 'Art der Arbeit': 'Вид работ',
       Beginn: 'Начало', Ende: 'Конец', Pause: 'Перерыв', Gesamt: 'Итого', Zeile: 'Строка', 'Zeile löschen': 'Удалить строку',
       'Zeile löschen?': 'Удалить строку?', 'Die Einträge dieser Zeile gehen verloren.': 'Записи этой строки будут удалены.',
-      'Zeit löschen': 'Удалить время', 'Zeit prüfen': 'Проверить время', 'Eintrag speichern': 'Сохранить запись',
+      'Zeit löschen': 'Удалить время', 'Pause löschen': 'Удалить перерыв', 'Zeit prüfen': 'Проверить время', 'Eintrag speichern': 'Сохранить запись',
       'Kein Platz mehr in dieser Zeile': 'В этой строке больше нет места', 'Meintest du': 'Может быть',
       'Tagesart prüfen': 'Проверить тип дня', Tagesarten: 'Типы дней',
       Urlaub: 'Отпуск', Krank: 'Болен', Feiertag: 'Праздник', Frei: 'Отгул', Krankheit: 'Болезнь', Schule: 'Школа',
