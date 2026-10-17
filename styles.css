@@ -1048,9 +1048,19 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 /* Beispiel unter dem Schalter „Korrektur“ in den Einstellungen */
 .typo-demo { padding: 10px 14px 8px; pointer-events: none; }
 .typo-demo-card .field + .typo-demo { border-top: 0.5px solid var(--sep); }
-.typo-demo-field { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--fill); font-size: 15px; }
-.typo-demo .typo-hint { margin: 6px 0 0 30px; }
+.typo-demo .typo-hint { margin: 0; }
 .typo-demo-fix { color: var(--accent); font-weight: 600; }
+.sugg-demo { display: flex; gap: 8px; margin: 2px 0; }
+.sugg-demo .chip { font-size: 14px; padding: 6px 12px; }
+.warn-demo-sign { margin-left: 4px; font-size: 16px; }
+/* Warnzeichen ausgeschaltet (Einstellungen → Vorschläge); die Prüfung vor dem Senden bleibt */
+html.no-warn .day-warn,
+html.no-warn .list-warn,
+html.no-warn .db-warn,
+html.no-warn .pause-warn,
+html.no-warn .day:not(.trip-day) .time-warn,
+html.no-warn .suggest-wrap .warn { display: none !important; }
+html.no-warn .suggest-wrap.missing .txt { padding-right: 0; }
 .pdf-hint { display: block; }
 .card.form > .pdf-hint, .trip-day .pdf-hint { margin: 0 16px 8px; }
 .trip-issue { font-size: 13px; margin: 6px 0 0; color: var(--warning); }

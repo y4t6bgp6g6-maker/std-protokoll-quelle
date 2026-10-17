@@ -307,6 +307,7 @@ if (LANG === 'ru') {
       [/^Alle als Ausbilder abzeichnen \((\d+)\)$/, 'Подписать всё как наставник ($1)'],
       [/^Im Zettel steht (.+)\. Der (\S+) ist aber ein (\S+)\.$/, (m, r, d, w) => `В табеле указано ${r}. Но ${d} — это не понедельник.`],
       [/^Konto: (.+)$/, 'Аккаунт: $1'],
+      [/^(\d) von 3 aus$/, '$1 из 3 выкл.'],
       [/^(\d+) Einträge übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'запись', 'записи', 'записей')}`],
       [/^(\d+) (Tag|Tage) übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'день', 'дня', 'дней')}`],
       [/^vor (\d+) Min\.$/, '$1 мин. назад'],
@@ -373,7 +374,7 @@ if (LANG === 'ru') {
     exact: {
       'Der Vergleich zählt nur vollständige Monate mit Stundenzetteln und Lohnabrechnung. Unter „Nach Stundenzetteln“ zählen Überstunden und Lohn nur vollständige Monate.':
         'Сравнение учитывает только полные месяцы с табелями и расчётным листом. В разделе «По табелям» переработка и зарплата учитываются только за полные месяцы.',
-      Korrektur: 'Исправление', Unterschrift: 'Подпись', 'Korrektur an': 'исправление вкл.', 'Korrektur aus': 'исправление выкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
+      Korrektur: 'Исправление', Unterschrift: 'Подпись', 'Korrektur an': 'исправление вкл.', 'Vorschläge über der Tastatur': 'Подсказки над клавиатурой', Warnzeichen: 'Предупреждения', 'alles an': 'всё вкл.', 'Korrektur aus': 'исправление выкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
       Seite: 'Страница', Seiten: 'Страницы', 'Mit den Stunden der Abrechnung rechnet die App dasselbe Netto.': 'С часами из расчёта приложение получает то же нетто.',
       netto: 'нетто', davon: 'из них', 'von Hand': 'вручную', verschlüsselt: 'зашифровано', '5 oder mehr': '5 или больше',
       'Sicherung einlesen …': 'Загрузить резервную копию …', 'Ur.': 'Отп.', 'Kr.': 'Бол.', 'Fe.': 'Пр.', 'Fr.': 'Вых.',

@@ -2594,7 +2594,7 @@ function dayHTML(s, i) {
   const rowsAndFoot = () => `${day.rows.map((r) => rowHTML(day, r)).join('')}
     <div class="day-foot">
       <button class="link-btn" data-act="addrow">${ICON.plus} Zeile</button>
-      <button class="pill ${day.pause == null ? 'empty' : ''}" data-act="pause">Pause${day.pause == null ? '' : ` ${fmtH(day.pause)}`}${pauseMissing(day) ? ` ⚠️` : ''}</button>
+      <button class="pill ${day.pause == null ? 'empty' : ''}" data-act="pause">Pause${day.pause == null ? '' : ` ${fmtH(day.pause)}`}${pauseMissing(day) ? ` <span class="pause-warn">⚠️</span>` : ''}</button>
       <span class="day-total">Gesamt <b>${fmtH(dayTotal(day, i))}</b></span>
     </div>`;
   if (day.status) {
@@ -2846,7 +2846,7 @@ function updateDayWarnings(dayEl, day) {
     }
   }
   const pill = dayEl.querySelector('[data-act="pause"]');
-  if (pill && day.pause == null) pill.innerHTML = `Pause${pauseMissing(day) ? ` ⚠️` : ''}`;
+  if (pill && day.pause == null) pill.innerHTML = `Pause${pauseMissing(day) ? ` <span class="pause-warn">⚠️</span>` : ''}`;
   const bar = document.getElementById('daybar');
   if (bar) bar.innerHTML = dayBarHTML(currentSheet());
 }
@@ -4008,7 +4008,7 @@ function settingsSummary() {
   const n = reports().length;
   return {
     lohn: settings.wage ? `${settings.wage} € · Kl. ${roman}` : `Klasse ${roman}`,
-    vorschlaege: settings.typoHints !== false ? 'Korrektur an' : 'Korrektur aus',
+    vorschlaege: ((n) => (n ? `${n} von 3 aus` : 'alles an'))(['typoHints', 'suggestBar', 'warnSigns'].filter((k) => settings[k] === false).length),
     scheine: url ? `${n}${reportStore.at ? ` · ${sameDay(new Date(reportStore.at), new Date()) ? 'heute' : fmtDayMonth(new Date(reportStore.at))} abgeholt` : ''}` : 'nicht eingerichtet',
     sicherung: ['von Hand', backupEncrypted() ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
     konto: account ? account.user : 'Nicht angemeldet',
@@ -4128,11 +4128,23 @@ function hiddenSuggestionsHTML() {
     <div class="card form typo-demo-card">
       <label class="field"><span>Korrektur</span><input type="checkbox" class="toggle" data-s="typoHints" ${settings.typoHints !== false ? 'checked' : ''}></label>
       ${typoDemoHTML()}
+    </div>
+    <div class="card form typo-demo-card">
+      <label class="field"><span>Vorschläge über der Tastatur</span><input type="checkbox" class="toggle" data-s="suggestBar" ${settings.suggestBar !== false ? 'checked' : ''}></label>
+      ${suggestDemoHTML()}
+    </div>
+    <div class="card form">
+      <label class="field"><span>Warnzeichen <span class="warn-demo-sign" aria-hidden="true">⚠️</span></span><input type="checkbox" class="toggle" data-s="warnSigns" ${settings.warnSigns !== false ? 'checked' : ''}></label>
     </div>`;
 }
-/** Beispiel für den Schalter „Korrektur“: ein Eintrag mit Tippfehler und der Hinweis darunter, wie im Zettel */
+/** Beispiel für „Vorschläge über der Tastatur“: nur die Kapseln */
+const suggestDemoHTML = () => `<div class="typo-demo" aria-hidden="true">
+      <div class="sugg-demo" translate="no"><span class="chip">Heizung warten</span><span class="chip">Heizkörper montiert</span></div>
+    </div>`;
+/** Warnzeichen im Stundenzettel (Liste, Wochenleiste, Tage, Zeilen) ein-/ausblenden */
+const applyWarnSigns = () => document.documentElement.classList.toggle('no-warn', settings.warnSigns === false);
+/** Beispiel für den Schalter „Korrektur“: nur der Hinweis, wie er im Zettel unter einem Tippfehler steht */
 const typoDemoHTML = () => `<div class="typo-demo" aria-hidden="true">
-      <div class="typo-demo-field"><span class="field-icon-inline">${ICON.tool}</span><span translate="no">Heizkörper montirt</span></div>
       <div class="typo-hint"><span class="typo-text">Meintest du <b class="typo-demo-fix" translate="no">„Heizkörper montiert“</b>?</span><span class="typo-x">✕</span></div>
     </div>`;
 
@@ -5306,6 +5318,7 @@ function askHideSuggestion(text) {
 }
 
 function showChips(input) {
+  if (settings.suggestBar === false) return hideChips();
   suggestInput = input;
   const list = suggestionsFor(input).slice(0, 30);
   // Zwei unabhängige Reihen, jede Kapsel so breit wie ihr Text: der nächste Vorschlag kommt in die
@@ -5943,6 +5956,7 @@ document.addEventListener('input', (e) => {
     settings[t.dataset.s] = t.type === 'checkbox' ? t.checked : t.value;
     saveSettings();
     if (t.dataset.s === 'theme') applyTheme();
+    if (t.dataset.s === 'warnSigns') applyWarnSigns();
   }
 });
 
@@ -6555,6 +6569,7 @@ function glassBar() {
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 history.replaceState('root', '', location.hash || '#/');
 applyTheme();
+applyWarnSigns();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 document.body.insertAdjacentHTML('beforeend', tabbarHTML());
 showLock();
