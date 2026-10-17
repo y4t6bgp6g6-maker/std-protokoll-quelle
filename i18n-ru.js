@@ -77,7 +77,7 @@ if (LANG === 'ru') {
       Arbeitsbeginn: 'Начало работы', Arbeitsende: 'Конец работы', Arbeitsanfang: 'Начало работы', Arbeitsstunden: 'Рабочие часы',
       Material: 'Материал', 'Durchgeführte Arbeiten': 'Выполненные работы', Mitarbeiter: 'Сотрудник', Unterschrift: 'Подпись',
       'Unterschrift löschen': 'Удалить подпись',
-      'Unterschrift übernommen': 'Подпись перенесена', 'Mit dem Finger unterschreiben': 'Подпишите пальцем', 'Neu unterschreiben': 'Подписать заново',
+      'Mit dem Finger unterschreiben': 'Подпишите пальцем', 'Neu unterschreiben': 'Подписать заново',
       'Neu unterschreiben …': 'Подписать заново …',
       // ── Übersicht, Karten ──
       Überstunden: 'Переработка', 'Überstd.': 'Перераб.', Stunden: 'Часы', 'Stunden Gesamt': 'Всего часов', Saldo: 'Сальдо',
@@ -389,9 +389,45 @@ if (LANG === 'ru') {
       }],
     ],
   });
-  // ── Einlesen: Zähler aus Sicherungen (v100) ──
+  // ── Einlesen: Rückmeldung und Rückfragen (v100/v101; Teile stehen je in eigenem Element, Dateien/Namen translate="no") ──
+  const RU_DAY = { Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс' };
+  const RU_COUNT = [
+    [/^Stundenzettel/, ['табель', 'табеля', 'табелей']],
+    [/^Reisekosten/, ['отчёт о командировке', 'отчёта о командировке', 'отчётов о командировке']],
+    [/^Arbeitsschein/, ['наряд', 'наряда', 'нарядов']],
+    [/^Lohnabrechnung/, ['расчётный лист', 'расчётных листа', 'расчётных листов']],
+    [/^Berichtsheft/, ['страница дневника', 'страницы дневника', 'страниц дневника']],
+  ];
   i18nAdd({
-    parts: { 'Datei beschädigt': 'файл повреждён' },
+    exact: {
+      'Einstellungen übernommen': 'Настройки перенесены', 'Name auf „': 'Имя изменено на «', '“ geändert': '»', aus: 'из',
+      'ist verschlüsselt.': 'зашифрован.', 'kein Passwort': 'нет пароля', 'Datei beschädigt': 'Файл повреждён',
+      'Kein Datum („Woche von“) gefunden': 'Дата («Woche von») не найдена',
+      'Keine Tabelle mit „Tag“ und „Arbeitsbeginn“ gefunden': 'Нет таблицы со столбцами «Tag» и «Arbeitsbeginn»',
+    },
+    patterns: [
+      [/^(\d+) Stundenzettel neu$/, (m, n) => `${n} ${pl(n, 'новый табель', 'новых табеля', 'новых табелей')}`],
+      [/^(\d+) Reisekostenabrechnung(?:en)? neu$/, (m, n) => `${n} ${pl(n, 'новый отчёт о командировке', 'новых отчёта о командировке', 'новых отчётов о командировке')}`],
+      [/^(\d+) schon vorhanden \(gleich\)$/, '$1 уже есть (одинаковые)'],
+      [/^(\d+) mit Unterschieden$/, '$1 с отличиями'],
+      [/^Name bei (\d+) auf „$/, (m, n) => `Имя в ${n} ${pl(n, 'табеле', 'табелях', 'табелях')} изменено на «`],
+      [/^(\d+) Dateien werden eingelesen …$/, (m, n) => `Загружается ${n} ${pl(n, 'файл', 'файла', 'файлов')} …`],
+      [/^Fassung (\d+) übernehmen$/, 'Взять вариант $1'],
+      [/^(Mo|Di|Mi|Do|Fr|Sa|So) (\d{1,2}\.\d{1,2}\.)$/, (m, d, x) => `${RU_DAY[d]} ${x}`],
+      [/^Reisekostenabrechnung (\d.*)$/, 'Отчёт о командировке $1'],
+      [/^(\d+ [^,]+?(?:, \d+ [^,]+?)*(?: und \d+ [^,]+?)?) eingelesen$/, (m, list) =>
+        `Загружено: ${list.split(/, | und /).map((x) => {
+          const [, n, w] = x.match(/^(\d+) (.+)$/) || [];
+          const f = w && RU_COUNT.find(([re]) => re.test(w));
+          return f ? `${n} ${pl(n, ...f[1])}` : x;
+        }).join(', ')}`],
+    ],
+    parts: {
+      'Datei beschädigt': 'файл повреждён', 'nicht eingelesen': 'не загружено', 'schon vorhanden (gleich)': 'уже есть (одинаковый)',
+      'schon vorhanden, mit Unterschieden': 'уже есть, с отличиями', 'mit Unterschieden': 'с отличиями', '(schon vorhanden)': '(уже есть)',
+      'Fassung in der App behalten': 'оставлен вариант в приложении', 'eben eingelesen': 'только что загружено', Arbeitsschein: 'Наряд',
+      gesendet: 'отправлен', offen: 'открыт', 'ist verschlüsselt': 'зашифрован',
+    },
     rparts: [
       [/(\d+) Lohnabrechnung(?:en)? neu/g, (m, n) => `${n} ${pl(n, 'новый расчётный лист', 'новых расчётных листа', 'новых расчётных листов')}`],
       [/(\d+) Arbeitsscheine? neu/g, (m, n) => `${n} ${pl(n, 'новый наряд', 'новых наряда', 'новых нарядов')}`],

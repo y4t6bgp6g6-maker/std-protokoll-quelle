@@ -162,10 +162,12 @@ const sheetTotal = (s) => sheetActiveDays(s).reduce((t, i) => t + dayTotal(s.day
 const sheetOvertime = (s, targetHours) => Math.max(0, sheetTotal(s) - Math.round(targetHours * 60));
 /** Soll des Zettels in Stunden: anteilig je Werktag Mo–Fr des Monats oder das volle Wochen-Soll */
 const sheetTarget = (s) => (settings.target / 5) * sheetActiveDays(s).filter((i) => i < 5).length;
-const sheetMatches = (s, anchor) => {
-  const n = newSheet(anchor, '');
-  return n.weekStart === s.weekStart && n.year === s.year && n.month === s.month;
+/** Woche und Monat, zu denen ein Tag gehört (wie newSheet), als Schlüssel „weekStart|Jahr|Monat“ */
+const anchorKey = (anchor) => {
+  const a = startOfDay(anchor);
+  return `${isoDate(mondayOf(a))}|${a.getFullYear()}|${a.getMonth() + 1}`;
 };
+const sheetMatches = (s, anchor) => `${s.weekStart}|${s.year}|${s.month}` === anchorKey(anchor);
 
 // ───────────────────────── Speicher ─────────────────────────
 
@@ -1044,7 +1046,10 @@ function saveSettings() {
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 const findSheet = (id) => sheets.find((s) => s.id === id);
-const existingSheet = (anchor, excludeId) => sheets.find((s) => s.id !== excludeId && sheetMatches(s, anchor));
+const existingSheet = (anchor, excludeId) => {
+  const k = anchorKey(anchor);
+  return sheets.find((s) => s.id !== excludeId && `${s.weekStart}|${s.year}|${s.month}` === k);
+};
 
 function openOrCreate(anchor) {
   const found = existingSheet(anchor);
@@ -1121,15 +1126,20 @@ function saveReports() {
     toast('Speichern fehlgeschlagen!');
   }
 }
-/** Neue Scheine übernehmen, gleiche Nummer ersetzt den alten (nachträglich geänderter Schein); Rückgabe: Anzahl neue */
+/** Neue Scheine übernehmen, gleiche Nummer ersetzt den alten (nachträglich geänderter Schein) mit allen Teilen –
+ *  die Zahl der Zeitzeilen und damit die IDs („123“, „123#1“ …) kann sich ändern; Rückgabe: Anzahl neue */
 function addReports(list) {
   let n = 0;
+  const nos = new Set(list.map((r) => r.no).filter(Boolean));
+  const ids = new Set(list.map((r) => r.id));
+  const known = new Set(reportStore.items.filter((r) => nos.has(r.no)).map((r) => r.no));
+  reportStore.items = reportStore.items.filter((r) => !nos.has(r.no) || ids.has(r.id));
   for (const rep of list) {
     const i = reportStore.items.findIndex((r) => r.id === rep.id);
     if (i >= 0) reportStore.items[i] = rep;
     else {
       reportStore.items.push(rep);
-      n++;
+      if (!known.has(rep.no)) n++;
     }
   }
   saveReports();
@@ -1345,20 +1355,23 @@ async function openSealedBackup(obj, fileName) {
   const tryKey = async (key) => {
     try {
       const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(obj.iv) }, key, fromB64(obj.data));
-      return JSON.parse(new TextDecoder().decode(plain));
+      return JSON.parse(utf8.decode(plain));
     } catch {
       return null;
     }
   };
-  const known = openedKeys.get(obj.salt) || (cryptStore && cryptStore.salt === obj.salt
-    ? await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', true, ['decrypt']) : null);
-  if (known) {
-    const data = await tryKey(known);
+  // Gleiches Salz heißt nicht gleiches Passwort (Salz hängt am Benutzernamen, „Passwort ändern“ behält es): beide probieren
+  const known = [
+    openedKeys.get(obj.salt),
+    cryptStore && cryptStore.salt === obj.salt ? await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', true, ['decrypt']) : null,
+  ].filter(Boolean);
+  for (const key of known) {
+    const data = await tryKey(key);
     if (data) return data;
   }
   document.getElementById('toast').classList.remove('show');
   for (let wrong = false; ; wrong = true) {
-    const pw = await askPassword(wrong ? 'Passwort falsch' : 'Passwort', `${escapeHtml(fileName)} ist verschlüsselt.`);
+    const pw = await askPassword(wrong ? 'Passwort falsch' : 'Passwort', `${noTrHTML(fileName)} ist verschlüsselt.`);
     if (pw == null) throw new Error('kein Passwort');
     const key = await passwordKey(pw, salt, obj.iter || PBKDF2_ITER);
     const data = await tryKey(key);
@@ -4051,9 +4064,12 @@ function dayText(d) {
       const time = r.start != null || r.end != null ? `${r.start != null ? fmtTime(r.start) : '?'}–${r.end != null ? fmtTime(r.end) : '?'}` : '';
       return [time, [(r.site || '').trim(), (r.work || '').trim()].filter(Boolean).join(' · ')].filter(Boolean).join(' ');
     });
-  if (d.status && !canWork(d)) return DAY_STATUS_SHORT[d.status];
-  const parts = [...(d.status ? [DAY_STATUS_SHORT[d.status]] : []), ...rows];
-  if (d.pause) parts.push(`Pause ${fmtH(d.pause)}`);
+  // Von Hand gesetzte Stunden einer Tagesart (3 s drücken) gehören zum Vergleich, ebenso Pause 0 an einem Tag mit Zeiten.
+  // Die Rückfragen zeigen die Zeile mit translate="no" (Einträge bleiben, wie sie sind): Tagesart und Pause hier übersetzen
+  const status = d.status ? tr(DAY_STATUS_SHORT[d.status]) + (d.credit != null ? ` · ${tr(fmtH(d.credit))}` : '') : '';
+  if (d.status && !canWork(d)) return status;
+  const parts = [...(status ? [status] : []), ...rows];
+  if (d.pause || (d.pause === 0 && dayHasTimes(d))) parts.push(`${tr('Pause')} ${tr(fmtH(d.pause))}`);
   return parts.join('; ') || '–';
 }
 /** Tage, an denen sich zwei Fassungen desselben Zettels unterscheiden: [{ i, mine, theirs }] */
@@ -4080,7 +4096,6 @@ function tripDiff(mine, theirs) {
   out.push({ label: 'Ort, Datum', mine: sign(mine), theirs: sign(theirs) });
   return out.filter((x) => x.mine !== x.theirs);
 }
-/** Zwei Fassungen eines Tages wortweise vergleichen: HTML beider Zeilen, abweichende Wörter in <mark> */
 /** Wörter eines Tagestexts; Satzzeichen am Wortende („getauscht;“) und der Strich zwischen zwei Uhrzeiten zählen extra */
 const diffWords = (t) =>
   t.split(' ').flatMap((w) => (/.[;,]$/.test(w) ? [w.slice(0, -1), w.slice(-1)] : [w]).flatMap((v) => v.split(/(?<=\d)(–)(?=[\d?])|(?<=\?)(–)/).filter(Boolean)));
@@ -4136,6 +4151,10 @@ function onlySpelling(a, b) {
   return editDistance(ka, kb) <= (len >= 10 ? 2 : len >= 5 ? 1 : 0);
 }
 const weekKey = (s) => `${s.weekStart}|${s.year}|${s.month}`;
+/** Dateiname, Name oder Eintrag in Meldungen: nie übersetzen (i18n.js) */
+const noTrHTML = (t) => `<span translate="no">${escapeHtml(t)}</span>`;
+/** Teile einer Rückmeldung je in eigenem Element, damit jeder für sich übersetzt wird */
+const partsHTML = (parts) => parts.map((p) => `<span>${p}</span>`).join(', ');
 /** „12.10.26, 14:03“ */
 const fmtStamp = (ms) => (ms ? `${fmtShort(new Date(ms))}, ${fmtTime(new Date(ms).getHours() * 60 + new Date(ms).getMinutes())}` : 'unbekannt');
 
@@ -4150,7 +4169,7 @@ function mergeBackup(data) {
   let same = 0;
   const conflicts = [];
   // Neues Gerät (noch kein Name eingetragen, z. B. nach dem Neu-Anlegen auf dem Home-Bildschirm):
-  // Einstellungen aus der Sicherung übernehmen – Name, Ort, ausgeblendete Vorschläge usw.
+  // Einstellungen aus der Sicherung übernehmen – Name, ausgeblendete Vorschläge, Sprache, Darstellung usw.
   // Die fest vorgegebenen Werte (Wochenstunden, Bundesland, Zeitschritte) bleiben unverändert.
   let settingsRestored = false;
   if (!settings.name.trim() && data.settings && typeof data.settings === 'object' && String(data.settings.name || '').trim()) {
@@ -4179,7 +4198,6 @@ function mergeBackup(data) {
     else same++;
   }
   saveSheets();
-  const signature = false; // Unterschrift der Einstellungen gibt es seit v91 nicht mehr
   // Reisekostenabrechnungen (gleiche ID): gleich → nichts, verschieden → Rückfrage wie bei den Zetteln
   let tripsAdded = 0;
   let tripsSame = 0;
@@ -4187,7 +4205,8 @@ function mergeBackup(data) {
     for (const raw of data.trips) {
       if (!raw || !raw.id || !Array.isArray(raw.dates)) continue;
       const t = { over: {}, ...raw, ...(myName ? { name: myName } : {}) };
-      const cur = findTrip(t.id);
+      // Gleiche ID, sonst dieselben Tage (Abrechnung in der App gelöscht und neu angelegt)
+      const cur = findTrip(t.id) || (t.dates.length ? trips.find((x) => [...x.dates].sort().join() === [...t.dates].sort().join()) : null);
       if (!cur) {
         trips.push(t);
         tripsAdded++;
@@ -4207,14 +4226,15 @@ function mergeBackup(data) {
     }
     if (payslipsAdded) savePayslips();
   }
-  // Arbeitsscheine: fehlende übernehmen
-  const reportsAdded = Array.isArray(data.reports) ? addReports(data.reports.filter((r) => r && r.id && r.date && !reports().some((x) => x.id === r.id))) : 0;
+  // Arbeitsscheine: nur fehlende (gleiche Nummer = schon da, auch wenn die Sicherung eine ältere Fassung hat)
+  const reportsAdded = Array.isArray(data.reports)
+    ? addReports(data.reports.filter((r) => r && r.id && r.date && !reports().some((x) => x.id === r.id || (r.no && x.no === r.no))))
+    : 0;
   // Berichtsheft: fehlende Hefte und Seiten übernehmen
   const bhAdded = data.berichtsheft ? bhMerge(data.berichtsheft) : 0;
-  return { added, same, conflicts, signature, renamed, tripsAdded, tripsSame, settingsRestored, payslipsAdded, reportsAdded, bhAdded };
+  return { added, same, conflicts, renamed, tripsAdded, tripsSame, settingsRestored, payslipsAdded, reportsAdded, bhAdded };
 }
 
-/** Eine oder mehrere Dateien einlesen: Sicherung (.json), Stundenzettel als Numbers-Datei oder PDF */
 /** Dateitypen für „Einlesen“ (nur diese, damit iOS keine Kamera/Fotos anbietet) */
 const IMPORT_ACCEPT =
   '.json,.numbers,.pdf,.odt,application/json,application/pdf,application/vnd.apple.numbers,application/x-iwork-numbers-sffnumbers,application/vnd.oasis.opendocument.text';
@@ -4234,6 +4254,7 @@ function pickImportFile() {
   input.click();
 }
 
+/** Eine oder mehrere Dateien einlesen: Sicherung (.json), Stundenzettel als Numbers-Datei oder PDF, Arbeitsschein (.odt) */
 async function importBackup(input) {
   const files = [...(input.files || [])];
   input.value = '';
@@ -4260,16 +4281,25 @@ async function importBackup(input) {
       }
   };
   toast(files.length > 1 ? `${files.length} Dateien werden eingelesen …` : 'Wird eingelesen …', 10000);
+  // Neue Zettel aus Dateien erst gesammelt speichern (bei vielen Dateien sonst jedes Mal alle), spätestens vor einer Rückfrage
+  let unsaved = false;
+  const saveNew = () => {
+    if (unsaved) saveSheets();
+    unsaved = false;
+  };
   for (const file of files) {
-    const label = `<b>${escapeHtml(file.name)}</b>`;
+    const label = `<b translate="no">${escapeHtml(file.name)}</b>`;
     let json = false;
     try {
       const buf = await file.arrayBuffer();
       const head = new Uint8Array(buf.slice(0, 1))[0];
       if (/\.json$/i.test(file.name) || head === 0x7b || head === 0x5b) {
         json = true;
-        let parsed = JSON.parse(new TextDecoder().decode(buf));
-        if (parsed && parsed.enc) parsed = await openSealedBackup(parsed, file.name);
+        let parsed = JSON.parse(utf8.decode(buf));
+        if (parsed && parsed.enc) {
+          saveNew(); // Passwortfenster: vorher speichern
+          parsed = await openSealedBackup(parsed, file.name);
+        }
         const r = mergeBackup(parsed);
         total += r.added;
         tripCount += r.tripsAdded;
@@ -4283,7 +4313,7 @@ async function importBackup(input) {
           const tp = [`${r.tripsAdded} Reisekostenabrechnung${r.tripsAdded === 1 ? '' : 'en'} neu`];
           if (r.tripsSame) tp.push(`${r.tripsSame} schon vorhanden (gleich)`);
           if (tripConf) tp.push(`${tripConf} mit Unterschieden`);
-          parts.push(tp.join(', '));
+          parts.push(partsHTML(tp));
         }
         if (r.payslipsAdded) parts.push(`${r.payslipsAdded} Lohnabrechnung${r.payslipsAdded === 1 ? '' : 'en'} neu`);
         if (r.reportsAdded) parts.push(`${r.reportsAdded} Arbeitsschein${r.reportsAdded === 1 ? '' : 'e'} neu`);
@@ -4292,9 +4322,8 @@ async function importBackup(input) {
         reportCount += r.reportsAdded;
         bhCount += r.bhAdded;
         if (r.settingsRestored) parts.push('Einstellungen übernommen');
-        if (r.signature) parts.push('Unterschrift übernommen');
-        if (r.renamed) parts.push(`Name bei ${r.renamed} auf „${escapeHtml(settings.name.trim())}“ geändert`);
-        lines.push(`${label}: ${parts.join(', ')}`);
+        if (r.renamed) parts.push(`Name bei ${r.renamed} auf „${noTrHTML(settings.name.trim())}“ geändert`);
+        lines.push(`${label}: ${partsHTML(parts)}`);
         continue;
       }
       // Arbeitsschein (.odt der Arbeitsbericht-App)
@@ -4302,11 +4331,11 @@ async function importBackup(input) {
         const list = await readWorkReportFile(buf);
         const n = addReports(list);
         reportCount += n;
-        lines.push(`${label}: Arbeitsschein ${escapeHtml(shortCustomer(list[0].customer))}, ${fmtShort(parseDate(list[0].date))}${n ? '' : ' (schon vorhanden)'}`);
+        lines.push(`${label}: Arbeitsschein ${noTrHTML(shortCustomer(list[0].customer))}, ${fmtShort(parseDate(list[0].date))}${n ? '' : ' (schon vorhanden)'}`);
         continue;
       }
       // Woche über ein Monatsende: ein Zettel je Monat
-      for (const s of await importTimesheetFile(file.name, buf, (stated, options) => askImportDate(file.name, stated, options))) {
+      for (const s of await importTimesheetFile(file.name, buf, (stated, options) => (saveNew(), askImportDate(file.name, stated, options)))) {
         const existing = existingSheet(sheetFirstDate(s));
         const other = s.importedName && s.importedName.trim() !== s.name;
         const yearFixed = s.yearFixed;
@@ -4317,30 +4346,33 @@ async function importBackup(input) {
           // War die Woche vorher nicht in der App, stammt „vorhanden“ aus einer anderen Datei dieses Einlesens
           const from = added.get(existing);
           if (!sheetDiff(existing, s).length) {
-            lines.push(`${label}: ${range} ${from ? `gleich wie in ${escapeHtml(from.file)}` : 'schon vorhanden (gleich)'}`);
+            lines.push(`${label}: ${range} ${from ? `gleich wie in ${noTrHTML(from.file)}` : 'schon vorhanden (gleich)'}`);
             if (from) sameFiles.set(existing, [...(sameFiles.get(existing) || []), file.name]);
           } else {
             conflicts.push({ existing, incoming: s, stamp: file.lastModified, stampLabel: 'Datei vom', file: file.name });
-            lines.push(`${label}: ${range} ${from ? `auch in ${escapeHtml(from.file)}, mit Unterschieden` : 'schon vorhanden, mit Unterschieden'}`);
+            lines.push(`${label}: ${range} ${from ? `auch in ${noTrHTML(from.file)}, mit Unterschieden` : 'schon vorhanden, mit Unterschieden'}`);
           }
           continue;
         }
         s.sentAt = Date.now(); // eingelesene Zettel gelten als schon gesendet
         sheets.push(s);
-        saveSheets(s);
+        unsaved = true;
         total++;
         lines.push(
-          `${label}: ${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}, ${fmtH(sheetTotal(s))}${other ? ` · Name auf „${escapeHtml(s.name)}“ geändert` : ''}${yearFixed ? ` · im Zettel stand ${yearFixed}` : ''}`
+          `${label}: ${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}, ${fmtH(sheetTotal(s))}${other ? ` · <span>Name auf „</span>${noTrHTML(s.name)}<span>“ geändert</span>` : ''}${yearFixed ? ` · im Zettel stand ${yearFixed}` : ''}`
         );
       }
     } catch (e) {
       failed++;
+      // Programmfehler melden; erwartete Fälle (Format, Passwort, kein Stundenzettel) und SyntaxError nicht (JSC nennt darin Dateiinhalt)
+      if (e instanceof TypeError || e instanceof RangeError || e instanceof ReferenceError) window.fehlerMelden?.(e, 'einlesen');
       if (e && e.message === 'skip') lines.push(`${label}: nicht eingelesen`);
-      else lines.push(`${label}: konnte nicht gelesen werden${e && e.message && e.message !== 'format' ? ` (${escapeHtml(e.message)})` : ''}`);
+      else lines.push(`${label}: konnte nicht gelesen werden${e && e.message && e.message !== 'format' ? ` (<span>${escapeHtml(e.message)}</span>)` : ''}`);
     } finally {
       markNew(file, json);
     }
   }
+  saveNew();
   document.getElementById('toast').classList.remove('show');
   // Zettel und Abrechnungen mit Unterschieden: selbst entscheiden.
   // Gab es sie vorher nicht in der App, sondern nur in mehreren Dateien: eine Fassung wählen (ohne „für alle“, das ginge nicht).
@@ -4375,11 +4407,11 @@ async function importBackup(input) {
       const pick = await askVersions(c);
       const v = c.versions[pick];
       if (pick > 0) c.trip ? replaceTrip({ existing: c.existing, incoming: v.data }) : replaceSheet({ existing: c.existing, incoming: v.data, backup: v.backup });
-      lines.push(`${title}: Fassung aus ${v.files.map(escapeHtml).join(', ')} übernommen`);
+      lines.push(`${title}: Fassung aus ${noTrHTML(v.files.join(', '))} übernommen`);
       continue;
     }
     if (!(c.trip ? tripDiff(c.existing, c.incoming) : sheetDiff(c.existing, c.incoming)).length) {
-      lines.push(`${title}: ${escapeHtml(c.file)} gleich wie die übernommene Fassung`);
+      lines.push(`${title}: ${noTrHTML(c.file)} gleich wie die übernommene Fassung`);
       continue;
     }
     if (rejected.get(c.existing)?.has(version(c, c.incoming))) {
@@ -4402,7 +4434,7 @@ async function importBackup(input) {
       if (!rejected.has(c.existing)) rejected.set(c.existing, new Set());
       rejected.get(c.existing).add(version(c, c.incoming));
     }
-    lines.push(`${title}: ${replace ? `Fassung aus ${escapeHtml(c.file)} übernommen` : 'Fassung in der App behalten'}`);
+    lines.push(`${title}: ${replace ? `Fassung aus ${noTrHTML(c.file)} übernommen` : 'Fassung in der App behalten'}`);
   }
   if (conflicts.some((c) => !c.trip)) saveSheets();
   if (conflicts.some((c) => c.trip)) saveTrips();
@@ -4474,7 +4506,6 @@ function scrollBar(modal) {
   setTimeout(updateBar, 300);
 }
 
-/** Rückfrage bei einem doppelten Zettel (oder einer Abrechnung) mit Unterschieden; Ergebnis: 'keep' | 'replace' | 'keepAll' | 'replaceAll' */
 /** „Woche von“ ist kein Montag (Jahr oder Monat vertippt): einen der Vorschläge (options, 1–2) wählen, wie im Zettel lassen
  *  oder nicht einlesen. Ergebnis: Datum für „Woche von“ oder null */
 function askImportDate(fileName, stated, options) {
@@ -4484,7 +4515,7 @@ function askImportDate(fileName, stated, options) {
     document.getElementById('toast').classList.remove('show'); // „Wird eingelesen …“ ausblenden, solange gefragt wird
     const modal = openModal(
       `<div class="alert-body"><b>Datum prüfen</b><div class="alert-msg">
-        <p><b>${escapeHtml(fileName)}</b></p>
+        <p><b translate="no">${escapeHtml(fileName)}</b></p>
         <p>Im Zettel steht ${range(stated)}. Der ${fmtShort(stated)} ist aber ein ${WEEKDAYS[(stated.getDay() + 6) % 7]}.</p>
       </div></div>
       <div class="alert-buttons stacked">
@@ -4511,6 +4542,7 @@ function askImportDate(fileName, stated, options) {
   });
 }
 
+/** Rückfrage bei einem doppelten Zettel (oder einer Abrechnung) mit Unterschieden; Ergebnis: 'keep' | 'replace' | 'keepAll' | 'replaceAll' */
 function askConflict(c, remaining) {
   return new Promise((resolve) => {
     const { existing: mine, incoming: theirs } = c;
@@ -4524,8 +4556,8 @@ function askConflict(c, remaining) {
         const w = wordDiffHTML(d.mine, d.theirs);
         const hint = w.spelling ? '<span class="cf-spell">nur Schreibweise</span>' : '';
         return `<li><b>${d.label}</b>${hint}
-          <span class="cf-line"><span class="cf-tag app">App</span><span class="cf-txt">${w.mine}</span></span>
-          <span class="cf-line"><span class="cf-tag new">Neu</span><span class="cf-txt">${w.theirs}</span></span></li>`;
+          <span class="cf-line"><span class="cf-tag app">App</span><span class="cf-txt" translate="no">${w.mine}</span></span>
+          <span class="cf-line"><span class="cf-tag new">Neu</span><span class="cf-txt" translate="no">${w.theirs}</span></span></li>`;
       })
       .join('');
     const allSpelling = diffs.every((d) => wordDiffHTML(d.mine, d.theirs).spelling);
@@ -4535,8 +4567,8 @@ function askConflict(c, remaining) {
         <div class="cf-scroll"><div class="alert-msg">
           <p class="cf-intro"><b>${escapeHtml(conflictTitle(c))}</b> gibt es schon, ${allSpelling ? 'nur die Schreibweise ist anders' : 'aber mit Unterschieden'}.</p>
           <div class="cf-versions">
-            <div><span class="cf-tag app">App</span>${c.existingFile ? `eben eingelesen · ${sum(mine)}<br><span class="muted">aus ${escapeHtml(c.existingFile)}</span>` : `geändert ${fmtStamp(mine.updatedAt)} · ${sum(mine)} · ${sentLabel(mine)}`}</div>
-            <div><span class="cf-tag new">Neu</span>${escapeHtml(c.stampLabel)} ${fmtStamp(c.stamp)} · ${sum(theirs)}${c.backup ? ` · ${sentLabel(theirs)}` : ''}<br><span class="muted">aus ${escapeHtml(c.file)}</span></div>
+            <div><span class="cf-tag app">App</span>${c.existingFile ? `eben eingelesen · ${sum(mine)}<br><span class="muted">aus ${noTrHTML(c.existingFile)}</span>` : `geändert ${fmtStamp(mine.updatedAt)} · ${sum(mine)} · ${sentLabel(mine)}`}</div>
+            <div><span class="cf-tag new">Neu</span>${escapeHtml(c.stampLabel)} ${fmtStamp(c.stamp)} · ${sum(theirs)}${c.backup ? ` · ${sentLabel(theirs)}` : ''}<br><span class="muted">aus ${noTrHTML(c.file)}</span></div>
           </div>
           <ul class="cf-diff">${diff}</ul>
         </div><div class="cf-bar"><i></i></div></div>
@@ -4597,7 +4629,7 @@ function askVersions(c) {
       .map(
         (d) => `<li><b>${d.label}</b>
           ${wordsMultiHTML(d.own)
-            .map((h, k) => `<span class="cf-line"><span class="cf-tag ver">${k + 1}</span><span class="cf-txt">${h}</span></span>`)
+            .map((h, k) => `<span class="cf-line"><span class="cf-tag ver">${k + 1}</span><span class="cf-txt" translate="no">${h}</span></span>`)
             .join('')}</li>`
       )
       .join('');
@@ -4610,7 +4642,7 @@ function askVersions(c) {
             ${c.versions
               .map(
                 (v, k) =>
-                  `<div><span class="cf-tag ver">${k + 1}</span>${escapeHtml(v.stampLabel)} ${fmtStamp(v.stamp)} · ${sum(v.data)}<br><span class="muted">aus ${v.files.map(escapeHtml).join(', ')}</span></div>`
+                  `<div><span class="cf-tag ver">${k + 1}</span>${escapeHtml(v.stampLabel)} ${fmtStamp(v.stamp)} · ${sum(v.data)}<br><span class="muted">aus ${noTrHTML(v.files.join(', '))}</span></div>`
               )
               .join('')}
           </div>

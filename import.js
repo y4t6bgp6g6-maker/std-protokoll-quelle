@@ -13,18 +13,18 @@ const latin1 = (bytes) => {
 const utf8 = new TextDecoder('utf-8');
 
 async function inflate(bytes, format) {
-  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(format));
+  const stream = new Response(bytes).body.pipeThrough(new DecompressionStream(format)); // Response ist in WebKit schneller als Blob
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-const WEEKDAY_KEYS = ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag'];
 /** „Dienstag “, „Di“, „DIENSTAG“, „Mo 05.01.“ → Wochentag 0–6 (erstes Wort); sonst -1 */
 function weekdayIndex(text) {
   const t = String(text || '').trim().toLowerCase().split(/[\s,]+/)[0];
   if (!t) return -1;
-  const i = WEEKDAY_KEYS.findIndex((k) => t === k || t.startsWith(k));
+  // dieselben Namen, die pdf.js in die Spalte „Tag“ schreibt (WEEKDAYS, WEEKDAYS_SHORT aus app.js)
+  const i = WEEKDAYS.findIndex((k) => t.startsWith(k.toLowerCase()));
   if (i >= 0) return i;
-  return ['mo', 'di', 'mi', 'do', 'fr', 'sa', 'so'].indexOf(t.replace(/\.$/, ''));
+  return WEEKDAYS_SHORT.findIndex((k) => k.toLowerCase() === t.replace(/\.$/, ''));
 }
 
 /** Wochentag am Anfang entfernen: „Donnerstag frei“ → „frei“ */
@@ -38,15 +38,17 @@ function parseClock(text) {
   return v >= 0 && v <= 1440 ? v : null;
 }
 
-/** Pause als Text: „0h 30m“, „1ч 0мин“, „0:30“, „30 min“, „0,5“ → Minuten */
+/** Pause als Text: „0h 30m“, „1ч 0мин“, „0:30“, „0:30 h“, „0:30:00“, „12:00 – 12:30“, „30 min“, „0,5“ → Minuten */
 function parseDuration(text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
+  const span = t.match(/^(\d{1,2})[:.](\d{2})\s*[-–]\s*(\d{1,2})[:.](\d{2})$/);
+  if (span) return Math.max(0, Number(span[3]) * 60 + Number(span[4]) - Number(span[1]) * 60 - Number(span[2]));
+  const hm = t.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(h|std\.?|stunden?|ч)?$/);
+  if (hm) return Number(hm[1]) * 60 + Number(hm[2]);
   const h = t.match(/(\d+(?:[.,]\d+)?)\s*(h|std|ч|stunde)/);
   const m = t.match(/(\d+)\s*(m|min|мин)/);
   if (h || m) return Math.round((h ? parseFloat(h[1].replace(',', '.')) * 60 : 0) + (m ? Number(m[1]) : 0));
-  const c = t.match(/^(\d{1,2}):(\d{2})$/);
-  if (c) return Number(c[1]) * 60 + Number(c[2]);
   const n = parseFloat(t.replace(',', '.'));
   if (!Number.isNaN(n)) return n <= 12 ? Math.round(n * 60) : Math.round(n); // Stunden, große Zahlen als Minuten
   return null;
@@ -425,6 +427,7 @@ function cellClock(c) {
 function cellPause(c) {
   if (!c) return null;
   if (c.duration != null) return Math.round(c.duration / 60);
+  if (c.seconds != null) return cellClock(c); // „0:30“ als Uhrzeit getippt
   if (c.text) return parseDuration(c.text);
   if (c.number != null) return c.number <= 12 ? Math.round(c.number * 60) : Math.round(c.number);
   return null;
@@ -489,16 +492,10 @@ function gridToParsed(grid) {
     const pause = cellPause(get('pause'));
     if (pause != null && current.pause == null) current.pause = pause;
     const entry = { start: cellClock(get('start')), end: cellClock(get('end')), site: cellText(get('site')), work: cellText(get('work')) };
-    addEntry(current, entry);
+    if (!rowIsEmpty(entry)) current.rows.push(entry);
   }
   if (current) finishDay(current);
   return result;
-}
-
-/** Zeile zum Tag hinzufügen; „Frei“, „Urlaub“ usw. ohne Uhrzeiten werden zur Tagesart */
-function addEntry(day, e) {
-  if (e.start == null && e.end == null && !e.site && !e.work) return;
-  day.rows.push(e);
 }
 
 // ───────────────────────── PDF ─────────────────────────
@@ -506,7 +503,8 @@ function addEntry(day, e) {
 /** Alle Objekte „n 0 obj … endobj“ einer PDF-Datei (als Latin-1-Text) */
 function pdfObjects(text) {
   const objects = new Map();
-  const re = /(\d+)\s+0\s+obj\b/g;
+  // Spätere Fassung desselben Objekts (nachträglich geänderte Datei) überschreibt die frühere
+  const re = /(\d+)\s+\d+\s+obj\b/g;
   let m;
   while ((m = re.exec(text))) {
     const start = m.index + m[0].length;
@@ -516,6 +514,44 @@ function pdfObjects(text) {
     re.lastIndex = end;
   }
   return objects;
+}
+
+/** Objekte in Objektströmen (/ObjStm, z. B. PDFs aus Chrome oder Word) dazunehmen */
+async function pdfExpandObjStm(objects, bytesOf) {
+  for (const o of [...objects.values()]) {
+    if (!/\/Type\s*\/ObjStm\b/.test(o)) continue;
+    const n = Number((o.match(/\/N\s+(\d+)/) || [])[1]);
+    const first = Number((o.match(/\/First\s+(\d+)/) || [])[1]);
+    if (!n || !first) continue;
+    const data = await pdfStream(o, bytesOf, objects);
+    const head = data.slice(0, first).trim().split(/\s+/).map(Number);
+    for (let k = 0; k < n; k++) {
+      const num = head[2 * k];
+      const from = first + head[2 * k + 1];
+      const to = k + 1 < n ? first + head[2 * k + 3] : data.length;
+      if (!objects.has(num)) objects.set(num, data.slice(from, to));
+    }
+  }
+}
+
+/** Wert eines Eintrags im Wörterbuch: „<< … >>“ und „[ … ]“ samt Verschachtelung, Verweis „12 0 R“ oder ein Wort */
+function pdfValue(dict, key) {
+  const m = new RegExp(`/${key}(?![A-Za-z0-9])\\s*`).exec(String(dict || ''));
+  if (!m) return '';
+  const t = String(dict).slice(m.index + m[0].length);
+  if (t.startsWith('<<') || t.startsWith('[')) {
+    let depth = 0;
+    for (let i = 0; i < t.length; i++) {
+      if (t.startsWith('<<', i) || t[i] === '[') depth++, t[i] === '<' && i++;
+      else if (t.startsWith('>>', i) || t[i] === ']') {
+        depth--;
+        if (t[i] === '>') i++;
+        if (!depth) return t.slice(0, i + 1);
+      }
+    }
+    return t;
+  }
+  return (t.match(/^\d+\s+\d+\s+R|^[^\s/<>\[\]]+|^\/[^\s/<>\[\]]+/) || [''])[0];
 }
 
 async function pdfStream(objText, bytesOf, objects) {
@@ -545,21 +581,30 @@ const WIN_ANSI_HIGH = Object.fromEntries(Object.entries(WIN_ANSI).map(([u, c]) =
 function parseToUnicode(cmap) {
   const map = new Map();
   const hex = (h) => parseInt(h, 16);
-  const uni = (h) => String.fromCodePoint(...h.match(/.{4}/g).map(hex));
+  // Ziel in UTF-16 (auch mehrere Zeichen wie „fi“ oder Ersatzpaare); im Bereich zählt die letzte Einheit hoch
+  const units = (h) => h.padEnd(Math.ceil(h.length / 4) * 4, '0').match(/.{4}/g).map(hex);
+  const str = (u) => String.fromCharCode(...u);
   for (const block of cmap.match(/beginbfchar([\s\S]*?)endbfchar/g) || []) {
-    for (const m of block.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) map.set(hex(m[1]), uni(m[2]));
+    for (const m of block.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) map.set(hex(m[1]), str(units(m[2])));
   }
   for (const block of cmap.match(/beginbfrange([\s\S]*?)endbfrange/g) || []) {
-    for (const m of block.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) {
-      const base = hex(m[3]);
-      for (let c = hex(m[1]), k = 0; c <= hex(m[2]); c++, k++) map.set(c, String.fromCodePoint(base + k));
+    for (const m of block.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]+>|\[[^\]]*\])/g)) {
+      const lo = hex(m[1]);
+      const hi = hex(m[2]);
+      if (m[3][0] === '[') {
+        // Liste: je Code ein eigenes Ziel
+        [...m[3].matchAll(/<([0-9a-fA-F]+)>/g)].forEach((d, k) => lo + k <= hi && map.set(lo + k, str(units(d[1]))));
+        continue;
+      }
+      const base = units(m[3].slice(1, -1));
+      for (let c = lo, k = 0; c <= hi && k < 65536; c++, k++) map.set(c, str([...base.slice(0, -1), base.at(-1) + k]));
     }
   }
   return map;
 }
 
 const resolve = (objects, v) => {
-  const m = String(v || '').match(/^\s*(\d+)\s+0\s+R/);
+  const m = String(v || '').match(/^\s*(\d+)\s+\d+\s+R/);
   return m ? objects.get(Number(m[1])) || '' : v;
 };
 
@@ -581,8 +626,30 @@ async function pdfFont(objects, fontObj, bytesOf) {
     const base = font.decode;
     font.decode = (c) => extra.get(c) || base(c);
   }
-  const tu = fontObj.match(/\/ToUnicode\s+(\d+)\s+0\s+R/);
+  const tu = fontObj.match(/\/ToUnicode\s+(\d+)\s+\d+\s+R/);
   if (tu) font.map = parseToUnicode(await pdfStream(objects.get(Number(tu[1])) || '', bytesOf, objects));
+  // Zusammengesetzte Schrift (Type0, z. B. aus Chrome oder Word): 2 Byte je Zeichen, Breiten in /W der Unterschrift
+  if (/\/Subtype\s*\/Type0\b/.test(fontObj)) {
+    font.twoByte = true;
+    font.decode = () => '';
+    const desc = String(resolve(objects, pdfValue(fontObj, 'DescendantFonts'))).match(/(\d+)\s+\d+\s+R/);
+    const cid = desc ? objects.get(Number(desc[1])) || '' : String(resolve(objects, pdfValue(fontObj, 'DescendantFonts')));
+    font.dw = Number(pdfValue(cid, 'DW')) || 1000;
+    font.cidWidths = new Map();
+    const tok = String(resolve(objects, pdfValue(cid, 'W'))).match(/\[|\]|-?\d+(?:\.\d+)?/g) || [];
+    for (let i = 1; i < tok.length - 1; ) {
+      const c = Number(tok[i]);
+      if (tok[i + 1] === '[') {
+        let k = i + 2;
+        for (let n = 0; tok[k] !== ']' && k < tok.length; k++, n++) font.cidWidths.set(c + n, Number(tok[k]));
+        i = k + 1;
+      } else {
+        for (let n = c; n <= Number(tok[i + 1]); n++) font.cidWidths.set(n, Number(tok[i + 2]));
+        i += 3;
+      }
+    }
+    return font;
+  }
   const fc = fontObj.match(/\/FirstChar\s+(\d+)/);
   font.first = fc ? Number(fc[1]) : 0;
   let w = fontObj.match(/\/Widths\s*(\[[^\]]*\]|\d+\s+0\s+R)/);
@@ -652,20 +719,46 @@ async function readPdfItems(buf) {
     return out;
   };
   const objects = pdfObjects(text);
-  const pageEntry = [...objects.values()].find((o) => /\/Type\s*\/Page\b/.test(o));
+  await pdfExpandObjStm(objects, bytesOf);
+  // Erste Seite: über den Seitenbaum (Katalog → /Pages → erstes /Kids), sonst das erste Seitenobjekt der Datei
+  const isPage = (o) => /\/Type\s*\/Page(?![a-z])/.test(o);
+  let pageEntry = null;
+  const catalog = [...objects.values()].find((o) => /\/Type\s*\/Catalog\b/.test(o));
+  for (let node = catalog && resolve(objects, pdfValue(catalog, 'Pages')), k = 0; node && k < 20; k++) {
+    if (isPage(node)) {
+      pageEntry = node;
+      break;
+    }
+    const kid = String(pdfValue(node, 'Kids')).match(/(\d+)\s+\d+\s+R/);
+    node = kid && objects.get(Number(kid[1]));
+  }
+  pageEntry = pageEntry || [...objects.values()].find(isPage);
   if (!pageEntry) throw new Error('Keine Seite gefunden');
-  const box = (pageEntry.match(/\/MediaBox\s*\[([^\]]*)\]/) || [, '0 0 595 842'])[1].trim().split(/\s+/).map(Number);
+  // Ressourcen und Seitengröße können von übergeordneten Knoten geerbt sein (/Parent)
+  const inherited = (key) => {
+    for (let node = pageEntry, k = 0; node && k < 20; k++) {
+      const v = pdfValue(node, key);
+      if (v) return resolve(objects, v);
+      node = resolve(objects, pdfValue(node, 'Parent'));
+      if (typeof node !== 'string' || !node) return '';
+    }
+    return '';
+  };
+  const box = (String(inherited('MediaBox')).match(/\[([^\]]*)\]/) || [, '0 0 595 842'])[1].trim().split(/\s+/).map(Number);
   const pageH = box[3];
-  let res = (pageEntry.match(/\/Resources\s*(\d+\s+0\s+R|<<[\s\S]*?>>\s*>>)/) || [])[1] || '';
-  res = resolve(objects, res);
-  const fontDict = (String(res).match(/\/Font\s*(<<[^>]*>>|\d+\s+0\s+R)/) || [])[1] || '';
+  const res = inherited('Resources');
   const fonts = new Map();
-  for (const m of String(resolve(objects, fontDict)).matchAll(/\/([^\s/]+)\s+(\d+)\s+0\s+R/g)) {
+  for (const m of String(resolve(objects, pdfValue(res, 'Font'))).matchAll(/\/([^\s/<>\[\]]+)\s+(\d+)\s+\d+\s+R/g)) {
     fonts.set(m[1], await pdfFont(objects, objects.get(Number(m[2])) || '', bytesOf));
   }
-  const contentRefs = (pageEntry.match(/\/Contents\s*(\[[^\]]*\]|\d+\s+0\s+R)/) || [])[1] || '';
+  const contentRefs = String(pdfValue(pageEntry, 'Contents'));
   let content = '';
-  for (const m of contentRefs.matchAll(/(\d+)\s+0\s+R/g)) content += (await pdfStream(objects.get(Number(m[1])) || '', bytesOf, objects)) + '\n';
+  for (const m of contentRefs.matchAll(/(\d+)\s+\d+\s+R/g)) {
+    const o = objects.get(Number(m[1])) || '';
+    // Verweis auf eine Liste von Inhalten
+    if (!o.includes('stream') && /\d+\s+\d+\s+R/.test(o)) for (const r of o.matchAll(/(\d+)\s+\d+\s+R/g)) content += (await pdfStream(objects.get(Number(r[1])) || '', bytesOf, objects)) + '\n';
+    else content += (await pdfStream(o, bytesOf, objects)) + '\n';
+  }
 
   const items = [];
   let ctm = [1, 0, 0, 1, 0, 0];
@@ -686,10 +779,12 @@ async function readPdfItems(buf) {
     if (!font) return;
     let str = '';
     let width = 0;
+    if (font.twoByte) codes = codes.flatMap((c, i) => (i % 2 ? [] : [c * 256 + (codes[i + 1] || 0)]));
     for (const c of codes) {
       str += (font.map && font.map.get(c)) || font.decode(c) || '';
-      const w = font.widths[c - font.first] || 0;
-      width += ((w / 1000) * size + charSpace + (c === 32 ? wordSpace : 0)) * hScale;
+      const w = font.twoByte ? (font.cidWidths.has(c) ? font.cidWidths.get(c) : font.dw) : font.widths[c - font.first] || 0;
+      // Wortabstand nur bei einem Byte 32 (laut PDF nicht bei 2-Byte-Schriften)
+      width += ((w / 1000) * size + charSpace + (c === 32 && !font.twoByte ? wordSpace : 0)) * hScale;
     }
     const m = mul(tm, ctm);
     const scale = Math.hypot(m[0], m[1]);
@@ -790,7 +885,7 @@ async function readPdfItems(buf) {
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   const merged = [];
   for (const it of items) {
-    if (!it.text.trim() && !it.text) continue;
+    if (!it.text) continue;
     const last = merged[merged.length - 1];
     if (last && Math.abs(last.y - it.y) < 1 && it.x - (last.x + last.w) < it.size * 0.6 && it.x >= last.x + last.w - it.size) {
       const gap = it.x - (last.x + last.w);
@@ -928,9 +1023,9 @@ function pdfItemsToParsed(items) {
         last.y = r.y;
         continue;
       }
-      const before = day.rows.length;
-      addEntry(day, e);
-      if (day.rows.length > before) last = { y: r.y, e };
+      if (rowIsEmpty(e)) continue;
+      day.rows.push(e);
+      last = { y: r.y, e };
     }
     finishDay(day);
     result.days.push(day);
@@ -990,7 +1085,8 @@ function parsedToSheets(parsed, fileName, chosen) {
   for (const d of parsed.days) {
     if (seen.has(d.day)) continue; // doppelte Wochentage: nur der erste zählt
     seen.add(d.day);
-    if (d.status || d.rows.length || d.pause) filled.add(d.day);
+    // Tagesart am Sa/So (außer Feiertag) entfernt fixWeekend – zählt nicht als Inhalt (sonst leerer Zettel für den Folgemonat)
+    if ((d.status && (d.day < 5 || d.status === 'feiertag')) || d.rows.length || d.pause) filled.add(d.day);
     const day = s.days[d.day];
     const rows = d.rows.map((r) => ({ id: uid(), start: r.start, end: r.end, site: r.site || '', work: r.work || '' }));
     if (d.status) {
@@ -999,13 +1095,13 @@ function parsedToSheets(parsed, fileName, chosen) {
       // Feiertag mit Arbeit (Notdienst): Zeilen übernehmen
       if (d.status === 'feiertag' && rows.length) {
         day.rows = rows;
-        day.pause = d.pause != null ? d.pause : null;
+        day.pause = d.pause ?? null;
       }
       continue;
     }
     if (rows.length) {
       day.rows = rows;
-      day.pause = d.pause != null ? d.pause : null;
+      day.pause = d.pause ?? null;
     } else if (d.pause) {
       day.pause = d.pause;
     }
@@ -1022,10 +1118,7 @@ function parsedToSheets(parsed, fileName, chosen) {
   }
   let result = parts.filter((x) => sheetActiveDays(x).some((k) => filled.has(k)));
   if (!result.length) result = parts.filter((x) => x.year === s.year && x.month === s.month);
-  result.forEach((x) => {
-    markHolidays(x);
-    fixWeekend(x);
-  });
+  result.forEach((x) => fixWeekend(x)); // trägt auch die Feiertage ein (markHolidays)
   return result;
 }
 
@@ -1048,18 +1141,22 @@ async function importTimesheetFile(name, buf, askDate = null) {
   if (isPdf) return finish(pdfItemsToParsed(await readPdfItems(buf)));
   // Numbers-Dateien sind ZIP-Archive (beginnen mit „PK“)
   if (!(head[0] === 0x50 && head[1] === 0x4b)) throw new Error('nur Numbers-, PDF- oder Sicherungsdateien');
+  // Jede passende Tabelle mit Einträgen (z. B. ein Blatt je Woche) ergibt ihre Zettel; ganz ohne Einträge die erste
   const tables = await readNumbersTables(buf);
   let lastError = null;
+  const found = [];
   for (const t of tables) {
-    let parsed;
     try {
-      parsed = gridToParsed(t.grid);
-      parsedToSheets(parsed, name); // Probe: passt diese Tabelle?
+      const parsed = gridToParsed(t.grid);
+      if (!parsed.from && !dateFromFileName(name)) throw new Error('Kein Datum („Woche von“) gefunden');
+      found.push(parsed);
     } catch (e) {
       lastError = e;
-      continue;
     }
-    return finish(parsed);
   }
-  throw lastError || new Error('Keine Tabelle gefunden');
+  if (!found.length) throw lastError || new Error('Keine Tabelle gefunden');
+  const filled = found.filter((p) => p.days.some((d) => d.rows.length || d.status || d.pause));
+  const out = [];
+  for (const parsed of filled.length ? filled : found.slice(0, 1)) out.push(...(await finish(parsed)));
+  return out;
 }
