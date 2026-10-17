@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v88';
+const CACHE = 'std-protokoll-v89';
 const ASSETS = [
   './',
   'index.html',
@@ -24,10 +24,10 @@ const ASSETS = [
   'karten.js',
   'fonts/special-elite.woff2',
   'manifest.webmanifest',
-  'icons/apple-touch-icon.png?v=2',
-  'icons/icon-192.png?v=2',
-  'icons/icon-512.png?v=2',
-  'icons/icon-maskable-512.png?v=2',
+  'icons/apple-touch-icon.png?v=3',
+  'icons/icon-192.png?v=3',
+  'icons/icon-512.png?v=3',
+  'icons/icon-maskable-512.png?v=3',
 ];
 
 self.addEventListener('install', (event) => {
