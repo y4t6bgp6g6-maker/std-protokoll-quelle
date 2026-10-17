@@ -102,7 +102,8 @@ async function accountSetup(user, pw, mode, again) {
   user = accountUser(user);
   if (!user) return toast('Benutzername: mindestens 3 Zeichen, nur Buchstaben, Ziffern, . - _');
   if (pw.length < 6) return toast('Passwort: mindestens 6 Zeichen');
-  if (mode === 'create' && again !== pw) return toast('Die beiden Passwörter sind verschieden.');
+  // Ohne Team prüft kein Server das Passwort: zweimal eingeben, sonst verschlüsselte ein Tippfehler alle Sicherungen
+  if ((mode === 'create' || !team) && again !== pw) return toast('Die beiden Passwörter sind verschieden.');
   toast('Wird eingerichtet …', 10000);
   const { auth, key, salt } = await accountDerive(user, pw);
   const prev = account;
@@ -169,6 +170,8 @@ function accountDelete() {
 
 /** Neues Passwort: alte Sicherungen auf dem Server werden gelöscht (sie ließen sich nicht mehr öffnen), gleich neu sichern */
 async function accountPassword() {
+  // Eine laufende Sicherung mit dem alten Passwort würde abgelehnt und meldete das Konto ab
+  if (accountBusy) return toast('Sicherung läuft gerade – gleich noch einmal versuchen');
   const old = await askPassword('Bisheriges Passwort', '');
   if (old == null) return;
   if ((await accountDerive(account.user, old)).auth !== account.auth) return toast('Passwort falsch');
@@ -187,9 +190,11 @@ async function accountPassword() {
   account.hash = '';
   saveAccount();
   await rememberKey(next.key, next.salt);
+  // Der Server hat die alten Sicherungen gelöscht (mit dem neuen Passwort nicht zu öffnen): gleich die neue anlegen
+  const saved = await accountBackup(true);
   document.getElementById('toast').classList.remove('show');
-  toast('Passwort geändert');
-  accountBackup(true);
+  if (saved) toast('Passwort geändert');
+  else infoDialog('Passwort geändert', 'Die neue Sicherung hat nicht geklappt. Bitte gleich „Jetzt sichern“ tippen.');
   accountRerender();
 }
 
@@ -204,7 +209,15 @@ function textHash(s) {
 }
 /** Ergebnis: true = hochgeladen */
 async function accountBackup(force = false) {
-  if (!team || !accountOk() || accountRestorePending() || accountBusy || !cryptStore || !navigator.onLine) return false;
+  if (!team || !accountOk() || accountRestorePending() || accountBusy || !navigator.onLine) return false;
+  if (!cryptStore) {
+    // Schlüssel nicht gespeichert (Speicher voll beim Anmelden): ohne ihn keine Sicherung – sichtbar machen statt still
+    if (!account.error) {
+      account.error = 'Schlüssel fehlt – abmelden und neu anmelden';
+      saveAccount();
+    }
+    return false;
+  }
   // erst die Zeit prüfen: die Sicherung zusammenzustellen kostet bei vielen Bildern spürbar
   if (!force && Date.now() - (account.at || 0) < ACCOUNT_BACKUP_GAP) return false;
   const plain = backupJson();
@@ -333,13 +346,23 @@ const accountWhen = (t) => {
   return `${sameDay(d, new Date()) ? 'heute' : fmtDayMonth(d)}, ${fmtTime(d.getHours() * 60 + d.getMinutes())} Uhr`;
 };
 
-/** Nach dem Anmelden auf einem leeren iPhone: neueste Sicherung anbieten */
+/** Frage „Sicherung einlesen?“ noch offen (App vorher geschlossen, keine Verbindung): beim Start erneut stellen –
+ *  bis zur Antwort wird nichts hochgeladen */
+function accountResumeRestore() {
+  if (team && accountOk() && accountRestorePending()) accountOfferRestore();
+}
+
+/** Größe einer Sicherung kurz: „0,4 MB“ (ein auffällig kleiner Stand ist meist leer) */
+const accountSize = (b) => `${(b.size / 1024 / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} MB`;
+
+/** Nach dem Anmelden auf einem leeren iPhone: Sicherungen zur Auswahl (neueste zuerst). Nicht beantwortet (daneben
+ *  getippt, App geschlossen) → beim nächsten Start wieder */
 async function accountOfferRestore(backups) {
   if (!backups) {
     try {
       backups = (await accountRequest('list', {}, team.code)).backups || [];
     } catch {
-      return;
+      return; // keine Verbindung: beim nächsten Start (accountResumeRestore)
     }
   }
   if (!backups.length) {
@@ -347,19 +370,22 @@ async function accountOfferRestore(backups) {
     saveAccount();
     return;
   }
-  confirmDialog(
-    'Sicherung einlesen?',
-    `Stand: ${accountWhen(backups[0].at)}`,
-    'Einlesen',
-    () => accountRestore(backups[0].at),
-    false,
-    'Nicht einlesen',
-    () => {
-      account.restore = '';
-      saveAccount();
-      teamQueueUpload(0);
-    }
+  const modal = openModal(
+    `<div class="alert-body"><b>Sicherung einlesen?</b></div>
+    <div class="alert-buttons stacked acc-pick">${backups
+      .map((b, i) => `<button data-at="${b.at}" class="${i ? '' : 'strong'}">${accountWhen(b.at)} · ${accountSize(b)}</button>`)
+      .join('')}<button data-at="">Nicht einlesen</button></div>`,
+    'alert'
   );
+  modal.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-at]');
+    if (!b) return;
+    closeModal();
+    if (b.dataset.at) return accountRestore(Number(b.dataset.at));
+    account.restore = '';
+    saveAccount();
+    teamQueueUpload(0);
+  });
 }
 
 async function accountRestore(at) {
@@ -371,11 +397,12 @@ async function accountRestore(at) {
     document.getElementById('toast').classList.remove('show');
     return toast(accountError(e));
   }
-  account.restore = '';
-  saveAccount();
   const d = new Date(at);
   const file = new File([data], `Team-Server ${isoDate(d)} ${pad(d.getHours())}-${pad(d.getMinutes())}.json`, { type: 'application/json' });
-  await importBackup({ files: [file], value: '' });
+  // Erst nach erfolgreichem Einlesen wieder hochladen – sonst landete ein leerer Stand als neueste Sicherung auf dem Server
+  if (!(await importBackup({ files: [file], value: '' }))) return accountRerender();
+  account.restore = '';
+  saveAccount();
   teamQueueUpload(0);
   accountBackup(true);
   accountRerender();
@@ -392,8 +419,8 @@ async function accountPickRestore() {
   if (!backups.length) return toast('Noch keine Sicherung auf dem Team-Server');
   const modal = openModal(
     `<div class="alert-body"><b>Sicherung einlesen</b></div>
-    <div class="alert-buttons acc-pick">${backups
-      .map((b) => `<button data-at="${b.at}">${accountWhen(b.at)} · ${(b.size / 1024 / 1024).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB</button>`)
+    <div class="alert-buttons stacked acc-pick">${backups
+      .map((b) => `<button data-at="${b.at}">${accountWhen(b.at)} · ${accountSize(b)}</button>`)
       .join('')}<button data-at="">Abbrechen</button></div>`,
     'alert'
   );
@@ -416,8 +443,8 @@ function kontoPageHTML() {
     <form data-acc-form>
       <div class="card form">
         <label class="field"><span>Benutzername</span><input name="user" data-acc="user" placeholder="z. B. max.muster" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next"></label>
-        <label class="field"><span>Passwort</span><input name="pw" data-acc="pw" ${pwAttrs} enterkeyhint="${kontoCreate ? 'next' : 'go'}"></label>
-        ${kontoCreate ? `<label class="field"><span>Wiederholen</span><input name="pw2" data-acc="pw2" ${pwAttrs} enterkeyhint="go"></label>` : ''}
+        <label class="field"><span>Passwort</span><input name="pw" data-acc="pw" ${pwAttrs} enterkeyhint="${kontoCreate || !team ? 'next' : 'go'}"></label>
+        ${kontoCreate || !team ? `<label class="field"><span>Wiederholen</span><input name="pw2" data-acc="pw2" ${pwAttrs} enterkeyhint="go"></label>` : ''}
       </div>
       <button type="submit" class="primary tm-join-btn acc-submit">${kontoCreate ? 'Konto erstellen' : 'Anmelden'}</button>
     </form>

@@ -1316,7 +1316,11 @@ async function rememberKey(key, salt) {
   cryptStore = { salt: toB64(salt), key: toB64(await crypto.subtle.exportKey('raw', key)) };
   try {
     localStorage.setItem(CRYPT_KEY, JSON.stringify(cryptStore));
-  } catch {}
+  } catch (e) {
+    // nach einem Neustart fehlte der Schlüssel: Sicherungen gingen nicht mehr (sealBackup verweigert dann)
+    window.fehlerMelden?.(e, 'speichern');
+    toast('Speichern fehlgeschlagen – Speicher voll?', 4000);
+  }
 }
 
 /** Verschlüsselt wird mit Konto (konto.js) – oder wie früher per Schalter, solange noch kein Konto eingerichtet ist */
@@ -1325,6 +1329,8 @@ const backupEncrypted = () => !!(cryptStore && (account || settings.encryptBacku
 async function sealBackup(plain) {
   // früherer Schalter an, Schlüssel fehlt: nicht stillschweigend unverschlüsselt sichern
   if (!account && settings.encryptBackup && !cryptStore) throw new Error('Passwort fehlt – unter Einstellungen → Konto anmelden.');
+  // Konto ohne gespeicherten Schlüssel (z. B. Speicher voll beim Anmelden): nicht still unverschlüsselt sichern
+  if (account && !cryptStore) throw new Error('Schlüssel fehlt – unter Einstellungen → Konto abmelden und neu anmelden.');
   if (!backupEncrypted()) return plain;
   const key = await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -4235,6 +4241,7 @@ async function importBackup(input) {
   let total = 0;
   let tripCount = 0;
   let reportCount = 0;
+  let failed = 0; // Dateien, die nicht gelesen werden konnten (accountRestore lädt dann nichts hoch)
   // Herkunft der in diesem Durchgang neu eingelesenen Zettel/Abrechnungen (Rückfrage zeigt dann „aus Datei …“)
   const origin = new Map();
   const added = new Map(); // erst durch dieses Einlesen angelegt → { file, stamp, stampLabel }
@@ -4317,6 +4324,7 @@ async function importBackup(input) {
         );
       }
     } catch (e) {
+      failed++;
       if (e && e.message === 'skip') lines.push(`${label}: nicht eingelesen`);
       else lines.push(`${label}: konnte nicht gelesen werden${e && e.message && e.message !== 'format' ? ` (${escapeHtml(e.message)})` : ''}`);
     } finally {
@@ -4395,6 +4403,7 @@ async function importBackup(input) {
   if (currentView === 'list') renderList();
   const done = [total ? `${total} Stundenzettel` : '', tripCount ? `${tripCount} Reisekostenabrechnung${tripCount === 1 ? '' : 'en'}` : '', reportCount ? `${reportCount} Arbeitsschein${reportCount === 1 ? '' : 'e'}` : ''].filter(Boolean);
   infoDialog(done.length ? `${done.join(' und ')} eingelesen` : 'Nichts eingelesen', `<ul class="problem-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
+  return !failed;
 }
 
 /** Neue Fassung übernehmen; der Zettel behält seine ID (Verknüpfung zu Reisekosten), aus Dateien auch den Status */
@@ -6427,6 +6436,7 @@ setTimeout(() => document.querySelector('#tabbar .tab-caps').offsetWidth && lens
 fetchReports();
 accountBackup();
 accountLink();
+accountResumeRestore();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   fetchReports();
