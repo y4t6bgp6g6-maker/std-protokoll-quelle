@@ -1040,6 +1040,18 @@ function teamDaySummary(t) {
 }
 
 /** Fenster: Liste der Kollegen mit Eintrag an dem Tag; Antippen zeigt im selben Fenster ihre Einträge */
+/** Eigener Tag zum Übernehmen: im offenen Zettel, im Monat des Zettels, keine Tagesart außer Feiertag */
+function teamTakeTarget(iso) {
+  const s = currentView === 'editor' ? currentSheet() : null;
+  if (!s) return null;
+  const i = [0, 1, 2, 3, 4, 5, 6].find((k) => isoDate(sheetDate(s, k)) === iso);
+  if (i == null || !sheetIsActive(s, i) || !canWork(s.days[i])) return null;
+  return { s, i, day: s.days[i] };
+}
+/** Gleiche Zeile (schon übernommen): gleiche Zeiten, Baustelle und Arbeit */
+const teamSameRow = (a, b) =>
+  a.start === b.start && a.end === b.end && sameKey(a.site) === sameKey(b.site) && sameKey(a.work) === sameKey(b.work);
+
 function teamDayWindow(iso) {
   const date = parseDate(iso);
   const title = `${WEEKDAYS[(date.getDay() + 6) % 7]}, ${fmtDayMonth(date)}`;
@@ -1065,23 +1077,60 @@ function teamDayWindow(iso) {
     const { d, i } = t;
     const time = (v) => (v == null ? '–' : fmtTime(v));
     const rows = teamDayRows(d);
+    // Übernehmen in den eigenen Zettel (offener Zettel, gleicher Tag, an dem gearbeitet werden kann)
+    const own = teamTakeTarget(iso);
+    const canTake = !!own && !teamDayOff(d) && rows.length > 0;
+    const have = (r) => own.day.rows.some((o) => teamSameRow(o, r));
+    const allHave = canTake && rows.every(have);
     const status = d.status ? `<span class="tm-w-st status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>` : '';
     const main = teamDayOff(d)
       ? status
       : `${status}${rows
-          .map((r) => `<div class="tm-w-row"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text" translate="no"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(teamTr(r.work))}</span></span></div>`)
+          .map(
+            (r, k) => `<div class="tm-w-row${canTake ? ' take' : ''}"><span class="tm-w-time">${time(r.start)}–${time(r.end)}</span><span class="tm-w-text" translate="no"><b>${escapeHtml(r.site)}</b><span class="muted">${escapeHtml(teamTr(r.work))}</span></span>${
+              canTake ? `<button class="tm-take ${have(r) ? 'done' : ''}" data-take="${k}" aria-label="Übernehmen">${have(r) ? ICON.check : ICON.plus}</button>` : ''
+            }</div>`
+          )
           .join('')}<div class="tm-w-sum"><span>Pause ${d.pause == null ? '–' : fmtH(d.pause)}</span><b>${fmtH(dayTotal(d, i))}</b></div>`;
     body.innerHTML = `${head(`<button class="modal-btn tm-dw-back" data-m="back">${ICON.back}</button>`, title)}
       <div class="tm-dw-body">
         <div class="tm-dw-who">${teamAvatar(m, 36)}<b translate="no">${escapeHtml(m.name || '?')}</b></div>
         <div class="card tm-dw-day">${main}</div>
+        ${canTake ? `<button class="tm-take-all ${allHave ? 'done' : ''}" data-take="all">${allHave ? `${ICON.check} Übernommen` : 'Ganzen Tag übernehmen'}</button>` : ''}
       </div>`;
+    body.dataset.person = id;
+  };
+  /** Zeilen des Kollegen anhängen (nichts wird ersetzt, Überschneidungen zeigen die Warnzeichen); ganzer Tag: auch seine Pause (ersetzt die eigene) */
+  const take = (which) => {
+    const m = teamMembersAll().find((x) => x.member === body.dataset.person);
+    const t = m && teamDayOf(m, iso);
+    const own = teamTakeTarget(iso);
+    if (!t || !own) return;
+    const all = which === 'all';
+    const rows = teamDayRows(t.d).filter((r, k) => (all || k === Number(which)) && !own.day.rows.some((o) => teamSameRow(o, r)));
+    if (!rows.length) return;
+    const day = own.day;
+    day.rows = day.rows.filter((r) => !rowIsEmpty(r));
+    for (const r of rows) {
+      const row = { ...emptyRow(), start: r.start, end: r.end, site: r.site || '', work: r.work || '' };
+      let at = row.start == null ? -1 : day.rows.findIndex((o) => o.start != null && o.start > row.start);
+      if (at < 0) at = day.rows.length;
+      day.rows.splice(at, 0, row);
+    }
+    if (all && t.d.pause != null) day.pause = t.d.pause;
+    expandedDays.add(`${own.s.id}:${own.i}`);
+    saveSheets(own.s);
+    refreshDay(own.i);
+    haptic();
+    toast(rows.length === 1 ? 'Eintrag übernommen' : `${rows.length} Einträge übernommen`);
+    person(body.dataset.person);
   };
   list();
   modal.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-p],[data-m]');
+    const b = e.target.closest('[data-p],[data-m],[data-take]');
     if (!b) return;
-    if (b.dataset.p) person(b.dataset.p);
+    if (b.dataset.take) take(b.dataset.take);
+    else if (b.dataset.p) person(b.dataset.p);
     else if (b.dataset.m === 'back') list();
     else closeModal();
   });

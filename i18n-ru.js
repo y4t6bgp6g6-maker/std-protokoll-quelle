@@ -242,7 +242,7 @@ if (LANG === 'ru') {
       'aber mit Unterschieden': 'но с отличиями', 'mit Unterschieden': 'с отличиями', 'schon vorhanden (gleich)': 'уже есть (одинаковый)',
       'schon vorhanden, mit Unterschieden': 'уже есть, с отличиями', '(schon vorhanden)': '(уже есть)', Datei: 'Файл', 'eben eingelesen': 'только что загружено',
       'ist verschlüsselt.': 'зашифрован.', 'nur Numbers-, PDF- oder Sicherungsdateien': 'только файлы Numbers, PDF или резервные копии',
-      'Kein Eintrag': 'Нет записи', 'Noch nicht eingetragen': 'Ещё не внесено', 'Schon eingetragen': 'Уже внесено', 'Eingetragen': 'Внесено',
+      'Kein Eintrag': 'Нет записи', 'Noch nicht eingetragen': 'Ещё не внесено', 'Schon eingetragen': 'Уже внесено', 'Eingetragen': 'Внесено', 'Übernommen': 'Перенесено', 'Ganzen Tag übernehmen': 'Перенести весь день', 'Eintrag übernommen': 'Запись перенесена',
 
       // ── Berichtsheft ──
       Berichtsheft: 'Дневник обучения', 'Neues Berichtsheft': 'Новый дневник обучения', 'Noch kein Berichtsheft': 'Дневника обучения пока нет',
@@ -305,6 +305,7 @@ if (LANG === 'ru') {
       [/^Monatsbericht (\S+)$/, (m, mo) => `Месячный отчёт: ${months[mo] || mo}`],
       [/^Monatsbericht · (.+)$/, 'Месячный отчёт · $1'],
       [/^Alle als Ausbilder abzeichnen \((\d+)\)$/, 'Подписать всё как наставник ($1)'],
+      [/^(\d+) Einträge übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'запись', 'записи', 'записей')}`],
       [/^(\d+) (Tag|Tage) übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'день', 'дня', 'дней')}`],
       [/^vor (\d+) Min\.$/, '$1 мин. назад'],
       [/^vor (\d+) Std\.$/, '$1 ч назад'],

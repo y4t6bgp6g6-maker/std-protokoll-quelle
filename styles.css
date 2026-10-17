@@ -2017,3 +2017,8 @@ a.s-row:active { background: var(--fill); }
 .tm-dw-who { display: flex; align-items: center; gap: 12px; margin: 2px 4px 12px; }
 .tm-dw-who b { font-size: 20px; }
 .tm-dw-day { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; margin: 0; }
+.tm-w-row.take { grid-template-columns: 102px minmax(0, 1fr) auto; align-items: center; }
+.tm-take { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 16px; background: var(--accent-soft); color: var(--accent); }
+.tm-take.done { background: var(--fill); color: var(--success); }
+.tm-take-all { width: 100%; min-height: 50px; margin-top: 12px; border-radius: 14px; background: var(--accent-fill); color: var(--on-accent); font-size: 17px; font-weight: 600; }
+.tm-take-all.done { display: flex; align-items: center; justify-content: center; gap: 6px; background: var(--fill); color: var(--success); }
