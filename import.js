@@ -118,7 +118,7 @@ function columnKind(text) {
   return null;
 }
 
-const STOP_WORDS = /stunden\s*gesamt|überstunden|summe/i;
+const STOP_WORDS = /stunden\s*gesamt|überstunden|summe|^stunden:$/i;
 
 // ───────────────────────── ZIP ─────────────────────────
 
@@ -783,10 +783,25 @@ function pdfItemsToParsed(items) {
       else if (/^bis:?$/.test(t) && next) result.to = parseDateText(next.text);
     });
   }
-  const headerLine = lines.find((l) => {
+  const isHeader = (l) => {
     const kinds = l.items.map((it) => columnKind(it.text));
     return kinds.includes('day') && kinds.includes('start');
+  };
+  // Überschrift über zwei Zeilen („Arbeits-“ / „beginn“, so im PDF der App): Teile untereinander zusammensetzen
+  const joinHeader = (l, n) => ({
+    y: n.y,
+    items: l.items.map((it) => {
+      const below = n.items.find((b) => Math.abs(b.x - it.x) < 4);
+      if (!below) return it;
+      return { ...it, text: it.text.endsWith('-') ? it.text.slice(0, -1) + below.text : `${it.text} ${below.text}` };
+    }),
   });
+  let headerLine = null;
+  for (let i = 0; i < lines.length && !headerLine; i++) {
+    const next = lines[i + 1];
+    if (isHeader(lines[i])) headerLine = lines[i];
+    else if (next && next.y - lines[i].y < 14 && isHeader(joinHeader(lines[i], next))) headerLine = joinHeader(lines[i], next);
+  }
   if (!headerLine) throw new Error('Keine Tabelle mit „Tag“ und „Arbeitsbeginn“ gefunden');
   // Spalten beginnen dort, wo ihre Überschrift steht (alle Überschriften, auch unbekannte wie „Stunden“)
   const cols = headerLine.items.map((it) => ({ x: it.x, kind: columnKind(it.text) })).sort((a, b) => a.x - b.x);
@@ -805,6 +820,15 @@ function pdfItemsToParsed(items) {
     }
     return r;
   });
+  // Senkrecht mittig umbrochener Text (PDF der App): die erste Zeile steht knapp über der Zeile mit den Zeiten
+  for (let i = rows.length - 2; i >= 0; i--) {
+    const a = rows[i];
+    const b = rows[i + 1];
+    if (a.day || a.start || a.end || a.pause || !(a.site || a.work) || !(b.start || b.end) || b.y - a.y >= 6) continue;
+    for (const k of ['site', 'work']) if (a[k]) b[k] = b[k] ? `${a[k]} ${b[k]}` : a[k];
+    b.all = [...a.all, ...b.all];
+    rows.splice(i, 1);
+  }
   // Tage: Beschriftungen in der Spalte „Tag“; stehen sie mittig im Block, liegen die Grenzen dazwischen
   const labels = rows.filter((r) => r.day && weekdayIndex(r.day) >= 0).map((r) => ({ y: r.y, day: weekdayIndex(r.day) }));
   if (!labels.length) throw new Error('Keine Wochentage gefunden');
