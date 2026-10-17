@@ -3026,11 +3026,13 @@ function askDelete(id, leave, onCancel = null) {
 
 /** Kyrillische Texte einer Seite vorab übersetzen lassen; kommt Neues, die Vorschau neu zeichnen */
 const pdfTranslateKick = (v) => aiTranslateDeep(v).then((fresh) => fresh && updatePdfThumb(true));
-/** Dateiname eines PDFs: Art, Name, Rest („Stundenzettel Max Muster 13.04.26 - 19.04.26.pdf“) – beim Arbeitgeber sind die
- *  Zettel der Kollegen so zu unterscheiden. Name wie im PDF (Kyrillisches übersetzt), ohne Zeichen, die in Dateinamen stören */
+/** Dateiname eines PDFs: Art, Name, Rest („Stundenzettel_Max_Muster_13.04.26-19.04.26.pdf“) – beim Arbeitgeber sind die
+ *  Zettel der Kollegen so zu unterscheiden. Name wie im PDF (Kyrillisches übersetzt), ohne Zeichen, die in Dateinamen stören;
+ *  Unterstriche statt Leerzeichen, Bindestriche ohne Leerzeichen drumherum */
 function pdfFileName(kind, name, rest) {
   const n = String(pdfDe({ n: name || '' }).n || '').replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return `${[kind, n, rest].filter(Boolean).join(' ')}.pdf`;
+  const base = [kind, n, rest].filter(Boolean).join(' ').replace(/\s*[-–]\s*/g, '-').trim().replace(/\s+/g, '_');
+  return `${base}.pdf`;
 }
 function pdfFileFor(s) {
   pdfTranslateKick(s);
