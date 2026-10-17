@@ -959,7 +959,8 @@ function pdfItemsToParsed(items) {
     return k;
   };
   const body = lines.filter((l) => l.y > headerLine.y + 2);
-  const stop = body.findIndex((l) => l.items.some((it) => STOP_WORDS.test(it.text)));
+  // Eine Zeile mit Uhrzeiten ist eine Arbeitszeile, auch wenn als Arbeit „Überstunden“ oder „Summe“ eingetragen ist
+  const stop = body.findIndex((l) => l.items.some((it) => STOP_WORDS.test(it.text)) && !l.items.some((it) => /^\d{1,2}[:.]\d{2}$/.test(it.text.trim())));
   const rows = (stop >= 0 ? body.slice(0, stop) : body).map((l) => {
     const r = { y: l.y, size: Math.max(...l.items.map((it) => it.size)), all: l.items.map((it) => it.text) };
     for (const it of l.items) {

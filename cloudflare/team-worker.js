@@ -172,7 +172,7 @@ async function loadDict(db) {
   return (await db.prepare('SELECT key, word FROM dict ORDER BY word COLLATE NOCASE').all()).results;
 }
 /** Stand der Wörterbuch-Regeln (nur die Antwort ändert sich, nicht das gemerkte KI-Ergebnis) */
-const DICT_V = 3;
+const DICT_V = 4;
 /** Stand von Anweisung und Wörterbuch: ändert er sich, verwerfen die iPhones ihre gemerkten Prüfungen */
 const spellVersion = async (dict) => (await sha256(`${AI_SPELL_V}|${DICT_V}|${dict.map((d) => d.word).join('|')}`)).slice(0, 12);
 function editDistance(a, b) {
@@ -216,8 +216,8 @@ function applyDict(text, dict) {
     const pre = seg.match(/^[^\p{L}\p{N}]*/u)[0];
     const post = seg.slice(pre.length).match(/[^\p{L}\p{N}]*$/u)[0];
     const core = seg.slice(pre.length, seg.length - post.length);
-    // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph, Bindestrich und Punkt (keine Kommas usw.)
-    if (!core || /[^\p{L}\p{N}\s'’`´.\-]/u.test(core)) return null;
+    // innen nur Buchstaben, Ziffern, Leerzeichen, Apostroph (alle Formen wie sameKey der App), Bindestrich und Punkt
+    if (!core || /[^\p{L}\p{N}\s'’‘`´ʼ′.\-]/u.test(core)) return null;
     const key = dictKey(core);
     if (!fuzzy) return map.has(key) ? pre + map.get(key) + post : null;
     if (n > 1 && dictKey(toks[i + n - 1]).length <= 2) return null;

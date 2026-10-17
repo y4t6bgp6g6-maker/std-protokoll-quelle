@@ -26,7 +26,7 @@ class BhPdf {
   }
   /** Einzeiliger Eintrag in einem Feld wie im Formular (Schrift wird nur verkleinert, wenn der Text nicht passt) */
   field(f, str, opts = {}) {
-    let t = String(str ?? '').trim();
+    let t = pdfClean(str).trim();
     if (!t || !f) return;
     const [x1, y1, x2, y2] = f.r;
     const bold = opts.bold ?? f.bold;
@@ -38,8 +38,8 @@ class BhPdf {
       s = Math.max(5, (s * w) / tw);
       tw = measureText(t, s, bold);
     }
-    // passt auch klein nicht: kürzen statt über das Feld hinaus zu schreiben
-    if (tw > w) {
+    // passt auch klein nicht: kürzen statt über das Feld hinaus zu schreiben (ein Rundungsrest nach dem Verkleinern zählt nicht)
+    if (tw > w + 0.05) {
       while (t.length > 1 && measureText(`${t}…`, s, bold) > w) t = t.slice(0, -1);
       t = `${t.trimEnd()}…`;
       tw = measureText(t, s, bold);
@@ -105,7 +105,7 @@ class BhPdf {
     objs[2] = enc(`<< /Type /Pages /Kids [${kids}] /Count ${this.pages.length} >>`);
     objs[3] = enc('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
     objs[4] = enc('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-    objs[5] = enc(`<< /Title (${pdfString(info.title)}) /Author (${pdfString(info.author)}) /Producer (Std-Protokoll) >>`);
+    objs[5] = enc(`<< /Title ${pdfInfoString(info.title)} /Author ${pdfInfoString(info.author)} /Producer (Std-Protokoll) >>`);
     const stream = (dict, bytes) => {
       const head = enc(`${dict.slice(0, -2)} /Length ${bytes.length} >>\nstream\n`);
       const tail = enc('\nendstream');

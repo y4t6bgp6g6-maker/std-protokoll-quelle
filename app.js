@@ -2103,21 +2103,16 @@ function missingSheets() {
   if (!sheets.length) return [];
   const have = new Set(sheets.map((s) => `${s.weekStart}|${s.year}|${s.month}`));
   let first = sheetFirstDate(sheets[0]);
-  let last = sheetLastDate(sheets[0]);
-  for (const s of sheets) {
-    if (sheetFirstDate(s) < first) first = sheetFirstDate(s);
-    if (sheetLastDate(s) > last) last = sheetLastDate(s);
-  }
-  const thisWeek = mondayOf(new Date());
-  const end = last > thisWeek ? last : thisWeek;
-  const seen = new Set();
+  for (const s of sheets) if (sheetFirstDate(s) < first) first = sheetFirstDate(s);
+  // Nur vergangene Wochen können fehlen – auch wenn schon ein Zettel für später angelegt ist (z. B. Urlaub)
+  const end = mondayOf(new Date());
   const out = [];
   for (let d = startOfDay(first); d < end; d = addDays(d, 1)) {
     if ((d.getDay() + 6) % 7 > 4) continue;
+    const key = anchorKey(d);
+    if (have.has(key)) continue;
+    have.add(key);
     const n = newSheet(d, '');
-    const key = `${n.weekStart}|${n.year}|${n.month}`;
-    if (have.has(key) || seen.has(key)) continue;
-    seen.add(key);
     const workdays = sheetActiveDays(n).filter((i) => i < 5 && sheetDate(n, i) < end);
     if (workdays.length && workdays.every((i) => holidayName(sheetDate(n, i)))) continue;
     out.push(n);
@@ -2179,12 +2174,12 @@ function listBodyHTML() {
   if (searching) {
     return query
       ? `<p class="search-empty muted">Keine Stundenzettel gefunden</p>`
-      : `<p class="search-empty muted">Suche nach einer Baustelle (z. B. „Lindenstraße“), nach „Urlaub“ oder „Krank“ oder nach einem Datum (z. B. „15.09.“).</p>`;
+      : `<p class="search-empty muted">Suche nach Baustelle, Tagesart oder Datum (z. B. „15.09.“).</p>`;
   }
   return `<div class="empty">
       <div class="empty-icon">${svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>', 44)}</div>
       <p><b>Noch keine Stundenzettel</b></p>
-      <p class="muted">${settings.name.trim() ? 'Tippe unten auf „Neuer Stundenzettel“ und wähle eine Woche.' : 'Trage zuerst oben links unter Einstellungen deinen Namen ein. Danach tippst du unten auf „Neuer Stundenzettel“.'}</p>
+      <p class="muted">${settings.name.trim() ? 'Tippe unten auf „+“ und wähle eine Woche.' : 'Trag zuerst unter „Optionen“ deinen Namen ein.'}</p>
     </div>`;
 }
 
@@ -2205,14 +2200,17 @@ function searchSheet(s, query) {
   const days = sheetActiveDays(s);
   if (query.text) {
     const found = new Set();
+    const statusHits = new Set();
     const dayNames = [];
     for (const i of days) {
       let dayHit = false;
       // Tagesart (Urlaub, Krank, …) zählt als Treffer, die Zeilen des Tages dann nicht
       const status = s.days[i].status;
       if (status) {
-        if ([DAY_STATUS_SHORT[status], DAY_STATUS[status]].some((v) => searchKey(v).includes(query.text))) {
-          found.add(DAY_STATUS_SHORT[status]);
+        // auch in der angezeigten Sprache („Отпуск“)
+        const names = [DAY_STATUS_SHORT[status], DAY_STATUS[status]].flatMap((v) => (typeof tr === 'function' ? [v, tr(v)] : [v]));
+        if (names.some((v) => searchKey(v).includes(query.text))) {
+          statusHits.add(DAY_STATUS_SHORT[status]);
           dayHit = true;
         }
         // Am Feiertag zählen zusätzlich die Zeilen (Notdienst)
@@ -2231,12 +2229,20 @@ function searchSheet(s, query) {
       }
       if (dayHit) dayNames.push(WEEKDAYS_SHORT[i]);
     }
-    return found.size ? { label: `${dayNames.join(', ')} · ${[...found].join(', ')}` } : null;
+    // Wochentage und Tagesarten werden übersetzt, Einträge nicht
+    return found.size || statusHits.size
+      ? {
+          html: `${dayNames.map((n) => `<span>${n}</span>`).join(', ')} · ${[
+            ...[...statusHits].map((v) => `<span>${escapeHtml(v)}</span>`),
+            ...[...found].map((v) => `<span translate="no">${escapeHtml(v)}</span>`),
+          ].join(', ')}`,
+        }
+      : null;
   }
   for (const i of days) {
     const d = sheetDate(s, i);
     if (d.getDate() === query.day && d.getMonth() + 1 === query.month && (query.year == null || d.getFullYear() === query.year)) {
-      return { label: `${WEEKDAYS[i]}, ${fmtShort(d)}` };
+      return { html: `<span>${WEEKDAYS[i]}</span>, ${fmtShort(d)}` };
     }
   }
   return null;
@@ -2378,7 +2384,7 @@ function overtimeYearHTML(year, months) {
   const diffText = (d) => {
     const h = Math.abs(d.h) >= 0.01 ? { neg: d.h < 0, t: `${hrs(d.h)} Std.` } : null;
     const e = withPay && Math.abs(d.e) >= 0.5 ? { neg: d.e < 0, t: `${fmtMoney(Math.abs(d.e))} Netto` } : null;
-    const word = (x) => (x.neg ? 'zu wenig' : 'zu viel');
+    const word = (x) => `<span>${x.neg ? 'zu wenig' : 'zu viel'}</span>`;
     if (h && e) return h.neg === e.neg ? `${word(h)} ${h.t} · ${e.t}` : `${word(h)} ${h.t} · ${word(e)} ${e.t}`;
     const x = h || e;
     return x ? `${word(x)} ${x.t}` : '';
@@ -2397,11 +2403,11 @@ function overtimeYearHTML(year, months) {
         sum.e += d.e;
         // Gesamtstunden gleich, aber anders verbucht: Überstunden (wegen des Zuschlags) orange, andere Arten grün
         const off = (k) => Math.abs(c.hourDiff[k]) >= 0.01;
-        const euro = withPay && Math.abs(d.e) >= 0.5 ? ` · ${d.e < 0 ? 'zu wenig' : 'zu viel'} ${fmtMoney(Math.abs(d.e))} Netto` : '';
+        const euro = withPay && Math.abs(d.e) >= 0.5 ? ` · <span>${d.e < 0 ? 'zu wenig' : 'zu viel'}</span> ${fmtMoney(Math.abs(d.e))} Netto` : '';
         if (Math.abs(d.h) >= 0.01) line = `<div class="ov-verdict ${d.h < 0 || d.e < 0 ? 'neg' : 'ok'}">${diffText(d)}</div>`;
-        else if (off('ueber')) line = `<div class="ov-verdict neg">Überstunden falsch verbucht${euro}</div>`;
+        else if (off('ueber')) line = `<div class="ov-verdict neg"><span>Überstunden falsch verbucht</span>${euro}</div>`;
         else if (HOUR_KINDS.some(([k]) => off(k)) || !ok(d))
-          line = `<div class="ov-verdict ${d.e < 0 && euro ? 'neg' : 'ok'}">Gesamtstunden stimmen${euro}</div>`;
+          line = `<div class="ov-verdict ${d.e < 0 && euro ? 'neg' : 'ok'}"><span>Gesamtstunden stimmen</span>${euro}</div>`;
         else line = `<div class="ov-verdict ok">${ICON.check} Abrechnung stimmt</div>`;
       }
       return `<a draggable="false" href="#/lohn/${payKey(year, m)}" class="ov-month${gaps.get(m).length ? ' has-gap' : ''}">
@@ -2428,8 +2434,8 @@ function overtimeYearHTML(year, months) {
   const less = parts((v, t) => v <= -t);
   const more = parts((v, t) => v >= t);
   const sumText = less
-    ? `Insgesamt fehlen ${less}${more ? ` · ${more} mehr` : ''}`
-    : more ? `Insgesamt ${more} mehr bezahlt` : withPay ? 'Std. und Netto stimmen insgesamt' : 'Std. stimmen insgesamt';
+    ? `<span>Insgesamt fehlen</span> ${less}${more ? ` · ${more} <span>mehr</span>` : ''}`
+    : more ? `<span>Insgesamt</span> ${more} <span>mehr bezahlt</span>` : withPay ? 'Std. und Netto stimmen insgesamt' : 'Std. stimmen insgesamt';
   const foot = n
     ? `<div class="ov-verdict ov-sumnote ${short ? 'neg' : 'ok'}">${short ? '' : ICON.check}${sumText}</div>`
     : '';
@@ -2454,7 +2460,7 @@ function listRowHTML(s, hit) {
           <span class="list-title">${fmtDayMonth(sheetFirstDate(s))} – ${fmtDayMonth(sheetLastDate(s))}${sheetHasWarning(s) ? `<span class="list-warn">⚠️</span>` : ''}${
             tripsForSheet(s).some((t) => t.dates.length) ? `<button class="list-trip" data-act="open-trip" data-id="${s.id}" aria-label="Reisekostenabrechnung öffnen">${ICON.suitcaseSmall}</button>` : ''
           }</span>
-          ${hit ? `<span class="list-hit">${escapeHtml(hit.label)}</span>` : ''}
+          ${hit ? `<span class="list-hit">${hit.html}</span>` : ''}
         </span>
         <span class="list-hours">${fmtH(sheetTotal(s))}</span>
       </a>
@@ -2991,9 +2997,16 @@ function sendWithCheck(s) {
 function askDelete(id, leave, onCancel = null) {
   const s = findSheet(id);
   if (!s) return;
-  confirmDialog('Stundenzettel löschen?', `${sheetTitle(s)} wird endgültig gelöscht.`, 'Löschen', () => {
+  // Abrechnungen sind nur über ihre Zettel erreichbar: eine, zu der danach kein Zettel mehr führt, geht mit
+  const orphans = tripsForSheet(s).filter((t) => !sheets.some((x) => x !== s && tripsForSheet(x).includes(t)));
+  const withTrip = orphans.some((t) => t.dates.length);
+  confirmDialog('Stundenzettel löschen?', `${sheetTitle(s)} wird endgültig gelöscht${withTrip ? ', mit Reisekostenabrechnung' : ''}.`, 'Löschen', () => {
     sheets = sheets.filter((x) => x.id !== id);
     saveSheets();
+    if (orphans.length) {
+      trips = trips.filter((t) => !orphans.includes(t));
+      saveTrips();
+    }
     if (leave) goBack();
     else renderList();
   }, true, 'Abbrechen', onCancel);
@@ -3322,11 +3335,17 @@ async function shareOrDownload(file) {
     downloadFile(file);
     return true;
   }
+  // Doppeltipp (auch auf Knöpfe eines Fensters, das gerade schließt): das zweite Teilen nicht starten
+  if (shareOrDownload.busy) return false;
+  shareOrDownload.busy = true;
   try {
     await navigator.share({ files: [file] });
   } catch (e) {
-    if (e && e.name === 'AbortError') return false;
+    // abgebrochen bzw. es teilt schon: nichts gesendet, nichts herunterladen
+    if (e && (e.name === 'AbortError' || e.name === 'InvalidStateError')) return false;
     downloadFile(file);
+  } finally {
+    shareOrDownload.busy = false;
   }
   return true;
 }
@@ -3362,6 +3381,7 @@ async function sharePdf(s, isSend) {
     confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann ist die KW in der Liste nicht mehr orange.', 'Ja, gesendet', () => {
       s.sentAt = Date.now();
       saveSheets(s);
+      if (currentView === 'editor' && currentSheet() === s) refreshAll();
     });
   }
 }
@@ -3828,10 +3848,10 @@ function signatureSVG(sig, height = 44) {
 /** Gültige Unterschrift? { ratio, strokes: [[[x, y], …], …] } */
 const isSignature = (sig) =>
   !!sig && typeof sig.ratio === 'number' && Array.isArray(sig.strokes) && sig.strokes.length > 0 &&
-  sig.strokes.every((st) => Array.isArray(st) && st.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)));
+  sig.strokes.every((st) => Array.isArray(st) && st.length > 0 && st.every((p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite)));
 
-/** Unterschreiben; ohne onSave für die Reisekosten (Einstellungen), sonst bekommt onSave die Unterschrift */
-function signaturePad(onSave = null, title = 'Unterschrift') {
+/** Unterschreiben; onSave bekommt die Unterschrift */
+function signaturePad(onSave, title = 'Unterschrift') {
   const modal = openModal(
     `${modalHead(title)}
     <div class="sig-wrap"><canvas class="sig-canvas"></canvas><div class="sig-line"></div><span class="sig-hint muted">Mit dem Finger unterschreiben</span></div>
@@ -3845,6 +3865,8 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
+  // feste Größe: dreht man das iPhone, verzerrt sich die Unterschrift sonst (Breite folgte dem Fenster, ratio nicht)
+  canvas.style.width = `${w}px`;
   canvas.style.height = `${h}px`;
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
@@ -3854,18 +3876,27 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
   ctx.strokeStyle = getComputedStyle(document.body).color;
   let strokes = [];
   let current = null;
+  let finger = null; // nur ein Finger zeichnet (ein aufliegender Daumen nicht)
   const point = (e) => {
     const r = canvas.getBoundingClientRect();
     return [Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), Math.min(1, Math.max(0, (e.clientY - r.top) / r.height))];
   };
   canvas.addEventListener('pointerdown', (e) => {
+    if (current) return;
     canvas.setPointerCapture(e.pointerId);
-    current = [point(e)];
+    finger = e.pointerId;
+    const p = point(e);
+    current = [p];
     strokes.push(current);
     hint.hidden = true;
+    // Punkt gleich zeigen (i-Punkt, Antippen) – wie später im PDF
+    ctx.beginPath();
+    ctx.arc(p[0] * w, p[1] * h, ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fill();
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!current) return;
+    if (!current || e.pointerId !== finger) return;
     const p = point(e);
     const last = current.at(-1);
     current.push(p);
@@ -3874,7 +3905,9 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
     ctx.lineTo(p[0] * w, p[1] * h);
     ctx.stroke();
   });
-  const stop = () => (current = null);
+  const stop = (e) => {
+    if (e.pointerId === finger) current = finger = null;
+  };
   canvas.addEventListener('pointerup', stop);
   canvas.addEventListener('pointercancel', stop);
   modal.addEventListener('click', (e) => {
@@ -3882,13 +3915,20 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
     if (!b) return;
     if (b.dataset.m === 'clear') {
       strokes = [];
+      current = finger = null;
       ctx.clearRect(0, 0, w, h);
       hint.hidden = false;
       return;
     }
     if (b.dataset.m === 'ok' && strokes.length) {
+      // Nur Antippen ist keine Unterschrift
+      if (!strokes.some((st) => st.length > 1)) {
+        hint.hidden = false;
+        return;
+      }
       const round = (v) => Math.round(v * 1000) / 1000;
-      const sig = { ratio: round(h / w), strokes: strokes.map((st) => st.map(([x, y]) => [round(x), round(y)])) };
+      // Ein Punkt wird zu einem kurzen Strich: so zeigen ihn Vorschau (SVG) und PDF gleich
+      const sig = { ratio: round(h / w), strokes: strokes.map((st) => (st.length > 1 ? st : [st[0], [st[0][0] + 0.004, st[0][1]]]).map(([x, y]) => [round(x), round(y)])) };
       closeModal();
       return onSave(sig);
     }

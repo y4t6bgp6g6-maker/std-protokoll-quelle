@@ -19,9 +19,17 @@ const WIN_ANSI = {
   0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f,
 };
 
+/** Text so, wie er ins PDF kommt: zusammengesetzte Zeichen (é statt e + ´), jeder Leerraum als Leerzeichen,
+ *  unsichtbare Formatzeichen (Null-Breite, weiches Trennzeichen) weg – sonst würden sie zu „?“ */
+const pdfClean = (str) =>
+  String(str ?? '')
+    .normalize('NFC')
+    .replace(/[\p{Cf}\u00ad]/gu, '')
+    .replace(/\s/g, ' ');
+
 function pdfString(str) {
   let out = '';
-  for (const ch of String(str)) {
+  for (const ch of pdfClean(str)) {
     let c = ch.codePointAt(0);
     if (c > 0xff || (c >= 0x80 && c < 0xa0)) c = WIN_ANSI[c] ?? 0x3f; // '?'
     if (c < 0x20) c = 0x20;
@@ -34,14 +42,17 @@ function pdfString(str) {
 /** Zeichen, die die PDF-Schrift nicht kennt und als „?“ druckt (z. B. kyrillische Buchstaben, č, ł) */
 function pdfMissingChars(str) {
   const out = new Set();
-  for (const ch of String(str || '')) {
+  for (const ch of pdfClean(str)) {
     const c = ch.codePointAt(0);
-    if ((c > 0xff || (c >= 0x80 && c < 0xa0)) && WIN_ANSI[c] == null && !/\s/.test(ch)) out.add(ch);
+    if ((c > 0xff || (c >= 0x80 && c < 0xa0)) && WIN_ANSI[c] == null) out.add(ch);
   }
   return [...out];
 }
 
 const num = (v) => (Math.round(v * 100) / 100).toString();
+/** Text für Titel/Autor im Info-Wörterbuch: UTF-16 mit BOM (dort gilt nicht WinAnsi) */
+const pdfInfoString = (str) =>
+  '<FEFF' + [...pdfClean(str)].map((ch) => ch.charCodeAt(0).toString(16).padStart(4, '0') + (ch.length > 1 ? ch.charCodeAt(1).toString(16).padStart(4, '0') : '')).join('') + '>';
 
 class PdfDoc {
   constructor(w = PDF_W, h = PDF_H) {
@@ -67,14 +78,15 @@ class PdfDoc {
   }
   // Einzeiliger Text in einer Box: wird bei Bedarf verkleinert und notfalls gekürzt.
   textBox(str, x, y, w, h, size, bold, align = 'left', gray = 0) {
-    let t = String(str ?? '').trim();
+    let t = pdfClean(str).trim();
     if (!t) return;
     let s = size;
     let tw = measureText(t, s, bold);
     if (tw > w) {
       s = Math.max(5, (s * w) / tw);
       tw = measureText(t, s, bold);
-      while (tw > w && t.length > 1) {
+      // genau auf die Breite verkleinert, misst der Text durch Rundung teils minimal mehr – das passt noch
+      while (tw > w + 0.05 && t.length > 1) {
         t = t.slice(0, -2).trimEnd() + '…';
         tw = measureText(t, s, bold);
       }
@@ -101,7 +113,7 @@ class PdfDoc {
       '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
       '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
       `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
-      `<< /Title (${pdfString(info.title)}) /Author (${pdfString(info.author)}) /Producer (Stundenzettel) >>`,
+      `<< /Title ${pdfInfoString(info.title)} /Author ${pdfInfoString(info.author)} /Producer (Std-Protokoll) >>`,
     ];
     let out = '%PDF-1.4\n%\xe2\xe3\xcf\xd3\n';
     const offsets = [];
@@ -121,7 +133,7 @@ class PdfDoc {
 
 /**
  * @param sheet Stundenzettel
- * @param overtimeTarget Soll-Stunden pro Woche oder null, wenn Überstunden ausgeschaltet sind
+ * @param overtimeTarget Soll-Stunden des Zettels (sheetTarget: anteilig bei Teilwochen)
  */
 function buildTimesheetPdf(sheet, overtimeTarget) {
   const doc = new PdfDoc();
@@ -149,57 +161,85 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
   // Größen so wählen, dass die Tabelle die Seite füllt
   const tableTop = 118;
   const headerH = 26;
-  const footerH = overtimeTarget == null ? 28 : 78;
+  const footerH = 78;
   const bottom = PDF_H - 36 - footerH;
+  // Wie ein Tag im PDF erscheint – an einer Stelle für Zeilenzahl, Höhen und Zeichnen:
+  // Sa/So steht ein Feiertag nicht im PDF (der Tag wie ein normaler Arbeitstag), außer von Hand gesetzt
+  const pdfStatus = (d, i) => (sheetIsActive(sheet, i) && (i < 5 || d.manual) ? d.status : null);
+  const pdfHolidayWork = (d, i) => !!pdfStatus(d, i) && holidayWork(d);
   // Mo–Fr mindestens 5 Zeilen, Sa/So mindestens 1; Krankheit/Urlaub usw. nur die Mindestzeilen;
   // Feiertag mit Arbeit (Notdienst): eine Zeile „Feiertag“, darunter die Arbeitszeilen
   const rowsOnPdf = (d, i) =>
-    holidayWork(d) ? Math.max(d.rows.length + 1, pdfMinRows(i)) : d.status ? pdfMinRows(i) : Math.max(d.rows.length, pdfMinRows(i));
+    !sheetIsActive(sheet, i)
+      ? pdfMinRows(i)
+      : pdfHolidayWork(d, i)
+        ? Math.max(d.rows.length + 1, pdfMinRows(i))
+        : pdfStatus(d, i)
+          ? pdfMinRows(i)
+          : Math.max(d.rows.length, pdfMinRows(i));
   const rowCount = sheet.days.reduce((n, d, i) => n + rowsOnPdf(d, i), 0);
   const avail = bottom - tableTop - headerH;
-  let rowH = Math.min(28, avail / Math.max(rowCount, 1));
-  const fs = Math.max(5, Math.min(9.5, rowH * 0.48));
   const siteW = xs[6] - xs[5] - 6;
   const workW = xs[7] - xs[6] - 6;
 
-  // Baustelle / Art der Arbeit: überall dieselbe Schriftgröße (zwei Zeilen passen in eine normale Zeile).
-  // Braucht ein Eintrag mehr, wird die Zeile höher (höchstens drei Textzeilen); reicht das nicht, eine Stufe
-  // kleiner (85 %); erst danach – nur bei eingelesenen, sehr langen Texten – weiter verkleinert.
-  const TEXT = Math.min(fs, (rowH - 3) / 2.3);
-  const SMALL = TEXT * 0.85;
-  const fitText = (text, w) => {
-    const t = String(text ?? '').trim();
-    if (!t) return { size: TEXT, lines: [] };
-    for (const size of [TEXT, SMALL]) {
-      const lines = wrapLines(t, w, size);
-      if (lines.length <= 3) return { size, lines };
+  // Baustelle / Art der Arbeit: überall dieselbe Schriftgröße. Braucht ein Eintrag mehr als eine normale Zeile,
+  // wird seine Zeile höher (höchstens drei Textzeilen, sonst eine Stufe kleiner) und die übrigen werden niedriger.
+  // Reicht der Platz so nicht (viele lange Einträge), wird alles zusammen kleiner, bis die Woche auf die Seite passt.
+  const layout = (base) => {
+    const fs = Math.max(4, Math.min(9.5, base * 0.48));
+    const TEXT = Math.min(fs, (base - 3) / 2.3);
+    const SMALL = TEXT * 0.85;
+    const fitText = (text, w) => {
+      const t = String(text ?? '').trim();
+      if (!t) return { size: TEXT, lines: [] };
+      for (const size of [TEXT, SMALL]) {
+        const lines = wrapLines(t, w, size);
+        if (lines.length <= 3) return { size, lines };
+      }
+      let size = SMALL;
+      let lines = wrapLines(t, w, size);
+      while (size > 3 && lines.length > 3) lines = wrapLines(t, w, (size -= 0.25));
+      return { size, lines: lines.slice(0, 3) };
+    };
+    const texts = new Map(); // Zeile → { site, work }
+    for (const d of sheet.days) for (const r of d.rows) texts.set(r, { site: fitText(r.site, siteW), work: fitText(r.work, workW) });
+    const textH = (r) => {
+      const { site, work } = texts.get(r);
+      return Math.max(site.lines.length * site.size, work.lines.length * work.size) * 1.12 + 4;
+    };
+    // Höhe je Zeile des Tages bei Zeilenhöhe rowH (Arbeitszeilen am Feiertag beginnen eine Zeile tiefer)
+    const heightsOf = (day, i, rowH) => {
+      const hs = Array(rowsOnPdf(day, i)).fill(rowH);
+      if (!sheetIsActive(sheet, i) || (pdfStatus(day, i) && !pdfHolidayWork(day, i))) return hs;
+      const off = pdfHolidayWork(day, i) ? 1 : 0;
+      day.rows.forEach((r, k) => (hs[k + off] = Math.max(rowH, textH(r))));
+      return hs;
+    };
+    const used = (rowH) => sheet.days.reduce((t, d, i) => t + heightsOf(d, i, rowH).reduce((a, b) => a + b, 0), 0);
+    // Größte Zeilenhöhe (höchstens base), bei der alles passt – used() wächst mit rowH
+    let lo = 0;
+    let hi = base;
+    if (used(hi) > avail) for (let k = 0; k < 30; k++) used((lo + hi) / 2) <= avail ? (lo = (lo + hi) / 2) : (hi = (lo + hi) / 2);
+    else lo = hi;
+    // Eine Zeile braucht Platz für Tag/Uhrzeit (fs) – sonst ist der Maßstab zu groß
+    return { fs, texts, rowH: lo, heightsOf: (day, i) => heightsOf(day, i, lo), ok: lo >= fs * 1.2 + 1 };
+  };
+  // Größter Maßstab, bei dem eine normale Zeile noch Platz für Tag und Uhrzeit hat
+  const full = Math.min(28, avail / Math.max(rowCount, 1));
+  let L = layout(full);
+  if (!L.ok) {
+    let lo = 4;
+    let hi = full;
+    let best = layout(lo);
+    for (let k = 0; k < 14; k++) {
+      const mid = (lo + hi) / 2;
+      const m = layout(mid);
+      if (m.ok) (best = m), (lo = mid);
+      else hi = mid;
     }
-    let size = SMALL;
-    let lines = wrapLines(t, w, size);
-    while (size > 4 && lines.length > 3) lines = wrapLines(t, w, (size -= 0.25));
-    return { size, lines: lines.slice(0, 3) };
-  };
-  const texts = new Map(); // Zeile → { site, work }
-  for (const d of sheet.days) for (const r of d.rows) texts.set(r, { site: fitText(r.site, siteW), work: fitText(r.work, workW) });
-  const need = (r) => {
-    const { site, work } = texts.get(r);
-    const h = Math.max(site.lines.length * site.size, work.lines.length * work.size) * 1.12 + 4;
-    return Math.max(rowH, h);
-  };
-  const heightsOf = (day, i) => {
-    const hs = Array(rowsOnPdf(day, i)).fill(rowH);
-    const active = sheetIsActive(sheet, i);
-    const hw = active && holidayWork(day);
-    if (active && (!day.status || hw)) day.rows.forEach((r, k) => (hs[hw ? k + 1 : k] = need(r)));
-    return hs;
-  };
-  // Mehrhöhe einzelner Zeilen von den übrigen abziehen, damit alles auf die Seite passt
-  for (let k = 0; k < 4; k++) {
-    const used = sheet.days.reduce((t, d, i) => t + heightsOf(d, i).reduce((a, b) => a + b, 0), 0);
-    const extra = used - rowCount * rowH;
-    if (!extra) break;
-    rowH = Math.min(28, (avail - extra) / rowCount);
+    L = best;
   }
+  const { fs, texts, rowH, heightsOf } = L;
 
   // Tabellenkopf
   doc.fill(left, tableTop, width, headerH, 0.75);
@@ -232,9 +272,8 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
     const tops = hs.map((_, k) => y + hs.slice(0, k).reduce((a, b) => a + b, 0));
     const h = hs.reduce((a, b) => a + b, 0);
     const active = sheetIsActive(sheet, i);
-    // Sa/So: Feiertag erscheint nicht im PDF, der Tag steht dort wie ein normaler Arbeitstag (außer von Hand gesetzt)
-    const status = active && (i < 5 || day.manual) ? day.status : null;
-    const hw = active && (i < 5 || day.manual) && holidayWork(day);
+    const status = pdfStatus(day, i);
+    const hw = pdfHolidayWork(day, i);
     dayTops.push(y);
 
     doc.fill(xs[0], y, xs[1] - xs[0], h, 0.87);
@@ -293,34 +332,61 @@ function buildTimesheetPdf(sheet, overtimeTarget) {
     doc.textBox(value, xs[7] + 3, y, xs[8] - xs[7] - 6, 14, 10, bold, 'right');
   };
   let fy = tableBottom + 8;
-  if (overtimeTarget != null) {
-    const over = sheetOvertime(sheet, overtimeTarget);
-    sumRow('Stunden:', fmtHours(total - over), fy, false);
-    fy += 16;
-    sumRow('Überstunden:', fmtHours(over), fy, false);
-    fy += 21;
-    doc.fill(xs[6] + 20, fy - 2, right - xs[6] - 20, 18, 0.87);
-    doc.line(xs[6] + 20, fy - 2, right, fy - 2, 0.8, BLACK);
-    fy += 0.5;
-  }
+  const over = sheetOvertime(sheet, overtimeTarget);
+  sumRow('Stunden:', fmtHours(total - over), fy, false);
+  fy += 16;
+  sumRow('Überstunden:', fmtHours(over), fy, false);
+  fy += 21;
+  doc.fill(xs[6] + 20, fy - 2, right - xs[6] - 20, 18, 0.87);
+  doc.line(xs[6] + 20, fy - 2, right, fy - 2, 0.8, BLACK);
+  fy += 0.5;
   sumRow('Stunden Gesamt:', fmtHours(total), fy, true);
 
   return doc.output({ title: sheetTitle(sheet), author: sheet.name });
 }
 
-/** Text in Zeilen umbrechen, die in die Breite passen; Zeilenumbrüche im Text bleiben erhalten */
+/** Text in Zeilen umbrechen, die in die Breite passen; Zeilenumbrüche im Text bleiben erhalten.
+ *  Ein Wort, das allein nicht passt, wird nach „-“, „/“, „,“ oder „.“ getrennt, sonst mitten im Wort */
 function wrapLines(text, w, size) {
+  const fits = (t) => measureText(t, size, false) <= w;
+  /** Zu langes Wort in Stücke, die einzeln passen */
+  const pieces = (word) => {
+    const out = [];
+    let cur = '';
+    for (const part of word.match(/[^-/,.]*[-/,.]|[^-/,.]+/g)) {
+      if (fits(cur + part)) cur += part;
+      else {
+        if (cur) out.push(cur);
+        cur = '';
+        for (const ch of part) {
+          if (cur && !fits(cur + ch)) {
+            out.push(cur);
+            cur = '';
+          }
+          cur += ch;
+        }
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
   const lines = [];
   for (const para of String(text ?? '').split('\n')) {
     const words = para.trim().split(/\s+/).filter(Boolean);
     let line = '';
     for (const word of words) {
       const next = line ? `${line} ${word}` : word;
-      if (line && measureText(next, size, false) > w) {
-        lines.push(line);
+      if (fits(next)) line = next;
+      else if (fits(word)) {
+        if (line) lines.push(line);
         line = word;
       } else {
-        line = next;
+        // Anfang des langen Wortes noch in die angefangene Zeile, falls Platz
+        const ps = pieces(word);
+        if (line && fits(`${line} ${ps[0]}`)) line = `${line} ${ps.shift()}`;
+        if (line) lines.push(line);
+        line = ps.pop() || '';
+        lines.push(...ps);
       }
     }
     if (line) lines.push(line);
