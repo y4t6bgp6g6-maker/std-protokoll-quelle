@@ -1081,7 +1081,8 @@ function teamDayWindow(iso) {
     const own = teamTakeTarget(iso);
     const canTake = !!own && !teamDayOff(d) && rows.length > 0;
     const have = (r) => own.day.rows.some((o) => teamSameRow(o, r));
-    const allHave = canTake && rows.every(have);
+    // Ganzer Tag schon übernommen: eigene Einträge und Pause sind genau die des Kollegen
+    const allHave = canTake && teamDayRows(own.day).length === rows.length && rows.every(have) && own.day.pause === (d.pause ?? null);
     const status = d.status ? `<span class="tm-w-st status-${d.status}">${ICON[d.status] || ''} ${DAY_STATUS_SHORT[d.status] || ''}</span>` : '';
     const main = teamDayOff(d)
       ? status
@@ -1100,29 +1101,37 @@ function teamDayWindow(iso) {
       </div>`;
     body.dataset.person = id;
   };
-  /** Zeilen des Kollegen anhängen (nichts wird ersetzt, Überschneidungen zeigen die Warnzeichen); ganzer Tag: auch seine Pause (ersetzt die eigene) */
+  /** Einzelner Eintrag: anhängen, nichts wird ersetzt (Überschneidungen zeigen die Warnzeichen).
+   *  Ganzer Tag: ersetzt alle eigenen Einträge und die Pause durch die des Kollegen */
   const take = (which) => {
     const m = teamMembersAll().find((x) => x.member === body.dataset.person);
     const t = m && teamDayOf(m, iso);
     const own = teamTakeTarget(iso);
     if (!t || !own) return;
-    const all = which === 'all';
-    const rows = teamDayRows(t.d).filter((r, k) => (all || k === Number(which)) && !own.day.rows.some((o) => teamSameRow(o, r)));
-    if (!rows.length) return;
     const day = own.day;
-    day.rows = day.rows.filter((r) => !rowIsEmpty(r));
-    for (const r of rows) {
-      const row = { ...emptyRow(), start: r.start, end: r.end, site: r.site || '', work: r.work || '' };
+    const copy = (r) => ({ ...emptyRow(), start: r.start, end: r.end, site: r.site || '', work: r.work || '' });
+    let n;
+    if (which === 'all') {
+      const rows = teamDayRows(t.d);
+      if (!rows.length) return;
+      day.rows = rows.map(copy);
+      day.pause = t.d.pause ?? null;
+      n = rows.length;
+    } else {
+      const r = teamDayRows(t.d)[Number(which)];
+      if (!r || day.rows.some((o) => teamSameRow(o, r))) return;
+      day.rows = day.rows.filter((o) => !rowIsEmpty(o));
+      const row = copy(r);
       let at = row.start == null ? -1 : day.rows.findIndex((o) => o.start != null && o.start > row.start);
       if (at < 0) at = day.rows.length;
       day.rows.splice(at, 0, row);
+      n = 1;
     }
-    if (all && t.d.pause != null) day.pause = t.d.pause;
     expandedDays.add(`${own.s.id}:${own.i}`);
     saveSheets(own.s);
     refreshDay(own.i);
     haptic();
-    toast(rows.length === 1 ? 'Eintrag übernommen' : `${rows.length} Einträge übernommen`);
+    toast(n === 1 ? 'Eintrag übernommen' : `${n} Einträge übernommen`);
     person(body.dataset.person);
   };
   list();
