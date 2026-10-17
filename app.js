@@ -1392,7 +1392,7 @@ function askPassword(title, message, confirm = false) {
       const p1 = modal.querySelector('[data-pw="1"]').value;
       const p2 = confirm ? modal.querySelector('[data-pw="2"]').value : p1;
       const msg = modal.querySelector('.alert-msg');
-      if (confirm && p1.length < 6) msg.textContent = 'Mindestens 6 Zeichen.';
+      if (confirm && p1.length < PW_MIN) msg.textContent = `Mindestens ${PW_MIN} Zeichen.`;
       else if (p1 !== p2) msg.textContent = 'Die beiden Passwörter sind verschieden.';
       else if (p1) done(p1);
     });

@@ -86,6 +86,7 @@ const BACKUP_PART = 900_000; // D1: höchstens 2 MB je Zeile, also in Teilen spe
 const BACKUP_DAYS = 7;
 const AUTH_FAILS = 5; // falsche Passwörter, danach AUTH_WAIT Minuten Pause
 const AUTH_WAIT = 10;
+const AUTH_FAILS_ALL = 30; // falsche Passwörter je Konto von allen Geräten zusammen, danach ebenfalls AUTH_WAIT Minuten Pause
 const REPORT_MAX = 200_000; // Zeichen je Arbeitsschein
 const REPORT_DAYS = 60;
 const AI_MODEL = '@cf/google/gemma-4-26b-a4b-it';
@@ -410,19 +411,40 @@ const headerUser = (req) => {
 };
 const validAuth = (s) => typeof s === 'string' && /^[A-Za-z0-9+/=]{40,64}$/.test(s);
 
-/** Konto mit Passwort-Prüfwert prüfen; nach AUTH_FAILS Fehlversuchen AUTH_WAIT Minuten gesperrt.
+/** Fehlversuche je Konto und Gerät (IP-Adresse): so kann niemand ein fremdes Konto durch falsche Passwörter sperren */
+const AUTH_FAILS_TABLE = 'CREATE TABLE IF NOT EXISTS auth_fails (key TEXT PRIMARY KEY, fails INTEGER NOT NULL, failed INTEGER NOT NULL)';
+const clientIp = (req) => req.headers.get('CF-Connecting-IP') || '';
+
+/** Konto mit Passwort-Prüfwert prüfen. Gesperrt (AUTH_WAIT Minuten) wird nach AUTH_FAILS Fehlversuchen von derselben
+ *  Adresse – nur für diese – und nach AUTH_FAILS_ALL von allen zusammen (Durchprobieren über viele Adressen).
  *  Ergebnis: Zeile des Kontos oder { error, status } */
-async function checkAccount(db, user, auth) {
+async function checkAccount(db, user, auth, ip = '') {
   if (!user || !validAuth(auth)) return { error: 'id', status: 400 };
   const row = await db.prepare('SELECT * FROM accounts WHERE user = ?').bind(user).first();
   if (!row) return { error: 'unknown', status: 404 };
-  if (row.fails >= AUTH_FAILS && Date.now() - (row.failed || 0) < AUTH_WAIT * 60000) return { error: 'wait', status: 429 };
+  const now = Date.now();
+  const wait = AUTH_WAIT * 60000;
+  const key = `${user}|${ip}`;
+  let own = null;
+  try {
+    own = await db.prepare('SELECT fails, failed FROM auth_fails WHERE key = ?').bind(key).first();
+  } catch (e) {
+    if (!/no such table/i.test(String(e && e.message))) throw e;
+  }
+  if ((own && own.fails >= AUTH_FAILS && now - own.failed < wait) || (row.fails >= AUTH_FAILS_ALL && now - (row.failed || 0) < wait))
+    return { error: 'wait', status: 429 };
   if (!sameCode(await sha256(auth), row.auth)) {
-    await db.prepare('UPDATE accounts SET fails = CASE WHEN ? - COALESCE(failed, 0) > ? THEN 1 ELSE fails + 1 END, failed = ? WHERE user = ?')
-      .bind(Date.now(), AUTH_WAIT * 60000, Date.now(), user).run();
+    await db.batch([
+      db.prepare(AUTH_FAILS_TABLE),
+      db.prepare('INSERT INTO auth_fails (key, fails, failed) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET fails = CASE WHEN ? - failed > ? THEN 1 ELSE fails + 1 END, failed = ?')
+        .bind(key, now, now, wait, now),
+      db.prepare('UPDATE accounts SET fails = CASE WHEN ? - COALESCE(failed, 0) > ? THEN 1 ELSE fails + 1 END, failed = ? WHERE user = ?').bind(now, wait, now, user),
+      db.prepare('DELETE FROM auth_fails WHERE failed < ?').bind(now - 86400e3),
+    ]);
     await new Promise((r) => setTimeout(r, 400));
     return { error: 'auth', status: 403 };
   }
+  if (own && own.fails) await db.prepare('DELETE FROM auth_fails WHERE key = ?').bind(key).run();
   if (row.fails) await db.prepare('UPDATE accounts SET fails = 0 WHERE user = ?').bind(user).run();
   return row;
 }
@@ -448,7 +470,7 @@ async function pruneBackups(db, user) {
   if (drop.length) await db.batch(drop.map((at) => db.prepare('DELETE FROM backups WHERE user = ? AND at = ?').bind(user, at)));
 }
 
-async function accountRequest(db, body, h) {
+async function accountRequest(db, body, h, ip = '') {
   const user = userKey(body.user);
   if (body.action === 'join') {
     if (!user || !validAuth(body.auth) || !validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
@@ -463,6 +485,9 @@ async function accountRequest(db, body, h) {
     if (!exists) {
       if (body.mode !== 'create') return json({ error: 'unknown' }, 404, h);
       if (!sentOwn) return json({ error: 'token' }, 403, h);
+      // Ohne Eintrag in diesem Monat (Monatsanfang) lässt sich nicht prüfen, wem er gehört: einen Eintrag, der schon zu
+      // einem anderen Konto gehört, nicht übernehmen (sonst ließe sich ein Kollege aus dem Team drängen)
+      if (!sent && (await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first())) return json({ error: 'token' }, 403, h);
       // ein Team-Eintrag gehört nur zu einem Konto (z. B. abgemeldet und neues Konto auf demselben iPhone)
       await db.batch([
         db.prepare('UPDATE accounts SET member = NULL WHERE member = ?').bind(body.member),
@@ -470,7 +495,7 @@ async function accountRequest(db, body, h) {
       ]);
       return json({ member: body.member, backups: [] }, 200, h);
     }
-    const row = await checkAccount(db, user, body.auth);
+    const row = await checkAccount(db, user, body.auth, ip);
     // falsches Passwort beim Anlegen: der Name gehört jemand anderem
     if (row.error) return json({ error: row.error === 'auth' && body.mode === 'create' ? 'taken' : row.error }, row.status, h);
     const member = validId(row.member) ? row.member : body.member;
@@ -484,7 +509,7 @@ async function accountRequest(db, body, h) {
     await db.batch(ops);
     return json({ member, backups: await backupList(db, user) }, 200, h);
   }
-  const row = await checkAccount(db, user, body.auth);
+  const row = await checkAccount(db, user, body.auth, ip);
   if (row.error) return json({ error: row.error }, row.status, h);
   if (body.action === 'list') return json({ backups: await backupList(db, user) }, 200, h);
   if (body.action === 'reports') {
@@ -498,7 +523,14 @@ async function accountRequest(db, body, h) {
       db.prepare('SELECT id, data, changed, deleted FROM reports WHERE user = ? AND changed > ? ORDER BY changed LIMIT 200').bind(user, since),
       db.prepare('SELECT user, name FROM accounts'),
     ]);
-    return json({ reports: rows.results, names: Object.fromEntries(names.results.map((x) => [x.user, x.name || ''])) }, 200, h);
+    // Vornamen nur für die Benutzer, die auf diesen Scheinen stehen (nicht die Liste aller Konten herausgeben)
+    const onReports = new Set();
+    for (const r of rows.results) {
+      try {
+        for (const e of JSON.parse(r.data).einsaetze || []) for (const m of e.mitarbeiter || []) if (userKey(m.benutzer)) onReports.add(userKey(m.benutzer));
+      } catch {}
+    }
+    return json({ reports: rows.results, names: Object.fromEntries(names.results.filter((x) => onReports.has(x.user)).map((x) => [x.user, x.name || ''])) }, 200, h);
   }
   if (body.action === 'get') {
     const parts = (await db.prepare('SELECT data FROM backups WHERE user = ? AND at = ? ORDER BY part').bind(user, Number(body.at) || 0).all()).results;
@@ -663,7 +695,7 @@ async function reportsRequest(db, req, env, h) {
 
 /** Verschlüsselte Sicherung speichern (Inhalt roh, nicht als JSON verpackt: spart Rechenzeit bei großen Dateien) */
 async function backupPut(db, req, h) {
-  const row = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'));
+  const row = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'), clientIp(req));
   if (row.error) return json({ error: row.error }, row.status, h);
   const data = await req.text();
   if (data.length > BACKUP_MAX) return json({ error: 'size' }, 413, h);
@@ -721,11 +753,11 @@ export default {
 
       if ((path === '/account' && req.method === 'POST') || (path === '/backup' && req.method === 'PUT')) {
         await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
-        return path === '/backup' ? await backupPut(db, req, h) : await accountRequest(db, await readBody(req), h);
+        return path === '/backup' ? await backupPut(db, req, h) : await accountRequest(db, await readBody(req), h, clientIp(req));
       }
       if (path === '/team' && req.method === 'GET') {
         // Lesen nur mit Konto (Team-Code allein reicht nicht); ohne Angaben 'konto', sonst wie beim Anmelden
-        const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'));
+        const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'), clientIp(req));
         if (acc.error === 'id') return json({ error: 'konto' }, 403, h);
         if (acc.error) return json({ error: acc.error }, acc.status, h);
         const [cur, prev, posts] = await db.batch([

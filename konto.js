@@ -11,6 +11,8 @@
 const ACCOUNT_KEY = 'stdprotokoll.account.v1';
 /** Sicherung auf dem Team-Server: nach Änderungen höchstens einmal je Stunde */
 const ACCOUNT_BACKUP_GAP = 3600e3;
+/** Mindestlänge für neue Passwörter (neues Konto, Passwort ändern) */
+const PW_MIN = 8;
 
 let account = null;
 try {
@@ -52,6 +54,7 @@ const accountError = (e) =>
     taken: 'Benutzername schon vergeben',
     wait: 'Zu viele Versuche – in 10 Minuten wieder',
     size: 'Sicherung zu groß',
+    token: 'Team-Eintrag gehört zu einem anderen Konto – dort anmelden',
   })[e && (e.status === 401 ? 401 : e.message)] || (e && e.status ? 'Fehler auf dem Server' : 'Keine Verbindung');
 
 /** Konto beim Team-Server anlegen bzw. prüfen und mit dem Team-Eintrag verbinden → { member, backups } */
@@ -101,7 +104,8 @@ async function accountLink() {
 async function accountSetup(user, pw, mode, again) {
   user = accountUser(user);
   if (!user) return toast('Benutzername: mindestens 3 Zeichen, nur Buchstaben, Ziffern, . - _');
-  if (pw.length < 6) return toast('Passwort: mindestens 6 Zeichen');
+  // Neue Passwörter mindestens PW_MIN Zeichen (erschwert das Erraten); bestehende kürzere funktionieren beim Anmelden weiter
+  if (pw.length < (mode === 'create' ? PW_MIN : 6)) return toast(`Passwort: mindestens ${mode === 'create' ? PW_MIN : 6} Zeichen`);
   // Ohne Team prüft kein Server das Passwort: zweimal eingeben, sonst verschlüsselte ein Tippfehler alle Sicherungen
   if ((mode === 'create' || !team) && again !== pw) return toast('Die beiden Passwörter sind verschieden.');
   toast('Wird eingerichtet …', 10000);
