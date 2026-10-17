@@ -262,6 +262,8 @@ if (LANG === 'ru') {
 
     patterns: [
       [/^Woche Nr\. (\d+)$/, 'Неделя № $1'],
+      [/^((?:Mo|Di|Mi|Do|Fr|Sa|So)(?:, (?:Mo|Di|Mi|Do|Fr|Sa|So))*): Einträge lägen im anderen Monat$/, (m, d) =>
+        `${d.replace(/Mo|Di|Mi|Do|Fr|Sa|So/g, (w) => ({ Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс' })[w])}: записи попали бы в другой месяц`],
       [/^Gerundet, laut Schein (.+)$/, 'Округлено, по наряду $1'],
       [/^Wochenbericht Nr\. (\d+)$/, 'Недельный отчёт № $1'],
       [/^Nr\. (\d+)$/, '№ $1'],

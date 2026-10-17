@@ -78,8 +78,8 @@ const workedNet = (d) => Math.max(0, dayWorked(d) - (d.pause || 0));
 const dayCredit = (d, i) => (d.credit != null ? d.credit : statusCredit(d.status, i));
 const dayTotal = (d, i) => (d.status ? dayCredit(d, i) + (canWork(d) ? workedNet(d) : 0) : workedNet(d));
 const dayHasTimes = (d) => d.rows.some((r) => r.start != null || r.end != null);
-/** Am Tag wurde schon etwas eingetragen, aber noch keine Pause (nur neue Zettel haben pause: null) */
-const pauseMissing = (d) => !d.status && d.pause == null && d.rows.some((r) => !rowIsEmpty(r));
+/** Am Tag wurde schon etwas eingetragen, aber noch keine Pause (nur neue Zettel haben pause: null), auch bei Arbeit am Feiertag */
+const pauseMissing = (d) => canWork(d) && d.pause == null && d.rows.some((r) => !rowIsEmpty(r));
 /** Am Tag wurde schon etwas eingetragen (Zeit, Baustelle, Art der Arbeit oder eine Pause) */
 const dayStarted = (d) => canWork(d) && (d.pause > 0 || d.rows.some((r) => !rowIsEmpty(r)));
 /** Feiertag, an dem zusätzlich gearbeitet wurde */
@@ -2472,6 +2472,7 @@ function renderEditor(id) {
     location.replace('#/');
     return;
   }
+  cancelDrags(false);
   editorId = id;
   suggestions = { site: collectSuggestions('site'), work: collectSuggestions('work') };
   workBySite = collectWorkBySite();
@@ -2583,7 +2584,7 @@ function dayHTML(s, i) {
           : `<button class="link-btn expand-btn" data-act="expand">${ICON.plus} Arbeit eintragen (z. B. Notdienst)</button>`;
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
-        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${teamDayChipHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
+        <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}${teamDayChipHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
         ${statusChipHTML(s, i, true)}
       </div>
       ${extra}
@@ -2722,6 +2723,7 @@ function summaryHTML(s) {
 const currentSheet = () => findSheet(editorId);
 
 function refreshDay(i) {
+  cancelDrags(true);
   const s = currentSheet();
   const el = document.querySelector(`.day[data-day="${i}"]`);
   const snap = countSnapshot('.day-total b');
@@ -2748,13 +2750,26 @@ function updateSaveBar() {
   }
 }
 
-/** Einen Tag übernehmen (die anderen Tage bleiben, wie sie sind) */
+/** Getauschte Tage gehören zusammen: „Speichern“ an einem speichert beide (sonst stünde die Arbeit doppelt oder gar nicht da) */
+function linkDays(a, b) {
+  if (!editorSaved) return;
+  const g = (editorSaved.group ||= [0, 1, 2, 3, 4, 5, 6]);
+  const from = g[b];
+  for (let k = 0; k < 7; k++) if (g[k] === from) g[k] = g[a];
+}
+
+/** Einen Tag übernehmen (die anderen Tage bleiben, wie sie sind – außer mit ihm getauschte) */
 function saveDay(i) {
   if (document.activeElement && document.activeElement.matches('.txt')) document.activeElement.blur();
   const s = currentSheet();
   if (!s || !editorSaved) return;
-  editorSaved.days[i] = structuredClone(s.days[i]);
-  editorSaved.dayJson[i] = JSON.stringify(s.days[i]);
+  const g = editorSaved.group;
+  const days = g ? [0, 1, 2, 3, 4, 5, 6].filter((k) => g[k] === g[i]) : [i];
+  for (const k of days) {
+    editorSaved.days[k] = structuredClone(s.days[k]);
+    editorSaved.dayJson[k] = JSON.stringify(s.days[k]);
+    if (g) g[k] = k;
+  }
   saveSheets(s);
   haptic();
   updateSaveBar();
@@ -2793,6 +2808,7 @@ function discardSheet() {
 function confirmLeave(go) {
   confirmDialog('Änderungen verwerfen?', '', 'Verwerfen', () => {
     discardSheet();
+    if (currentView === 'editor') refreshAll();
     go();
   }, true, 'Weiter bearbeiten', () => updateTabbar());
 }
@@ -2889,6 +2905,17 @@ function editPause(btn) {
   );
 }
 
+/** Woche geändert: Feiertage, die die App eingetragen hatte, bleiben nicht am alten Wochentag stehen; die Feiertage der
+ *  neuen Woche gelten auch an Tagen mit Einträgen (wie „Arbeit eintragen“ am Feiertag). Von Hand gesetzte bleiben */
+function moveHolidays(s, days, oldStart) {
+  days.forEach((d, i) => {
+    if (d.manual) return;
+    const now = sheetIsActive(s, i) && holidayName(sheetDate(s, i));
+    if (d.status === 'feiertag' && !now && holidayName(addDays(parseDate(oldStart), i))) delete d.status;
+    else if (!d.status && now) d.status = 'feiertag';
+  });
+}
+
 function changeWeek() {
   const s = currentSheet();
   weekPicker(sheetFirstDate(s), s.id, (anchor) => {
@@ -2897,13 +2924,22 @@ function changeWeek() {
       return;
     }
     const n = newSheet(anchor, '');
+    const moved = { ...s, weekStart: n.weekStart, year: n.year, month: n.month };
+    // Tage mit Einträgen, die in der neuen Woche zum anderen Monat gehörten, wären unsichtbar
+    const saved = editorSaved && editorSaved.id === s.id ? editorSaved.days : s.days;
+    const lost = [0, 1, 2, 3, 4, 5, 6].filter((i) => !sheetIsActive(moved, i) && (dayHasContent(s.days[i]) || dayHasContent(saved[i])));
+    if (lost.length) {
+      toast(`${lost.map((i) => WEEKDAYS_SHORT[i]).join(', ')}: Einträge lägen im anderen Monat`);
+      return;
+    }
+    const oldStart = s.weekStart;
     s.weekStart = n.weekStart;
     s.year = n.year;
     s.month = n.month;
-    markHolidays(s);
+    moveHolidays(s, s.days, oldStart);
     // Die neue Woche gilt sofort, also auch ihre Feiertage im gespeicherten Stand (sonst stünden sie als ungespeichert da)
     if (editorSaved && editorSaved.id === s.id) {
-      markHolidays({ ...s, days: editorSaved.days });
+      moveHolidays(s, editorSaved.days, oldStart);
       editorSaved.dayJson = editorSaved.days.map((d) => JSON.stringify(d));
     }
     saveSheets(s);
@@ -5084,7 +5120,8 @@ function typoFor(field, row) {
     return t.charAt(0).toLowerCase() + t.slice(1);
   };
   const words = (x) => sameKey(x).replace(/[.,'\-–]/g, ' ').split(/\s+/).filter(Boolean);
-  const digits = (x) => x.replace(/\D/g, '');
+  // Zahlen einzeln vergleichen: „1-3“ und „13“ sind verschiedene Hausnummern
+  const numbers = (x) => (x.match(/\d+/g) || []).join(' ');
   for (const raw of field === 'work' ? value.split(',') : [value]) {
     const part = raw.trim();
     if (!part || known.has(part)) continue; // genau so schon benutzt
@@ -5093,7 +5130,7 @@ function typoFor(field, row) {
     for (const [v, n] of candidates) {
       if (loose(v) === loose(part)) continue;
       // Andere Zahlen („Halle 3“ / „Halle 4“, „Markt 12“ / „Markt 13“) sind kein Tippfehler
-      if (digits(searchKey(v)) !== digits(key)) continue;
+      if (numbers(v) !== numbers(part)) continue;
       let dist = 0;
       if (searchKey(v) !== key) {
         const a = words(part);
@@ -5135,14 +5172,21 @@ function aiCheckField(input) {
   });
 }
 const TYPO_PREFIXES = ['', 'ab', 'an', 'auf', 'aus', 'be', 'ein', 'ent', 'ge', 'mit', 'nach', 'um', 'ver', 'vor', 'weg', 'zer', 'zu'];
+/** Beugungsendungen: „Alter“/„Alten“, „Einbauen“/„Einbauten“ sind dasselbe Wort */
+const TYPO_ENDINGS = ['', 'e', 'n', 'r', 's', 't', 'en', 'er', 'es', 'em', 'te', 'ten', 'st'];
 /** Zwei Wörter, die sich nur in Endung (Mehrzahl, Beugung, Umlaut) oder Vorsilbe unterscheiden – so gewollt, kein Tippfehler */
 function sameStem(a, b) {
   const fold = (w) => w.replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u');
   const [s, l] = [fold(a), fold(b)].sort((x, y) => x.length - y.length);
   if (s === l || l.endsWith(s) || (l.startsWith(s) && l.length - s.length <= 3)) return true;
+  // gleicher Anfang (mind. 4 Buchstaben), nur die Endung anders
+  let p = 0;
+  while (p < s.length && s[p] === l[p]) p++;
+  if (p >= 4 && TYPO_ENDINGS.includes(s.slice(p)) && TYPO_ENDINGS.includes(l.slice(p))) return true;
+  // gleiches Ende (mind. 3 Buchstaben, z. B. „bau“, „zug“), nur die Vorsilbe anders („Aufbau“/„Ausbau“)
   let k = 0;
   while (k < s.length && s[s.length - 1 - k] === l[l.length - 1 - k]) k++;
-  return k >= 4 && TYPO_PREFIXES.includes(s.slice(0, s.length - k)) && TYPO_PREFIXES.includes(l.slice(0, l.length - k));
+  return k >= 3 && TYPO_PREFIXES.includes(s.slice(0, s.length - k)) && TYPO_PREFIXES.includes(l.slice(0, l.length - k));
 }
 /** Hinweis, wenn ein Text Zeichen enthält, die im PDF als „?“ erscheinen; sonst '' */
 function pdfCharHint(text) {
@@ -5170,7 +5214,7 @@ const typoHintHTML = (field, row) => {
   if (pdf) return pdf.replace('class="typo-hint pdf-hint"', `class="typo-hint pdf-hint" data-typo="${field}"`);
   const t = typoFor(field, row) || aiTypoFor(field, row);
   return t
-    ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
+    ? `<div class="typo-hint" data-typo="${field}"><span class="typo-text">Meintest du <button data-act="typo-fix" data-f="${field}" data-v="${escapeHtml(t.suggestion)}" data-p="${escapeHtml(t.part)}" translate="no">„${escapeHtml(t.suggestion)}“</button>?</span><button class="typo-x" data-act="typo-ok" data-f="${field}" aria-label="So lassen">✕</button></div>`
     : '';
 };
 /** Hinweis eines Feldes neu setzen (nach dem Verlassen des Feldes); beim Tippen ausblenden */
@@ -5234,7 +5278,7 @@ function suggestionsFor(input) {
 /** Vorschlag aus der Leiste ausblenden (nach langem Drücken) */
 function askHideSuggestion(text) {
   const input = suggestInput;
-  if (!input) return;
+  if (!input || input.closest('#modal-layer')) return;
   const field = input.dataset.f;
   confirmDialog(
     'Vorschlag ausblenden?',
@@ -5264,7 +5308,7 @@ function showChips(input) {
   }
   suggestGrid.innerHTML = rows
     .filter((r) => r.length)
-    .map((r) => `<div class="suggest-row">${r.map((v) => `<button class="chip" data-chip="${escapeHtml(v)}">${escapeHtml(v)}</button>`).join('')}</div>`)
+    .map((r) => `<div class="suggest-row">${r.map((v) => `<button class="chip" data-chip="${escapeHtml(v)}" translate="no">${escapeHtml(v)}</button>`).join('')}</div>`)
     .join('');
   suggestGrid.scrollLeft = 0;
   suggestBar.classList.toggle('show', list.length > 0);
@@ -5683,8 +5727,15 @@ document.addEventListener('click', (e) => {
     }
     case 'typo-ok': {
       // „So lassen“: Hinweis für genau diesen Text nicht mehr zeigen
-      const { s, row } = rowContext(el);
-      row.typoOk = { ...row.typoOk, [el.dataset.f]: row[el.dataset.f] };
+      const { s, dayIndex, row } = rowContext(el);
+      const f = el.dataset.f;
+      row.typoOk = { ...row.typoOk, [f]: row[f] };
+      // Gilt sofort, auch im gespeicherten Stand (sonst stünde der Tag als ungespeichert da)
+      const saved = editorSaved && editorSaved.id === s.id && editorSaved.days[dayIndex].rows.find((r) => r.id === row.id);
+      if (saved && saved[f] === row[f]) {
+        saved.typoOk = { ...saved.typoOk, [f]: row[f] };
+        editorSaved.dayJson[dayIndex] = JSON.stringify(editorSaved.days[dayIndex]);
+      }
       saveSheets(s);
       el.closest('.typo-hint').remove();
       break;
@@ -5698,14 +5749,22 @@ document.addEventListener('click', (e) => {
       showPdfPage();
       break;
     case 'delrow': {
-      const { s, dayIndex, day, rowIndex, row } = rowContext(el);
+      const { s, dayIndex, day, row } = rowContext(el);
       const rowEl = el.closest('.row');
-      const remove = () =>
+      if (!row || rowEl.dataset.removing) break;
+      // Die Zeile erst beim Löschen suchen (die Position kann sich bis dahin ändern); doppeltes Antippen löscht nur einmal
+      const remove = () => {
+        if (rowEl.dataset.removing) return;
+        rowEl.dataset.removing = '1';
         collapseOut(rowEl, () => {
-          day.rows.splice(rowIndex, 1);
+          const k = day.rows.indexOf(row);
+          if (k < 0) return;
+          day.rows.splice(k, 1);
+          if (!day.rows.length) day.rows.push(emptyRow());
           saveSheets(s);
           refreshDay(dayIndex);
         });
+      };
       if (rowIsEmpty(row)) remove();
       else confirmDialog('Zeile löschen?', 'Die Einträge dieser Zeile gehen verloren.', 'Löschen', remove, true);
       break;
@@ -5954,7 +6013,7 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     return;
   }
-  if (e.key === 'Enter' && e.target.matches('input:not([type=checkbox]), textarea.txt')) {
+  if (e.key === 'Enter' && e.target.matches('input:not([type=checkbox]), textarea.txt') && !e.target.form) {
     // „Weiter“ springt zum nächsten Feld der Zeile
     if (e.target.dataset.f === 'site') {
       const work = e.target.closest('.row').querySelector('[data-f="work"]');
@@ -6060,15 +6119,45 @@ document.addEventListener(
 // ───────────────────────── Zeilen verschieben ─────────────────────────
 // Lange auf eine Zeile drücken (nicht auf ein Textfeld – dort kommt die Lupe), dann nach oben oder unten ziehen.
 
-let press = null; // { rowEl, timer, x, y }
-let drag = null; // { rowEl, dayEl, grab, moved }
+let press = null; // { rowEl, timer, x, y, id }
+let drag = null; // { rowEl, dayEl, grab, id }
+
+/** Der Finger, der das Ziehen begonnen hat (ein zweiter Finger zählt nicht) */
+const ownTouch = (list, id) => [...list].find((t) => t.identifier === id);
+
+/** Ziehen abbrechen, ohne etwas zu ändern: iOS bricht die Berührung ab oder der Zettel wird neu gezeichnet
+ *  (danach kämen keine Ereignisse des Fingers mehr an). restore: umsortierte Zeilen wieder richtig zeigen */
+function cancelDrags(restore) {
+  if (press) clearTimeout(press.timer);
+  if (dayPress) clearTimeout(dayPress.timer);
+  press = dayPress = null;
+  if (drag) {
+    const { rowEl, dayEl } = drag;
+    drag = null;
+    rowEl.classList.remove('dragging');
+    rowEl.style.transform = '';
+    dayEl.classList.remove('reordering');
+    if (restore && dayEl.isConnected) refreshDay(Number(dayEl.dataset.day));
+  }
+  if (dayDrag) {
+    const d = dayDrag;
+    dayDrag = null;
+    clearInterval(d.scroll);
+    d.ghost.remove();
+    d.dayEl.classList.remove('day-lifted');
+    for (const el of document.querySelectorAll('#days .day-drop')) el.classList.remove('day-drop', 'day-target');
+  }
+}
 
 function startDrag() {
-  const { rowEl } = press;
+  const { rowEl, target, id, y } = press;
   const dayEl = rowEl.closest('.day');
+  press = null;
   if (!dayEl || dayEl.querySelectorAll('.row').length < 2) return;
   document.activeElement && document.activeElement.blur && document.activeElement.blur();
-  drag = { rowEl, dayEl, grab: press.y - rowEl.getBoundingClientRect().top };
+  // Hat das Verlassen des Feldes die berührte Stelle neu gezeichnet (Tippfehler-Hinweis), kämen keine Ereignisse mehr an
+  if (!target.isConnected) return;
+  drag = { rowEl, dayEl, grab: y - rowEl.getBoundingClientRect().top, id };
   rowEl.classList.add('dragging');
   dayEl.classList.add('reordering');
 }
@@ -6110,20 +6199,23 @@ document.addEventListener(
   'touchstart',
   (e) => {
     const rowEl = e.target.closest('.day .row');
-    if (!rowEl || e.touches.length > 1 || e.target.closest('input, textarea')) return;
+    if (!rowEl || e.touches.length > 1 || e.target.closest('input, textarea, .typo-hint')) return;
     const t = e.touches[0];
-    press = { rowEl, x: t.clientX, y: t.clientY, timer: setTimeout(startDrag, 450) };
+    press = { rowEl, target: e.target, id: t.identifier, x: t.clientX, y: t.clientY, timer: setTimeout(startDrag, 450) };
   },
   { passive: true }
 );
 document.addEventListener(
   'touchmove',
   (e) => {
-    const t = e.touches[0];
     if (drag) {
       e.preventDefault(); // Seite scrollt beim Ziehen nicht mit
-      moveDrag(t.clientY);
-    } else if (press && (Math.abs(t.clientX - press.x) > 8 || Math.abs(t.clientY - press.y) > 8)) {
+      const t = ownTouch(e.touches, drag.id);
+      if (t) moveDrag(t.clientY);
+      return;
+    }
+    const t = press && ownTouch(e.touches, press.id);
+    if (t && (Math.abs(t.clientX - press.x) > 8 || Math.abs(t.clientY - press.y) > 8)) {
       clearTimeout(press.timer);
       press = null;
     }
@@ -6131,6 +6223,8 @@ document.addEventListener(
   { passive: false }
 );
 const endPress = (e) => {
+  // Nur das Loslassen des ziehenden Fingers beendet das Ziehen
+  if (drag && !ownTouch(e.changedTouches, drag.id)) return;
   if (press) clearTimeout(press.timer);
   press = null;
   if (drag) {
@@ -6139,7 +6233,7 @@ const endPress = (e) => {
   }
 };
 document.addEventListener('touchend', endPress, { passive: false });
-document.addEventListener('touchcancel', endPress, { passive: false });
+document.addEventListener('touchcancel', () => cancelDrags(true), { passive: true });
 // Kein Kontextmenü beim langen Drücken auf eine Zeile
 document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.day .row') && !e.target.closest('input, textarea')) e.preventDefault();
@@ -6147,21 +6241,26 @@ document.addEventListener('contextmenu', (e) => {
 
 // ───────────────────────── Tage tauschen ─────────────────────────
 // Lange auf eine Tageskarte drücken (nicht auf eine Zeile – die zieht man einzeln), dann auf einen anderen Tag der Woche
-// ziehen: beide tauschen Zeilen, Pause und Tagesart. Feiertage bleiben an ihrem Datum; Urlaub, Krank … nicht auf Sa/So.
-// Wie jede Änderung: danach haben beide Tage „Speichern“.
+// ziehen: beide tauschen Zeilen, Pause und Tagesart. Feiertage bleiben an ihrem Datum; Urlaub, Krank … nicht auf Sa/So
+// und nicht auf einen Feiertag. Wie jede Änderung: danach haben beide Tage „Speichern“ – eins davon speichert beide (linkDays).
 // Elemente mit eigenem langem Drücken (data-hold, z. B. die Tagesart-Kapsel) starten das Ziehen nicht.
 
-let dayPress = null; // { dayEl, timer, x, y }
-let dayDrag = null; // { from, ghost, target, scroll }
+let dayPress = null; // { dayEl, timer, x, y, id }
+let dayDrag = null; // { from, ghost, target, scroll, id }
 
 /** Was am Tag mitwandert (ein automatischer Feiertag gehört zum Datum, ein von Hand gesetzter wandert mit) */
 const dayMoveStatus = (d) => (d.status && (d.status !== 'feiertag' || d.manual) ? d.status : undefined);
 const dayHasContent = (d) => !!dayMoveStatus(d) || d.pause != null || d.rows.some((r) => !rowIsEmpty(r));
-/** Ziel erlaubt? Anderer Tag dieses Monats; keine Tagesart (außer Feiertag) auf Sa/So – von Hand gesetzte dürfen dorthin */
+/** Ziel erlaubt? Anderer Tag dieses Monats; keine Tagesart (außer Feiertag) auf Sa/So – von Hand gesetzte dürfen dorthin.
+ *  Keine Tagesart auf einen automatischen Feiertag: der bleibt am Datum, die Tagesart ginge verloren */
 function daySwapOk(s, a, b) {
   if (a === b || !sheetIsActive(s, b)) return false;
   const toWeekend = (d) => dayMoveStatus(d) && !d.manual;
-  return !((b >= 5 && toWeekend(s.days[a])) || (a >= 5 && toWeekend(s.days[b])));
+  const autoHoliday = (d) => d.status === 'feiertag' && !d.manual;
+  const A = s.days[a];
+  const B = s.days[b];
+  if ((autoHoliday(B) && dayMoveStatus(A)) || (autoHoliday(A) && dayMoveStatus(B))) return false;
+  return !((b >= 5 && toWeekend(A)) || (a >= 5 && toWeekend(B)));
 }
 function swapDays(s, a, b) {
   const A = s.days[a];
@@ -6189,7 +6288,7 @@ function swapDays(s, a, b) {
 }
 
 function startDayDrag() {
-  const { dayEl, x, y } = dayPress;
+  const { dayEl, x, y, id } = dayPress;
   dayPress = null;
   const s = currentSheet();
   const from = Number(dayEl.dataset.day);
@@ -6201,7 +6300,7 @@ function startDayDrag() {
   document.body.append(ghost);
   dayEl.classList.add('day-lifted');
   for (const el of document.querySelectorAll('#days .day')) if (daySwapOk(s, from, Number(el.dataset.day))) el.classList.add('day-drop');
-  dayDrag = { from, dayEl, ghost, target: null, y, scroll: setInterval(dayDragScroll, 30) };
+  dayDrag = { from, dayEl, ghost, target: null, y, id, scroll: setInterval(dayDragScroll, 30) };
   moveDayDrag(x, y);
   haptic();
 }
@@ -6242,6 +6341,7 @@ function endDayDrag() {
   const to = Number(d.target.dataset.day);
   if (!daySwapOk(s, d.from, to)) return;
   swapDays(s, d.from, to);
+  linkDays(d.from, to);
   saveSheets(s);
   refreshDay(d.from);
   refreshDay(to);
@@ -6254,18 +6354,21 @@ document.addEventListener(
     const dayEl = e.target.closest('#days .day');
     if (!dayEl || e.touches.length > 1 || e.target.closest('.row, input, textarea, button, a, select, [data-hold]')) return;
     const t = e.touches[0];
-    dayPress = { dayEl, x: t.clientX, y: t.clientY, timer: setTimeout(startDayDrag, 450) };
+    dayPress = { dayEl, id: t.identifier, x: t.clientX, y: t.clientY, timer: setTimeout(startDayDrag, 450) };
   },
   { passive: true }
 );
 document.addEventListener(
   'touchmove',
   (e) => {
-    const t = e.touches[0];
     if (dayDrag) {
       e.preventDefault();
-      moveDayDrag(t.clientX, t.clientY);
-    } else if (dayPress && (Math.abs(t.clientX - dayPress.x) > 8 || Math.abs(t.clientY - dayPress.y) > 8)) {
+      const t = ownTouch(e.touches, dayDrag.id);
+      if (t) moveDayDrag(t.clientX, t.clientY);
+      return;
+    }
+    const t = dayPress && ownTouch(e.touches, dayPress.id);
+    if (t && (Math.abs(t.clientX - dayPress.x) > 8 || Math.abs(t.clientY - dayPress.y) > 8)) {
       clearTimeout(dayPress.timer);
       dayPress = null;
     }
@@ -6273,6 +6376,8 @@ document.addEventListener(
   { passive: false }
 );
 const endDayPress = (e) => {
+  // Nur das Loslassen des ziehenden Fingers tauscht
+  if (dayDrag && !ownTouch(e.changedTouches, dayDrag.id)) return;
   if (dayPress) clearTimeout(dayPress.timer);
   dayPress = null;
   if (dayDrag) {
@@ -6281,7 +6386,6 @@ const endDayPress = (e) => {
   }
 };
 document.addEventListener('touchend', endDayPress, { passive: false });
-document.addEventListener('touchcancel', endDayPress, { passive: false });
 document.addEventListener('contextmenu', (e) => {
   if (e.target.closest('#days .day') && !e.target.closest('input, textarea')) e.preventDefault();
 });
