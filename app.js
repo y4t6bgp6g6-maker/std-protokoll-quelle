@@ -4114,28 +4114,28 @@ function renderSettingsPage(sub) {
 function hiddenSuggestionsHTML() {
   const items = ['site', 'work'].flatMap((field) => settings.hiddenSuggestions[field].map((value) => ({ field, value })));
   return `<h2 class="section-title">Vorschläge</h2>
-    ${
-      items.length
-        ? `<div class="card form">${items
-            .map(
-              ({ field, value }) => `<div class="field"><span class="hidden-sugg"><span class="field-icon-inline">${field === 'site' ? ICON.pin : ICON.tool}</span><span translate="no">${escapeHtml(value)}</span></span>
-          <button class="link-btn" data-act="unhide" data-field="${field}" data-value="${escapeHtml(value)}">Wiederherstellen</button></div>`
-            )
-            .join('')}</div>`
-        : ''
-    }
-    <p class="footnote">Lange drücken blendet einen Vorschlag aus.</p>
     <div class="card form typo-demo-card">
       <label class="field"><span>Korrektur</span><input type="checkbox" class="toggle" data-s="typoHints" ${settings.typoHints !== false ? 'checked' : ''}></label>
       ${typoDemoHTML()}
+    </div>
+    <div class="card form">
+      <label class="field"><span>Warnzeichen <span class="warn-demo-sign" aria-hidden="true">⚠️</span></span><input type="checkbox" class="toggle" data-s="warnSigns" ${settings.warnSigns !== false ? 'checked' : ''}></label>
     </div>
     <div class="card form typo-demo-card">
       <label class="field"><span>Vorschläge über der Tastatur</span><input type="checkbox" class="toggle" data-s="suggestBar" ${settings.suggestBar !== false ? 'checked' : ''}></label>
       ${suggestDemoHTML()}
     </div>
-    <div class="card form">
-      <label class="field"><span>Warnzeichen <span class="warn-demo-sign" aria-hidden="true">⚠️</span></span><input type="checkbox" class="toggle" data-s="warnSigns" ${settings.warnSigns !== false ? 'checked' : ''}></label>
-    </div>`;
+    ${
+      items.length
+        ? `<div class="card form">${items
+            .map(
+              ({ field, value }) => `<div class="field hidden-row"><span class="hidden-sugg"><span class="field-icon-inline">${field === 'site' ? ICON.pin : ICON.tool}</span><span translate="no">${escapeHtml(value)}</span></span>
+          <button class="link-btn" data-act="unhide" data-field="${field}" data-value="${escapeHtml(value)}">Wiederherstellen</button></div>`
+            )
+            .join('')}</div>`
+        : ''
+    }
+    <p class="footnote">Lange drücken blendet einen Vorschlag aus.</p>`;
 }
 /** Beispiel für „Vorschläge über der Tastatur“: nur die Kapseln */
 const suggestDemoHTML = () => `<div class="typo-demo" aria-hidden="true">

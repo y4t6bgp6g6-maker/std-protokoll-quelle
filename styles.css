@@ -1087,7 +1087,12 @@ html.no-warn .suggest-wrap.missing .txt { padding-right: 0; }
 .trip-sites { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list-trip { display: inline-flex; vertical-align: -2px; margin-left: 6px; padding: 2px 4px; color: var(--accent); border-radius: 6px; }
 .list-trip:active { background: var(--accent-soft); }
-.field > .hidden-sugg { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.field > .hidden-sugg { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
+/* Lange Vorschläge brechen um, „Wiederherstellen“ steht immer rechts an derselben Stelle */
+.hidden-sugg > span[translate] { min-width: 0; overflow-wrap: anywhere; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.field.hidden-row { gap: 12px; padding-top: 10px; padding-bottom: 10px; }
+.field.hidden-row > .hidden-sugg { flex: 1 1 0; }
+.hidden-row > .link-btn { flex: none; }
 .field-icon-inline { display: flex; color: var(--muted); flex: none; }
 .chip { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .alert-buttons.single { grid-template-columns: 1fr; }
