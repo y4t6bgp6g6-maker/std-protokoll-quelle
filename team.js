@@ -143,9 +143,16 @@ const aiTrNeeded = (t, to) => (to === 'de' ? hasCyrillic(t) : /[A-Za-zÄÖÜäö
  *  (der Server nimmt höchstens 1000; so bleiben Zeilenumbrüche und lange Monatsberichte ganz) */
 function aiTrPieces(t) {
   const out = [];
+  // Ein Satz über 900 Zeichen (Aufzählung mit Kommas): an Komma/Semikolon, sonst an Leerzeichen teilen, zur Not hart
+  const split = (s) => {
+    if (s.length <= 900) return [s];
+    const parts = s.match(/[^,;]+[,;]*\s*/g) || [s];
+    if (parts.length === 1) return (s.match(/\S+\s*/g) || [s]).flatMap((w) => (w.length > 900 ? w.match(/[\s\S]{1,900}/g) : [w]));
+    return parts.flatMap(split);
+  };
   for (const line of String(t ?? '').split('\n')) {
     let cur = '';
-    for (const s of line.match(/[^.!?]+[.!?]*\s*/g) || [line]) {
+    for (const s of (line.match(/[^.!?]+[.!?]*\s*/g) || [line]).flatMap(split)) {
       if (cur && (cur + s).length > 900) out.push(cur), (cur = '');
       cur += s;
     }
@@ -172,7 +179,8 @@ async function aiTranslate(items, to) {
   try {
     for (let i = 0; i < todo.length; i += 20) {
       const { out } = await teamAi('tr', { to, items: todo.slice(i, i + 20) });
-      for (const [t, x] of out || []) if (typeof x === 'string' && x.trim()) (store[t] = x), (fresh = true);
+      // ins Deutsche: noch kyrillisch (Name nicht umgeschrieben) ist keine Übersetzung – später noch einmal fragen
+      for (const [t, x] of out || []) if (typeof x === 'string' && x.trim() && !(to === 'de' && hasCyrillic(x))) (store[t] = x), (fresh = true);
     }
   } catch {
   } finally {
@@ -279,27 +287,36 @@ function teamPayload() {
 
 let teamUploadTimer = 0;
 let teamUploading = false;
+/** Während eines Uploads kam eine Änderung: danach noch einmal (sonst ginge sie erst beim nächsten Anlass hoch) */
+let teamUploadAgain = false;
 /** Nach jeder Änderung: kurz warten (mehrere Änderungen auf einmal), dann hochladen, falls sich etwas geändert hat */
 function teamQueueUpload(delay = 3000) {
   if (!team || !TEAM_URL) return;
   clearTimeout(teamUploadTimer);
   teamUploadTimer = setTimeout(teamUpload, delay);
 }
+/** Ergebnis: true = der Server hat den aktuellen Stand */
 async function teamUpload() {
   // app.js (settings, Zettel) ist beim ersten Start nach einem Update teils noch nicht geladen, wenn die
   // Zeitgeber aus team.js schon ablaufen (langsames Netz): dann etwas später noch einmal
-  if (typeof settings === 'undefined') return teamQueueUpload(1000);
-  if (!team || !TEAM_URL || teamUploading || !navigator.onLine || accountRestorePending()) return;
+  if (typeof settings === 'undefined') return teamQueueUpload(1000), false;
+  if (!team || !TEAM_URL || !navigator.onLine || accountRestorePending()) return false;
+  if (teamUploading) {
+    teamUploadAgain = true;
+    return false;
+  }
   const payload = teamPayload();
   const text = JSON.stringify(payload);
-  if (team.sent === text) return;
+  if (team.sent === text) return true;
   teamUploading = true;
+  let ok = false;
   try {
     await teamRequest('PUT', '/me', payload);
     if (team) {
       team.sent = text;
       saveTeam();
     }
+    ok = true;
   } catch (e) {
     // Falscher Code (z. B. geändert): neu beitreten; sonst beim nächsten Anlass erneut versuchen
     if (e.status === 401 && team) leaveTeamLocal('Team-Code ungültig');
@@ -307,7 +324,12 @@ async function teamUpload() {
     else if (e.status === 403 && e.message === 'token' && team) leaveTeamLocal('Auf einem anderen iPhone angemeldet');
   } finally {
     teamUploading = false;
+    if (teamUploadAgain) {
+      teamUploadAgain = false;
+      teamQueueUpload(500);
+    }
   }
+  return ok;
 }
 
 // ───────── Beitreten / Verlassen ─────────
@@ -317,6 +339,8 @@ async function teamUpload() {
 async function joinTeam(code) {
   code = code.trim();
   if (!code || !account) return;
+  // Header erlauben nur einfache Zeichen; ein kyrillisches „е“ o. Ä. ergäbe sonst „Keine Verbindung“
+  if (/[^\x21-\x7e]/.test(code)) return toast('Team-Code ungültig');
   // Neues Konto braucht einen Namen; beim Anmelden kommt er mit der Sicherung zurück
   if (account.mode !== 'login' && !settings.name.trim()) {
     toast('Bitte zuerst deinen Namen eintragen');
@@ -369,7 +393,8 @@ function leaveTeam() {
     try {
       await teamRequest('DELETE', '/me', { member: team.member, token: team.token });
     } catch (e) {
-      if (e.status !== 401) {
+      // Code ungültig oder der Eintrag gehört inzwischen einem anderen iPhone (dasselbe Konto): hier nur noch austreten
+      if (e.status !== 401 && !(e.status === 403 && e.message === 'token')) {
         toast('Keine Verbindung');
         return;
       }
@@ -415,8 +440,10 @@ function teamClean(members) {
     member: str(m.member, 64),
     name: teamFirstName(str(m.name, 80)),
     updated: num(m.updated) || 0,
+    // höchstens 12 Zettel je Person und Monat, 30 Zeilen je Tag (wie der Server): sonst füllte ein Eintrag den Speicher aller
     sheets: (Array.isArray(m.sheets) ? m.sheets : [])
       .filter((s) => s && /^\d{4}-\d{2}-\d{2}$/.test(s.weekStart) && Array.isArray(s.days) && s.days.length === 7)
+      .slice(0, 12)
       .map((s) => ({
         weekStart: s.weekStart,
         year: num(s.year),
@@ -426,7 +453,7 @@ function teamClean(members) {
           credit: num(d && d.credit),
           manual: d && d.manual === true ? true : undefined,
           pause: num(d && d.pause),
-          rows: (Array.isArray(d && d.rows) ? d.rows : []).map((r) => ({
+          rows: (Array.isArray(d && d.rows) ? d.rows : []).slice(0, 30).map((r) => ({
             start: num(r && r.start),
             end: num(r && r.end),
             site: str(r && r.site, 200),
@@ -457,6 +484,12 @@ async function teamLoad() {
     // Wörterbuch auf dem Server geändert: gemerkte Rechtschreib-Prüfungen verwerfen (werden beim nächsten Verlassen neu geprüft)
     if (data.spellV && data.spellV !== aiStore.spellV) {
       aiSpellReset(data.spellV);
+      saveAi();
+    }
+    // Übersetzungs-Anweisung auf dem Server geändert: gemerkte Übersetzungen verwerfen
+    if (data.trV && data.trV !== aiStore.trV) {
+      aiStore.tr = { de: {}, ru: {} };
+      aiStore.trV = data.trV;
       saveAi();
     }
     saveTeam();
@@ -501,8 +534,19 @@ const teamAgo = (ms) => {
 
 const TEAM_COLORS = ['#2f9e74', '#8e5bd6', '#d2477a', '#2b84d6', '#b38a1e', '#e5793b'];
 
-/** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher */
-const teamMembers = (prev = false) => ((teamData || (team && team.cache) || {})[prev ? 'prevMembers' : 'members'] || []).filter((m) => team && m.member !== team.member);
+/** Monat der Team-Ansicht („2026-10“): laufender oder – prev – Vormonat */
+const teamShownMonth = (prev = false) => {
+  const n = new Date();
+  return teamMonth(prev ? new Date(n.getFullYear(), n.getMonth() - 1, 1) : n);
+};
+/** Kollegen ohne den eigenen Eintrag (Reihenfolge wie vom Server: nach Namen); vor dem ersten Laden der Zwischenspeicher.
+ *  Nach Monat ausgewählt: offline nach dem Monatswechsel stünde sonst der alte Monat in den Spalten des neuen */
+const teamMembers = (prev = false) => {
+  const src = teamData || (team && team.cache) || {};
+  const want = teamShownMonth(prev);
+  const list = !src.month ? src[prev ? 'prevMembers' : 'members'] : src.month === want ? src.members : src.prevMonth === want ? src.prevMembers : [];
+  return (list || []).filter((m) => team && m.member !== team.member);
+};
 /** Kollegen mit den Zetteln beider Monate (Vormonat zuerst bzw. wie gewählt): für Zettel-Ansicht, Team im Zettel, Übersetzung */
 function teamMembersAll(prevFirst = false) {
   const lists = prevFirst ? [teamMembers(true), teamMembers()] : [teamMembers(), teamMembers(true)];
@@ -527,20 +571,24 @@ function teamAvatar(m, size = 34) {
 
 // Baustellen: gleiche Baustelle trotz anderer Schreibweise erkennen (für Farbe und Wahl der Tagesbaustelle)
 
-/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma zählt (danach steht meist der Ort);
- *  letters: alle Buchstaben, ends: wo in letters ein Wort endet, words: die einzelnen Wörter (der Ort kann auch vorne stehen), nums: Hausnummern */
+/** Klein, ohne Akzente und Sonderzeichen, „Straße“ = „Str.“; nur der Teil vor dem Komma zählt (danach steht meist der Ort).
+ *  Buchstaben jeder Schrift (auch kyrillisch). nums: Hausnummern samt Buchstabe („3a“) und einzelne Kennbuchstaben
+ *  („Halle B“) – sie müssen passen; letters: alle übrigen Buchstaben, ends: wo in letters ein Wort endet,
+ *  words: die einzelnen Wörter (der Ort kann auch vorne stehen) */
+const TEAM_SITE_ID = /\d+\s?\p{L}(?![\p{L}\p{N}])|\d+|(?<![\p{L}\p{N}])\p{L}(?![\p{L}\p{N}])/gu;
 function teamSiteParts(name) {
   const s = String(name).toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’`´]/g, '').replace(/strasse/g, 'str');
   const core = s.split(',')[0];
+  const rest = core.replace(TEAM_SITE_ID, ' ');
   let n = 0;
   return {
-    letters: core.replace(/[^a-z]/g, ''),
-    ends: (core.match(/[a-z]+/g) || []).map((w) => (n += w.length)),
-    words: [...new Set(core.split(/[^a-z]+/).filter((w) => w.length >= 2))],
-    nums: (core.match(/\d+/g) || []).join(' '),
+    letters: rest.replace(/[^\p{L}]/gu, ''),
+    ends: (rest.match(/\p{L}+/gu) || []).map((w) => (n += w.length)),
+    words: [...new Set(rest.split(/[^\p{L}]+/u).filter((w) => w.length >= 2))],
+    nums: (core.match(TEAM_SITE_ID) || []).map((x) => x.replace(/\s/g, '')).join(' '),
   };
 }
-/** Abstand zweier Texte: Einfügen, Löschen, Ersetzen je 1, ohne Vertauschen (wie im Worker; auch die Server-Seite nutzt ihn) */
+/** Abstand zweier Texte: Einfügen, Löschen, Ersetzen je 1, ohne Vertauschen (wie dictFuzzy im Worker; für die Server-Seite) */
 function teamEditDistance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
@@ -554,8 +602,9 @@ function teamEditDistance(a, b) {
   }
   return row[b.length];
 }
-/** Gleiche Wörter? gleich oder ein Tippfehler (nicht „Anfang von“: sonst wäre „Markt“ = „Marktplatz“) */
-const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 5 && teamEditDistance(x, y) <= 1);
+/** Gleiche Wörter? gleich oder ein Tippfehler, auch zwei vertauschte Buchstaben (editDistance aus app.js);
+ *  nicht „Anfang von“: sonst wäre „Markt“ = „Marktplatz“ */
+const teamSameWord = (x, y) => x === y || (Math.min(x.length, y.length) >= 5 && editDistance(x, y) <= 1);
 /** Gleiche Baustelle? Hausnummern müssen passen; sonst gleich, ganze Wörter am Anfang der anderen (Ort fehlt am Ende;
  *  „Markt“ ≠ „Marktplatz“), ein Tippfehler (ab 12 Buchstaben zwei; „Kirchweg“ ≠ „Kirchberg“)
  *  oder alle Wörter der kürzeren stecken in der längeren (Ort fehlt vorne, z. B. „Roma“ = „Musterstadt Roma“) */
@@ -566,7 +615,7 @@ function teamSameSite(a, b) {
   const [x, y] = a.letters.length <= b.letters.length ? [a, b] : [b, a];
   const n = x.letters.length;
   if (n >= 4 && y.letters.startsWith(x.letters) && y.ends.includes(n)) return true;
-  if (teamEditDistance(x.letters, y.letters) <= (n >= 12 ? 2 : n >= 5 ? 1 : 0)) return true;
+  if (editDistance(x.letters, y.letters) <= (n >= 12 ? 2 : n >= 5 ? 1 : 0)) return true;
   const [few, many] = a.words.length <= b.words.length ? [a.words, b.words] : [b.words, a.words];
   return few.join('').length >= 4 && few.every((w) => many.some((v) => teamSameWord(w, v)));
 }
@@ -791,7 +840,7 @@ function teamPostsHTML() {
 function teamBoardHTML() {
   return `<div class="card tm-compose"><input data-team="post-text" placeholder="Nachricht ans Team" maxlength="500" enterkeyhint="send" autocomplete="off" value="${escapeHtml(teamDraft)}"><button class="tm-send" data-team="post" aria-label="Senden" ${teamPosting ? 'disabled' : ''}>${ICON.chevronRight}</button></div>
     <div class="tm-posts" id="tm-posts">${teamPostsHTML()}</div>
-    <p class="footnote center">Nachrichten verschwinden am Monatsende.</p>`;
+    <p class="footnote center">Die letzten 300 Nachrichten bleiben.</p>`;
 }
 
 function teamMarkSeen() {
@@ -814,12 +863,11 @@ async function teamSendPost() {
     try {
       await send();
     } catch (e) {
-      // Noch kein Eintrag in diesem Monat (z. B. gleich nach dem Monatswechsel): erst die Zettel hochladen
+      // Noch kein Eintrag in diesem Monat (z. B. gleich nach dem Monatswechsel): erst die Zettel hochladen – über
+      // teamUpload (nicht bei offenem „Sicherung einlesen?“, merkt sich, was wirklich gesendet wurde)
       if (e.message !== 'join') throw e;
       team.sent = '';
-      await teamRequest('PUT', '/me', teamPayload());
-      team.sent = JSON.stringify(teamPayload());
-      saveTeam();
+      if (!(await teamUpload())) throw e;
       await send();
     }
     teamDraft = '';
@@ -827,7 +875,8 @@ async function teamSendPost() {
     haptic();
     await teamLoad();
   } catch (e) {
-    toast(e.status === 429 ? 'Zu viele Nachrichten in diesem Monat' : 'Keine Verbindung');
+    if (e.status === 403 && e.message === 'token' && team) leaveTeamLocal('Auf einem anderen iPhone angemeldet');
+    else toast(e.status === 429 ? 'Zu viele Nachrichten in diesem Monat' : 'Keine Verbindung');
   } finally {
     teamPosting = false;
     const b2 = app.querySelector('[data-team="post"]');
@@ -923,7 +972,7 @@ function renderTeamBody() {
         <div class="card tm-join"><input data-team="code" placeholder="Team-Code" autocapitalize="none" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go"></div>
         <button class="primary tm-join-btn" data-team="join">Beitreten</button>
       </div>
-      <p class="footnote center">Deine Zettel des laufenden Monats sind dann für das Team sichtbar.</p>`;
+      <p class="footnote center">Deine Zettel dieses und des letzten Monats sind dann für das Team sichtbar.</p>`;
     return;
   }
   const offline = teamData && teamData.offline ? `<p class="tm-msg muted">Offline${teamData.at ? ` – Stand ${teamAgo(teamData.at)}` : ''}</p>` : '';
@@ -952,11 +1001,7 @@ function teamFindMember(id) {
     location.replace('#/team');
     return undefined;
   }
-  if (id === team.member) {
-    const me = teamMe(null);
-    if (teamPrevOpen) me.sheets.sort((a, b) => a.month === b.month ? 0 : a.year * 12 + a.month < b.year * 12 + b.month ? -1 : 1);
-    return me;
-  }
+  if (id === team.member) return teamMe(null);
   if (!teamData) teamLoad();
   return teamMembersAll(teamPrevOpen).find((m) => m.member === id) || null;
 }
@@ -965,7 +1010,10 @@ function teamFindMember(id) {
 function renderTeamSheet(id, weekStart) {
   const m = teamFindMember(id);
   if (m === undefined) return;
-  const s = m && (m.sheets || []).find((x) => x.weekStart === weekStart);
+  // Woche über ein Monatsende: der Teil des angezeigten Monats (Blatt auf der Team-Seite), sonst der andere
+  const [y, mo] = teamShownMonth(teamPrevOpen).split('-').map(Number);
+  const parts = m ? (m.sheets || []).filter((x) => x.weekStart === weekStart) : [];
+  const s = parts.find((x) => x.year === y && x.month === mo) || parts[0];
   if (!s) {
     app.innerHTML = `${teamNav()}<p class="tm-msg muted">Nicht mehr verfügbar</p>`;
     return;

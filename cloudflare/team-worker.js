@@ -12,12 +12,12 @@
 //
 // Anfragen (Code im Header X-Team-Code):
 //   GET    /ping   → { ok }   nur zum Messen der Antwortzeit
-//   GET    /team   Header X-User, X-Auth (Konto, sonst 403 'konto') → { month, members: [{ member, name, updated, sheets }], prev: { month, members }, posts: [{ id, member, name, text, created }], spellV }
+//   GET    /team   Header X-User, X-Auth (Konto, sonst 403 'konto') → { month, members: [{ member, name, updated, sheets }], prev: { month, members }, posts: [{ id, member, name, text, created }], spellV, trV }
 //                    prev: Zettel des Vormonats (Tabelle history); posts: die letzten POSTS_KEEP Nachrichten (nicht mehr monatlich gelöscht)
 //                    spellV: Stand von Anweisung und Wörterbuch (wie v bei /ai; ändert er sich, prüfen die iPhones neu)
 //   PUT    /me     ← { member, token, name, month, sheets, version, prev: { month, sheets } }   eigener Eintrag (version: App-Version für die Admin-Seite)
 //                    nur, wenn ein Konto den Eintrag kennt (sonst 403 'konto')
-//   DELETE /me     ← { member, token }                         Team verlassen (eigene Nachrichten bleiben bis Monatsende)
+//   DELETE /me     ← { member, token }                         Team verlassen (Zettel beider Monate weg; Nachrichten bleiben, siehe POSTS_KEEP)
 //   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
 //   POST   /ai     ← { member, token, task: 'spell', items }   → { v, out: [[Eintrag, Ergebnis, geprüft]] }
@@ -101,7 +101,7 @@ const FREE_ROWS_WRITTEN = 100000;
 const AI_FREE = 10000;
 const AI_SPELL = "Du prüfst kurze Einträge aus einem deutschen Stundenzettel eines Handwerkers (Tätigkeiten oder Baustellen) auf Rechtschreibung. Korrigiere Rechtschreib- und Tippfehler sowie Groß-/Kleinschreibung, auch in Straßennamen (z. B. „Lindenwg“ → „Lindenweg“, „Hauptstrase“ → „Hauptstraße“). Formuliere nichts um, füge keine Wörter hinzu, lass Abkürzungen und Zahlen so. Namen bekannter Marken, Ketten und Unternehmen schreibst du genau in ihrer offiziellen Schreibweise – fehlende Apostrophe, Akzente und Großbuchstaben ergänzt du, auch wenn noch ein Ort oder anderes dabei steht (z. B. „loreal“ → „L'Oréal“, „starbucks Musterstadt“ → „Starbucks Musterstadt“, „ikea“ → „IKEA“). Namen von Personen, kleinen Firmen und Orten lässt du so, außer bei eindeutigem Tippfehler. Antworte nur mit JSON: {\"out\": [\"…\", …]} in derselben Reihenfolge und Anzahl wie die Eingabe.";
 // Fassung der Übersetzungs-Anweisungen (Teil des Speicher-Schlüssels)
-const AI_TR_V = 1;
+const AI_TR_V = 2; // v102: noch kyrillische Ergebnisse ins Deutsche nicht mehr gemerkt – alte Einträge verwerfen
 const AI_TR_RULES =
   'Es sind kurze Einträge von Handwerkern (Tätigkeiten aus dem Stundenzettel, Berichte aus dem Ausbildungsnachweis, Nachrichten an Kollegen). Übersetze sinngemäß und knapp in der Fachsprache des Handwerks, nichts hinzufügen oder erklären. Zahlen, Maße und Uhrzeiten bleiben als Zahlen, alle Wörter werden übersetzt (auch „Uhr“, „Std.“). Namen von Personen, Firmen, Marken, Orten und Straßen werden nicht übersetzt';
 const AI_TR = {
@@ -317,6 +317,16 @@ const json = (data, status, headers) =>
   new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...headers } });
 
 const validId = (s) => typeof s === 'string' && /^[A-Za-z0-9-]{8,128}$/.test(s);
+/** Zettel eines Monats im Team-Upload: höchstens 12 (Teilwochen), je 7 Tage, je Tag höchstens 30 Zeilen */
+const TEAM_SHEETS_MAX = 200_000; // Zeichen je Monat und Person
+const teamSheetsOk = (a) =>
+  Array.isArray(a) &&
+  a.length <= 12 &&
+  a.every(
+    (s) =>
+      s && typeof s.weekStart === 'string' && Array.isArray(s.days) && s.days.length === 7 &&
+      s.days.every((d) => d && typeof d === 'object' && (d.rows == null || (Array.isArray(d.rows) && d.rows.length <= 30)))
+  );
 
 async function readBody(req) {
   const text = await req.text();
@@ -478,30 +488,30 @@ async function accountRequest(db, body, h, ip = '') {
     const fullname = String(body.fullname ?? '').trim().slice(0, 80);
     await ensureFullname(db);
     const token = await sha256(body.token);
-    // mitgeschickter Eintrag: gehört er wirklich diesem iPhone? (Token passt oder es gibt ihn diesen Monat nicht)
+    // mitgeschickter Eintrag: gehört er wirklich diesem iPhone? (Token der Zeile in members bzw. beim Konto gemerkt;
+    // sonst ließe sich ein Kollege aus dem Team drängen – auch zum Monatsanfang, wenn members leer ist)
     const sent = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
-    const sentOwn = !sent || sent.token === token;
+    const sentOwn = await memberOwned(db, body.member, token);
     const exists = await db.prepare('SELECT user FROM accounts WHERE user = ?').bind(user).first();
     if (!exists) {
       if (body.mode !== 'create') return json({ error: 'unknown' }, 404, h);
       if (!sentOwn) return json({ error: 'token' }, 403, h);
-      // Ohne Eintrag in diesem Monat (Monatsanfang) lässt sich nicht prüfen, wem er gehört: einen Eintrag, der schon zu
-      // einem anderen Konto gehört, nicht übernehmen (sonst ließe sich ein Kollege aus dem Team drängen)
-      if (!sent && (await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first())) return json({ error: 'token' }, 403, h);
       // ein Team-Eintrag gehört nur zu einem Konto (z. B. abgemeldet und neues Konto auf demselben iPhone)
       await db.batch([
-        db.prepare('UPDATE accounts SET member = NULL WHERE member = ?').bind(body.member),
-        db.prepare('INSERT INTO accounts (user, auth, member, name, fullname, created) VALUES (?, ?, ?, ?, ?, ?)').bind(user, await sha256(body.auth), body.member, name, fullname || null, Date.now()),
+        db.prepare('UPDATE accounts SET member = NULL, token = NULL WHERE member = ?').bind(body.member),
+        db.prepare('INSERT INTO accounts (user, auth, member, name, fullname, created, token) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(user, await sha256(body.auth), body.member, name, fullname || null, Date.now(), token),
       ]);
       return json({ member: body.member, backups: [] }, 200, h);
     }
     const row = await checkAccount(db, user, body.auth, ip);
     // falsches Passwort beim Anlegen: der Name gehört jemand anderem
     if (row.error) return json({ error: row.error === 'auth' && body.mode === 'create' ? 'taken' : row.error }, row.status, h);
+    // Konto ohne Eintrag: den mitgeschickten nur, wenn er diesem iPhone gehört (sonst gäbe es einen fremden her)
+    if (!validId(row.member) && !sentOwn) return json({ error: 'token' }, 403, h);
     const member = validId(row.member) ? row.member : body.member;
     const ops = [
-      db.prepare('UPDATE accounts SET member = NULL WHERE member = ? AND user <> ?').bind(member, user),
-      db.prepare('UPDATE accounts SET member = ?, name = COALESCE(NULLIF(?, \'\'), name), fullname = COALESCE(NULLIF(?, \'\'), fullname) WHERE user = ?').bind(member, name, fullname, user),
+      db.prepare('UPDATE accounts SET member = NULL, token = NULL WHERE member = ? AND user <> ?').bind(member, user),
+      db.prepare('UPDATE accounts SET member = ?, token = ?, name = COALESCE(NULLIF(?, \'\'), name), fullname = COALESCE(NULLIF(?, \'\'), fullname) WHERE user = ?').bind(member, token, name, fullname, user),
     ];
     // Eintrag des Kontos übernimmt das neue Token; ein anderer, frisch angelegter Eintrag dieses iPhones verschwindet
     ops.push(db.prepare('UPDATE members SET token = ? WHERE member = ?').bind(token, member));
@@ -626,6 +636,25 @@ async function ensureFullname(db) {
   fullnameColumn = true;
 }
 
+/** Gerätenachweis des Team-Eintrags (SHA-256 des Tokens) auch beim Konto: members verliert ihn beim Monatswechsel */
+let tokenColumn = false;
+async function ensureTokenColumn(db) {
+  if (tokenColumn) return;
+  try {
+    await db.exec('ALTER TABLE accounts ADD COLUMN token TEXT');
+  } catch {}
+  tokenColumn = true;
+}
+/** Gehört der Team-Eintrag diesem iPhone (token = SHA-256)? Mit Zeile in members deren Token, sonst das beim Konto
+ *  gemerkte (Monatsanfang, nach dem Verlassen). Ohne Konto oder ohne gemerktes Token (Konto von vor v102): frei */
+async function memberOwned(db, member, token) {
+  await ensureTokenColumn(db);
+  const row = await db.prepare('SELECT token FROM members WHERE member = ?').bind(member).first();
+  if (row) return row.token === token;
+  const acc = await db.prepare('SELECT token FROM accounts WHERE member = ?').bind(member).first();
+  return !acc || !acc.token || acc.token === token;
+}
+
 /** Schein an ein Konto geben (ersetzt seine frühere Fassung) */
 const deliver = (db, id, user, text, now) =>
   db
@@ -742,8 +771,9 @@ export default {
       db.prepare('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)'),
       db.prepare(HISTORY_TABLE),
       db.prepare(`INSERT INTO history (member, month, name, data, updated) SELECT member, month, name, data, updated FROM members WHERE month = ? ${HISTORY_SET}`).bind(prevMonth),
-      db.prepare('DELETE FROM members WHERE month <> ?').bind(month),
-      db.prepare('DELETE FROM history WHERE month <> ?').bind(prevMonth),
+      // nur Älteres löschen: eine Instanz, die kurz vor Mitternacht noch den alten Monat rechnet, löscht sonst den neuen Vormonat
+      db.prepare('DELETE FROM members WHERE month < ?').bind(month),
+      db.prepare('DELETE FROM history WHERE month < ?').bind(prevMonth),
     ]);
 
     const path = new URL(req.url).pathname;
@@ -766,7 +796,7 @@ export default {
           db.prepare('SELECT id, member, name, text, created FROM posts ORDER BY created DESC LIMIT ?').bind(POSTS_KEEP),
         ]);
         const list = (rows) => rows.results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
-        return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)) }, 200, h);
+        return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)), trV: AI_TR_V }, 200, h);
       }
 
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
@@ -870,7 +900,8 @@ export default {
                 const rows = [];
                 todo.forEach((t, i) => {
                   const x = s1000(res.out[i]);
-                  if (!x) return;
+                  // ins Deutsche: noch kyrillisch (z. B. Name nicht umgeschrieben) gilt nicht als Übersetzung
+                  if (!x || (to === 'de' && /[\u0400-\u04FF]/.test(x))) return;
                   done.set(t, x);
                   rows.push(db.prepare('INSERT OR REPLACE INTO ai_cache (key, result, created) VALUES (?, ?, ?)').bind(keys[items.indexOf(t)], x, now));
                 });
@@ -889,7 +920,13 @@ export default {
           if (row) return json({ groups: JSON.parse(row.result) }, 200, h);
           if (used && used.n >= AI_PER_DAY) return json({ error: 'limit' }, 429, h);
           await count();
-          const res = await aiJson(env, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
+          let res;
+          try {
+            res = await aiJson(env, AI_SITES, names.map((n, i) => `${i + 1}: ${n}`).join('\n'), 60 + names.length * 8);
+          } catch {
+            // KI antwortet nicht (Kontingent, kaputtes JSON): kein Serverfehler, die App fragt beim nächsten Mal wieder
+            return json({ error: 'ai' }, 429, h);
+          }
           const groups = (Array.isArray(res.groups) ? res.groups : [])
             .map((g) => [...new Set((Array.isArray(g) ? g : []).map((i) => names[Number(i) - 1]).filter(Boolean))])
             .filter((g) => g.length >= 2);
@@ -971,7 +1008,8 @@ export default {
         if (path === '/code' && req.method === 'PUT') {
           const body = await readBody(req);
           const code = String(body.code ?? '').trim();
-          if (!/^[\p{L}\p{N}._-]{6,40}$/u.test(code)) return json({ error: 'code' }, 400, h);
+          // nur Zeichen, die im Header X-Team-Code gehen (kyrillische ließen fetch in jeder App scheitern)
+          if (!/^[A-Za-z0-9._-]{6,40}$/.test(code)) return json({ error: 'code' }, 400, h);
           // sonst wären alle Kollegen Admin
           if (sameCode(code, env.ADMIN_CODE)) return json({ error: 'admin' }, 400, h);
           await db.batch([
@@ -1047,20 +1085,26 @@ export default {
         const body = await readBody(req);
         if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
         const token = await sha256(body.token);
-        const row = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
-        if (row && row.token !== token) return json({ error: 'token' }, 403, h);
+        // Eintrag dieses iPhones? Auch ohne Zeile in members (Monatsanfang, nach dem Verlassen) über das Konto geprüft
+        if (!(await memberOwned(db, body.member, token))) return json({ error: 'token' }, 403, h);
         // Zettel nur von Einträgen, die zu einem Konto gehören (seit dem Konto Pflicht; alte Apps mit gespeichertem
         // Team-Code legten sonst eigene Einträge ohne Konto an). Verlassen geht immer
-        if (req.method === 'PUT' && !(await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first()))
-          return json({ error: 'konto' }, 403, h);
+        const acc = await db.prepare('SELECT user, token FROM accounts WHERE member = ?').bind(body.member).first();
+        if (req.method === 'PUT' && !acc) return json({ error: 'konto' }, 403, h);
+        // Konto von vor v102: Gerätenachweis beim ersten passenden Upload merken
+        if (acc && acc.token !== token) await db.prepare('UPDATE accounts SET token = ? WHERE member = ?').bind(token, body.member).run();
 
         if (req.method === 'DELETE') {
-          await db.prepare('DELETE FROM members WHERE member = ?').bind(body.member).run();
+          // Verlassen: auch der Vormonat verschwindet für das Team
+          await db.batch([db.prepare('DELETE FROM members WHERE member = ?').bind(body.member), db.prepare('DELETE FROM history WHERE member = ?').bind(body.member)]);
           return json({ ok: true }, 200, h);
         }
         // Zettel eines anderen Monats (Uhr des iPhones geht falsch, Monatswechsel) nicht speichern
         if (body.month !== month) return json({ error: 'month', month }, 409, h);
-        if (!Array.isArray(body.sheets)) return json({ error: 'sheets' }, 400, h);
+        // Form und Menge begrenzen: jede App im Team speichert die Zettel aller Kollegen
+        if (!teamSheetsOk(body.sheets)) return json({ error: 'sheets' }, 400, h);
+        const data = JSON.stringify(body.sheets);
+        if (data.length > TEAM_SHEETS_MAX) return json({ error: 'size' }, 413, h);
         const name = String(body.name ?? '').slice(0, 80);
         const version = String(body.version ?? '').slice(0, 40) || null;
         await ensureVersionColumn(db);
@@ -1069,10 +1113,10 @@ export default {
             'INSERT INTO members (member, token, name, month, data, updated, version) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
               'ON CONFLICT(member) DO UPDATE SET name = excluded.name, month = excluded.month, data = excluded.data, updated = excluded.updated, version = excluded.version'
           )
-          .bind(body.member, token, name, month, JSON.stringify(body.sheets), Date.now(), version)
+          .bind(body.member, token, name, month, data, Date.now(), version)
           .run();
         // nachträglich geänderte Zettel des Vormonats
-        if (body.prev && body.prev.month === prevMonth && Array.isArray(body.prev.sheets))
+        if (body.prev && body.prev.month === prevMonth && teamSheetsOk(body.prev.sheets) && JSON.stringify(body.prev.sheets).length <= TEAM_SHEETS_MAX)
           await db
             .prepare(`INSERT INTO history (member, month, name, data, updated) VALUES (?, ?, ?, ?, ?) ${HISTORY_SET}`)
             .bind(body.member, prevMonth, name, JSON.stringify(body.prev.sheets), Date.now())

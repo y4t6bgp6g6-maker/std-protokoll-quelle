@@ -226,14 +226,15 @@ function adminCodeChange() {
     const code = input.value.trim();
     if (!code || adminBusy) return;
     if (code.toLowerCase() === adminCode.toLowerCase()) return closeModal();
-    if (!/^[\p{L}\p{N}._-]{6,40}$/u.test(code)) return (msg.textContent = 'Mindestens 6 Zeichen, ohne Leerzeichen');
+    // nur Zeichen, die im Header X-Team-Code gehen (kyrillische ließen fetch bei allen scheitern)
+    if (!/^[A-Za-z0-9._-]{6,40}$/.test(code)) return (msg.textContent = 'Mindestens 6 Zeichen: a–z, 0–9, Punkt, Strich');
     adminBusy = true;
     try {
       adminCode = (await adminRequest('PUT', '/code', { code })).code || code;
       closeModal();
       haptic();
     } catch (e) {
-      msg.textContent = e.message === 'admin' ? 'Das ist der Admin-Code' : e.message === 'code' ? 'Mindestens 6 Zeichen, ohne Leerzeichen' : 'Keine Verbindung';
+      msg.textContent = e.message === 'admin' ? 'Das ist der Admin-Code' : e.message === 'code' ? 'Mindestens 6 Zeichen: a–z, 0–9, Punkt, Strich' : 'Keine Verbindung';
     }
     adminBusy = false;
     if (currentView === 'fehler' && admin) renderFehler();
