@@ -353,7 +353,7 @@ if (LANG === 'ru') {
       'Reise beginnt': 'Поездка начинается', 'Reise endet': 'Поездка заканчивается', 'Arbeit laut Zettel schon': 'работа по табелю уже',
       'Arbeit laut Zettel erst': 'работа по табелю только', 'konnte nicht gelesen werden': 'не удалось прочитать', 'auch in': 'также в',
       'gleich wie in': 'как в', 'gleich wie die übernommene Fassung': 'как перенесённый вариант', 'Fassung aus': 'вариант из', übernommen: 'перенесено',
-      'Name auf': 'имя изменено на', 'im Zettel stand': 'в табеле был год', geändert: 'изменено', abgeholt: 'получено', 'Fehler:': 'ошибка:', fehlt: 'нет', fehlen: 'нет', '(Teilwoche)': '(неполная неделя)',
+      'Name auf': 'имя изменено на', 'im Zettel stand': 'в табеле стояло', geändert: 'изменено', abgeholt: 'получено', 'Fehler:': 'ошибка:', fehlt: 'нет', fehlen: 'нет', '(Teilwoche)': '(неполная неделя)',
       Mio: 'млн', 'ms': 'мс', 'Werktage': 'рабочие дни', 'pro Werktag': 'в рабочий день', unbekannt: 'неизвестно', Urlaub: 'Отпуск', Krank: 'Болен', Schule: 'Школа',
       Feiertag: 'Праздник', Frei: 'Отгул', Arbeit: 'Работа', 'Std. Gesamt': 'ч всего', 'Neuronen': 'нейронов', 'Datei vom': 'файл от', 'Kl.': 'кл.', Gesamt: 'Итого', Pause: 'Перерыв',
       'Korrektur an': 'исправление', 'Korrektur aus': 'исправление из', Korrekturvorschläge: 'Варианты исправления', Monatsbericht: 'Месячный отчёт',

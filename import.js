@@ -875,18 +875,28 @@ function pdfItemsToParsed(items) {
 const dateFromFileName = (name) => parseDateText(name);
 
 /** Wochenzettel beginnen montags. Ist „Woche von“ bei einer ganzen Woche (bis = von + 6 Tage) kein Montag, ist meist das
- *  Jahr vertippt („13.04.2025“ statt 2026 – dort ein Sonntag, die Woche rutschte sonst ins falsche Jahr und um einen Tag):
- *  dann das Jahr aus dem Dateinamen, sonst ein Nachbarjahr, in dem der Tag ein Montag ist */
+ *  Jahr („13.04.2025“ statt 2026) oder der Monat („05.01.24“ statt 05.02.24) vertippt: dann das Jahr aus dem Dateinamen,
+ *  sonst unter Nachbarjahr und Nachbarmonat der Montag, der am wenigsten vom Zettel abweicht */
 function fixWeekYear(parsed, fileName) {
   const from = parsed.from;
   if (!from || from.getDay() === 1 || !parsed.to || Math.round((parsed.to - from) / 864e5) !== 6) return from;
+  const y = from.getFullYear();
+  const m = from.getMonth();
+  const day = from.getDate();
   const named = dateFromFileName(fileName);
-  const years = [named && named.getFullYear(), new Date().getFullYear(), from.getFullYear() + 1, from.getFullYear() - 1];
-  for (const y of years.filter(Boolean)) {
-    const d = new Date(y, from.getMonth(), from.getDate());
+  if (named) {
+    const d = new Date(named.getFullYear(), m, day);
     if (d.getDay() === 1) return d;
   }
-  return from;
+  const options = [
+    new Date(y + 1, m, day),
+    new Date(y - 1, m, day),
+    new Date(y, m + 1, day),
+    new Date(y, m - 1, day),
+    new Date(new Date().getFullYear(), m, day),
+  ].filter((d) => d.getDay() === 1 && d.getDate() === day);
+  if (!options.length) return from;
+  return options.sort((a, b) => Math.abs(a - from) - Math.abs(b - from))[0];
 }
 
 /**
@@ -898,8 +908,8 @@ function parsedToSheets(parsed, fileName) {
   const from = fixWeekYear(parsed, fileName);
   const anchor = from || dateFromFileName(fileName);
   if (!anchor) throw new Error('Kein Datum („Woche von“) gefunden');
-  // Jahr korrigiert: in der Rückmeldung nennen
-  const yearFixed = from && from !== parsed.from ? parsed.from.getFullYear() : 0;
+  // Datum korrigiert: in der Rückmeldung nennen
+  const yearFixed = from && from !== parsed.from ? fmtShort(parsed.from) : '';
   // Eigener Name aus den Einstellungen hat Vorrang (z. B. beim Einlesen des Zettels eines Kollegen)
   const s = newSheet(anchor, settings.name.trim() || parsed.name || '');
   s.importedName = parsed.name || '';
