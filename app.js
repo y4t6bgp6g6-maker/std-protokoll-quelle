@@ -53,9 +53,11 @@ const escapeHtml = (s) =>
 
 // ───────────────────────── Datenmodell ─────────────────────────
 // Zettel: { id, weekStart: 'YYYY-MM-DD' (Montag), year, month, name, days[7], sentAt, createdAt, updatedAt }
-// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei', rows: [{ id, start, end, site, work }],
-//           credit?: Minuten der Tagesart (nur von Hand gesetzt, sonst 8 h bzw. Frei 0), manual?: true (Tagesart von Hand, siehe chooseStatusHold) }
-//         (start/end: Minuten seit 00:00; bei gesetztem status werden die Zeilen ignoriert, bleiben aber erhalten)
+// Tag:    { pause: Minuten (null = noch nicht eingetragen), status?: 'krank'|'urlaub'|'feiertag'|'frei',
+//           rows: [{ id, start, end, site, work, report?: Arbeitsschein-ID, typoOk?: { Feld: Text } („So lassen“) }],
+//           credit?: Minuten der Tagesart (nur von Hand gesetzt, sonst 8 h bzw. Frei und Sa/So 0), manual?: true (Tagesart von Hand, siehe chooseStatusHold) }
+//         (start/end: Minuten seit 00:00; bei gesetztem status zählen die Zeilen nicht, bleiben aber erhalten – außer am Feiertag:
+//          dort kommt die Arbeit zu den 8 Stunden dazu)
 
 const DAY_STATUS = {
   krank: 'Krankheitstag',
@@ -67,6 +69,8 @@ const DAY_STATUS_SHORT = { krank: 'Krank', urlaub: 'Urlaub', feiertag: 'Feiertag
 
 const emptyRow = () => ({ id: uid(), start: null, end: null, site: '', work: '' });
 const rowIsEmpty = (r) => r.start == null && r.end == null && !r.site && !r.work;
+/** Ende als Minuten: 00:00 nach einem Beginn am Tag ist Mitternacht am Ende des Tages (24:00) */
+const rowEnd = (r) => (r.end === 0 && r.start > 0 ? 1440 : r.end);
 const rowMinutes = (r) => (r.start == null || r.end == null ? null : r.end >= r.start ? r.end - r.start : r.end + 1440 - r.start);
 const dayWorked = (d) => d.rows.reduce((s, r) => s + (rowMinutes(r) || 0), 0);
 /** Krank, Urlaub und Feiertag zählen 8 Stunden, Frei und jede Tagesart am Sa/So (i = Wochentag 0–6) zählen 0 */
@@ -96,14 +100,14 @@ function rowsOutOfOrder(d) {
 /** Zeilen mit Lücke oder Überschneidung zur zeitlich nächsten Zeile – beide werden markiert */
 function rowsGapOrOverlap(d) {
   const bad = new Set();
-  const timed = d.rows.filter((r) => r.start != null && r.end != null && r.end > r.start).sort((a, b) => a.start - b.start);
+  const timed = d.rows.filter((r) => r.start != null && r.end != null && rowEnd(r) > r.start).sort((a, b) => a.start - b.start);
   for (let k = 1; k < timed.length; k++) {
-    if (timed[k].start !== timed[k - 1].end) bad.add(timed[k - 1].id).add(timed[k].id);
+    if (timed[k].start !== rowEnd(timed[k - 1])) bad.add(timed[k - 1].id).add(timed[k].id);
   }
   return bad;
 }
-/** Ende liegt vor dem Beginn */
-const endBeforeStart = (r) => r.start != null && r.end != null && r.end < r.start;
+/** Ende liegt vor dem Beginn (Ende 00:00 = Mitternacht zählt nicht dazu) */
+const endBeforeStart = (r) => r.start != null && r.end != null && rowEnd(r) < r.start;
 /** Beginn und Ende sind gleich (0 Stunden) */
 const sameStartEnd = (r) => r.start != null && r.start === r.end;
 /** Feld der Zeile fehlt, sobald am Tag etwas eingetragen ist */
@@ -116,7 +120,6 @@ const dayHasWarning = (d) =>
 /** Leerer Werktag (Mo–Fr, kein Feiertag) in einem gesendeten Zettel – in offenen Zetteln sind leere Tage normal */
 const emptySentWorkday = (s, i) =>
   !!s.sentAt && i < 5 && !s.days[i].status && !dayStarted(s.days[i]) && !holidayName(sheetDate(s, i));
-/** Warnzeichen für einen Tag des Zettels: unvollständige Angaben oder leerer Werktag im gesendeten Zettel */
 /** Tagesart passt nicht zum Kalender (Mo–Fr): Feiertag an einem Tag ohne Feiertag, erkannter Feiertag mit anderer Tagesart */
 const statusWarning = (s, i) => {
   const d = s.days[i];
@@ -126,6 +129,7 @@ const statusWarning = (s, i) => {
   return holiday ? `${holiday} nicht als Feiertag eingetragen` : '';
 };
 const statusWarnHTML = (s, i) => (statusWarning(s, i) ? ` <span class="day-warn" aria-label="Tagesart prüfen">⚠️</span>` : '');
+/** Warnzeichen für einen Tag des Zettels: unvollständige Angaben, leerer Werktag im gesendeten Zettel, Tagesart passt nicht */
 const sheetDayWarning = (s, i) => dayHasWarning(s.days[i]) || emptySentWorkday(s, i) || !!statusWarning(s, i);
 const sheetHasWarning = (s) => sheetActiveDays(s).some((i) => sheetDayWarning(s, i));
 const timeWarning = (d, r) =>
@@ -167,7 +171,6 @@ const anchorKey = (anchor) => {
   const a = startOfDay(anchor);
   return `${isoDate(mondayOf(a))}|${a.getFullYear()}|${a.getMonth() + 1}`;
 };
-const sheetMatches = (s, anchor) => `${s.weekStart}|${s.year}|${s.month}` === anchorKey(anchor);
 
 // ───────────────────────── Speicher ─────────────────────────
 
@@ -982,16 +985,16 @@ function sheetProblems(s) {
         const h = pdfCharHint(r[f]);
         if (h) problems.push(`${where}, ${label}: ${h}`);
       }
-      if (r.start != null && r.end != null && r.end > r.start) timed.push(r);
+      if (r.start != null && r.end != null && rowEnd(r) > r.start) timed.push(r);
     });
     if (rowsOutOfOrder(d).size) problems.push(`${day}: Zeilen nicht in zeitlicher Reihenfolge`);
     timed.sort((a, b) => a.start - b.start);
     for (let k = 1; k < timed.length; k++) {
       const a = timed[k - 1];
       const b = timed[k];
-      if (b.start < a.end) {
+      if (b.start < rowEnd(a)) {
         problems.push(`${day}: ${fmtTime(a.start)}–${fmtTime(a.end)} und ${fmtTime(b.start)}–${fmtTime(b.end)} überschneiden sich`);
-      } else if (b.start > a.end) {
+      } else if (b.start > rowEnd(a)) {
         problems.push(`${day}: Lücke von ${fmtTime(a.end)} bis ${fmtTime(b.start)}`);
       }
     }
@@ -1062,6 +1065,8 @@ function openOrCreate(anchor) {
 }
 
 /** Bisher verwendete Einträge, die häufigsten zuerst. */
+/** Deutsche Sortierung (ein Collator für alle Vergleiche – localeCompare mit Sprache legt in Safari je Vergleich einen an) */
+const deCollator = new Intl.Collator('de');
 function collectSuggestions(field) {
   const counts = new Map();
   for (const s of sheets)
@@ -1086,7 +1091,7 @@ function collectSuggestions(field) {
     .filter(([key]) => !hidden.has(key))
     // angezeigt wird die häufigste Schreibweise
     .map(([, c]) => [[...c.spellings].sort((a, b) => b[1] - a[1])[0][0], c.total])
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'de'))
+    .sort((a, b) => b[1] - a[1] || deCollator.compare(a[0], b[0]))
     .map(([v]) => v);
 }
 
@@ -2463,7 +2468,7 @@ function listRowHTML(s, hit) {
 let editorId = null;
 let suggestions = { site: [], work: [] };
 let workBySite = new Map();
-/** Aufgeklappte leere Wochenendtage („Zettel-ID:Tag“), nur solange die App offen ist */
+/** Aufgeklappte Tage („Zettel-ID:Tag“): leere Sa/So und Feiertage mit „Arbeit eintragen“, nur solange die App offen ist */
 const expandedDays = new Set();
 
 function renderEditor(id) {
@@ -2474,8 +2479,7 @@ function renderEditor(id) {
   }
   cancelDrags(false);
   editorId = id;
-  suggestions = { site: collectSuggestions('site'), work: collectSuggestions('work') };
-  workBySite = collectWorkBySite();
+  refreshSuggestions();
 
   app.innerHTML = `
     <header class="nav">
@@ -2685,7 +2689,7 @@ document.addEventListener('pointermove', (e) => {
 window.addEventListener('scroll', statusPressEnd, { passive: true });
 // Nach dem langen Drücken nicht noch die normale Auswahl öffnen
 document.addEventListener('click', (e) => {
-  if (statusPressDone && e.target.closest?.('[data-hold="status"]')) (e.preventDefault(), e.stopPropagation());
+  if (statusPressDone && (e.target.closest?.('[data-hold="status"]') || layer.contains(e.target))) (e.preventDefault(), e.stopPropagation());
 }, true);
 document.addEventListener('contextmenu', (e) => {
   if (e.target.closest?.('[data-hold="status"]')) e.preventDefault();
@@ -2771,9 +2775,16 @@ function saveDay(i) {
     if (g) g[k] = k;
   }
   saveSheets(s);
+  refreshSuggestions();
   haptic();
   updateSaveBar();
   updatePdfThumb(true);
+}
+
+/** Vorschläge neu sammeln (nach dem Speichern: neue Einträge gleich vorschlagen) */
+function refreshSuggestions() {
+  suggestions = { site: collectSuggestions('site'), work: collectSuggestions('work') };
+  workBySite = collectWorkBySite();
 }
 
 /** Alle geänderten Tage übernehmen (vor dem Senden) */
@@ -2783,6 +2794,7 @@ function saveSheetNow() {
   if (!s) return;
   editorSaved = editorSnapshot(s);
   saveSheets(s);
+  refreshSuggestions();
   haptic();
   updateSaveBar();
   updatePdfThumb(true);
@@ -2813,7 +2825,6 @@ function confirmLeave(go) {
   }, true, 'Weiter bearbeiten', () => updateTabbar());
 }
 function refreshSummary() {
-  updatePdfThumb();
   const s = currentSheet();
   const el = document.getElementById('summary');
   const snap = countSnapshot('#summary b, #daybar .db-h');
@@ -2870,7 +2881,7 @@ function editTime(btn) {
       const prev = day.rows.slice(0, rowIndex).reverse().find((r) => r.end != null);
       initial = prev ? prev.end : 8 * 60;
     } else {
-      initial = row.start != null ? Math.min(row.start + 60, 23 * 60 + 45) : 17 * 60;
+      initial = row.start != null ? (row.start + 60) % 1440 : 17 * 60;
     }
   }
   timePicker(which === 'start' ? 'Arbeitsbeginn' : 'Arbeitsende', initial, row[which] != null, (value) => {
@@ -2890,6 +2901,8 @@ function editPause(btn) {
   const { s, dayIndex, day } = rowContext(btn);
   const step = settings.minuteStep;
   const values = Array.from({ length: 240 / step + 1 }, (_, i) => i * step);
+  // wie das Rad: nächstliegender Wert, bei Gleichstand der kleinere
+  const nearest = (p) => values.reduce((b, v) => (Math.abs(v - p) < Math.abs(b - p) ? v : b), values[0]);
   const set = (v) => {
     day.pause = v;
     saveSheets(s);
@@ -2899,7 +2912,8 @@ function editPause(btn) {
     'Pause',
     [{ values, label: (v) => `${fmtH(v)}` }],
     [day.pause],
-    ([v]) => set(v),
+    // Nicht gedreht: eine Pause außerhalb des Rasters (z. B. eingelesen 0,75 h) bleibt
+    ([v]) => set(day.pause != null && !values.includes(day.pause) && v === nearest(day.pause) ? day.pause : v),
     day.pause != null ? `<button class="modal-wide destructive" data-m="extra">Pause löschen</button>` : '',
     () => set(null)
   );
@@ -2953,8 +2967,8 @@ function moreMenu() {
     { label: 'Als PDF senden', run: () => sendSheet(s) },
     { label: 'Reisekostenabrechnung', run: () => openTripMenu(s) },
     s.sentAt
-      ? { label: 'Als offen markieren', run: () => { s.sentAt = null; saveSheets(s); toast('Als offen markiert'); } }
-      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); toast('Als gesendet markiert'); } },
+      ? { label: 'Als offen markieren', run: () => { s.sentAt = null; saveSheets(s); refreshAll(); toast('Als offen markiert'); } }
+      : { label: 'Als gesendet markieren', run: () => { s.sentAt = Date.now(); saveSheets(s); refreshAll(); toast('Als gesendet markiert'); } },
     { label: 'Stundenzettel löschen', destructive: true, run: () => askDelete(s.id, true) },
   ]);
 }
@@ -4840,14 +4854,17 @@ function timePicker(title, initial, hasValue, onDone, onCancel = null) {
   const hours = Array.from({ length: 24 }, (_, i) => i);
   const step = settings.minuteStep;
   const minutes = Array.from({ length: 60 / step }, (_, i) => i * step);
+  const shown = initial % 1440; // eingelesenes 24:00 steht auf 00:00
+  const snapped = Math.floor(shown / 60) * 60 + Math.floor((shown % 60) / step) * step;
   wheelPicker(
     title,
     [
       { values: hours, label: pad },
       { values: minutes, label: pad, sep: ':' },
     ],
-    [Math.floor(initial / 60), Math.floor((initial % 60) / step) * step],
-    ([h, m]) => onDone(h * 60 + m),
+    [Math.floor(shown / 60), snapped % 60],
+    // Nicht gedreht: ein Wert außerhalb des Rasters (z. B. eingelesen 07:45) bleibt, wie er ist
+    ([h, m]) => onDone(hasValue && h * 60 + m === snapped ? initial : h * 60 + m),
     hasValue ? `<button class="modal-wide destructive" data-m="extra">Zeit löschen</button>` : '',
     () => onDone(null),
     onCancel
@@ -5113,7 +5130,9 @@ function typoFor(field, row) {
         }
       }
   const hidden = new Set(settings.hiddenSuggestions[field].map(sameKey));
-  const candidates = [...known].filter(([v, n]) => n >= 2 && !hidden.has(sameKey(v)));
+  // Schreibweisen, die die KI schon korrigiert hat, sind kein Vorbild (sonst schlagen beide abwechselnd das Gegenteil vor)
+  const aiWrong = (v) => typeof aiSpellFix === 'function' && !!aiSpellFix(v);
+  const candidates = [...known].filter(([v, n]) => n >= 2 && !hidden.has(sameKey(v)) && !aiWrong(v));
   // Ohne Satzzeichen, Anfangsbuchstabe klein: was hier gleich ist, ist kein Tippfehler
   const loose = (x) => {
     const t = x.trim().replace(/[’‘`´ʼ′]/g, "'").replace(/[.,'\-–]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -5221,6 +5240,7 @@ const typoHintHTML = (field, row) => {
 function refreshTypoHint(input, show = true) {
   const { row } = rowContext(input);
   const wrap = input.closest('.suggest-wrap');
+  if (!wrap) return; // Arbeitsschein-Fenster: keine Hinweise
   const old = wrap.nextElementSibling;
   if (old && old.classList.contains('typo-hint')) old.remove();
   if (show && row) wrap.insertAdjacentHTML('afterend', typoHintHTML(input.dataset.f, row));
@@ -5282,7 +5302,7 @@ function askHideSuggestion(text) {
   const field = input.dataset.f;
   confirmDialog(
     'Vorschlag ausblenden?',
-    `„${escapeHtml(text)}“ erscheint nicht mehr in der Leiste. Deine Zettel bleiben unverändert. In den Einstellungen kannst du ihn wiederherstellen.`,
+    `„${escapeHtml(text)}“ erscheint nicht mehr in der Leiste.`,
     'Ausblenden',
     () => {
       settings.hiddenSuggestions[field].push(text);
@@ -5422,6 +5442,7 @@ window.addEventListener(
   { passive: true }
 );
 document.addEventListener('touchend', () => (fieldTouch = null), { passive: true });
+document.addEventListener('touchcancel', () => (fieldTouch = null), { passive: true });
 document.addEventListener('focusout', () => (fieldTouch = null));
 
 /** Antippen eines Textfelds: iOS scrollt die Seite sonst beim Fokussieren, auch wenn das Feld über der Tastatur
@@ -5659,7 +5680,9 @@ document.addEventListener('click', (e) => {
       moreMenu();
       break;
     case 'share':
-      // direkt im Antippen ausführen: Teilen-Menü und Zwischenablage gehen in Safari sonst nicht
+      // direkt im Antippen ausführen: Teilen-Menü und Zwischenablage gehen in Safari sonst nicht; Doppeltipp nur einmal
+      if (Date.now() - (sendSheet.at || 0) < 1000) break;
+      sendSheet.at = Date.now();
       sendSheet(currentSheet());
       break;
     case 'time':
@@ -5883,12 +5906,15 @@ document.addEventListener('input', (e) => {
     const s = currentSheet();
     if (!s) return;
     // Ein Eintrag bleibt eine Zeile Text (eingefügte Zeilenumbrüche werden zu Leerzeichen); das Feld wächst mit
-    if (/\n/.test(t.value)) t.value = t.value.replace(/\s*\n\s*/g, ' ');
+    if (/\n/.test(t.value)) {
+      const pos = t.value.slice(0, t.selectionStart).replace(/\s*\n\s*/g, ' ').length;
+      t.value = t.value.replace(/\s*\n\s*/g, ' ');
+      t.setSelectionRange(pos, pos);
+    }
     if (t.matches('textarea')) fitTextarea(t);
-    const { row } = rowContext(t);
+    const { row, day } = rowContext(t);
     if (row) {
       row[t.dataset.f] = t.value;
-      const { day } = rowContext(t);
       updateDayWarnings(t.closest('.day'), day);
       // Tippfehler-Hinweis erst nach dem Verlassen des Feldes (nicht während des Tippens)
       if (document.activeElement === t) refreshTypoHint(t, false);
@@ -5896,7 +5922,8 @@ document.addEventListener('input', (e) => {
     }
     // Nur am aktiven Feld (übernommener Korrekturvorschlag öffnet keine Vorschläge ohne Tastatur)
     if (document.activeElement === t) showChips(t);
-    saveSheets(s);
+    // Gespeichert wird erst mit „Speichern“ (savedSheets) – hier nur Rahmen und Knopf des Tages
+    if (row) updateSaveBar();
   } else if (t.dataset.t) {
     const trip = currentTrip();
     const iso = t.closest('[data-date]').dataset.date;
@@ -5947,6 +5974,11 @@ document.addEventListener('change', (e) => {
   else if (e.target.dataset.actChange === 'payslip-import') importPayslip(e.target);
   else if (e.target.dataset.ps === 'month' || e.target.dataset.ps === 'year') updatePayslipField(e.target);
   else if (e.target.dataset.s === 'name') renameAll(e.target.value);
+});
+
+// iOS beendet die App im Hintergrund teils, ohne dass das Feld verlassen wurde – dann käme „change“ nie
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && document.activeElement?.matches?.('[data-s="name"]')) document.activeElement.blur();
 });
 
 /** Neuer Name aus den Einstellungen gilt für alle gespeicherten Zettel und Abrechnungen (beim Verlassen des Feldes) */
@@ -6052,6 +6084,7 @@ document.addEventListener(
   'touchstart',
   (e) => {
     const el = e.target.closest('.swipe');
+    if (swipeDrag && swipeDrag.active) endSwipe();
     if (swipeOpen && el !== swipeOpen) closeSwipe();
     swipeDrag =
       el && e.touches.length === 1 && !e.target.closest('.swipe-del')
@@ -6300,13 +6333,14 @@ function startDayDrag() {
   document.body.append(ghost);
   dayEl.classList.add('day-lifted');
   for (const el of document.querySelectorAll('#days .day')) if (daySwapOk(s, from, Number(el.dataset.day))) el.classList.add('day-drop');
-  dayDrag = { from, dayEl, ghost, target: null, y, id, scroll: setInterval(dayDragScroll, 30) };
+  dayDrag = { from, dayEl, ghost, target: null, y, y0: y, id, scroll: setInterval(dayDragScroll, 30) };
   moveDayDrag(x, y);
   haptic();
 }
 /** Am oberen/unteren Rand mitscrollen (die Woche ist länger als der Bildschirm) */
 function dayDragScroll() {
-  if (!dayDrag) return;
+  // Erst wenn der Finger zum Rand gezogen wurde – beginnt das Drücken schon unten, scrollt sonst sofort alles weg
+  if (!dayDrag || Math.abs(dayDrag.y - dayDrag.y0) < 20) return;
   const edge = 90;
   const y = dayDrag.y;
   const v = y < edge ? -(edge - y) / 4 : y > innerHeight - edge - 60 ? (y - (innerHeight - edge - 60)) / 4 : 0;

@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v104';
+const CACHE = 'std-protokoll-v105';
 const ASSETS = [
   './',
   'index.html',

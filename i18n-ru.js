@@ -262,6 +262,11 @@ if (LANG === 'ru') {
 
     patterns: [
       [/^Woche Nr\. (\d+)$/, 'Неделя № $1'],
+      [/^(\S+): (.+) nicht als Feiertag eingetragen$/, (m, d, h) => `${tr(d)}: ${tr(h)} не внесён как праздник`],
+      [/^(Mo|Di|Mi|Do|Fr|Sa|So)(?: – (Mo|Di|Mi|Do|Fr|Sa|So))? (vorheriger|nächster) Monat$/, (m, a, b, w) => {
+        const d = { Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс' };
+        return `${d[a]}${b ? ` – ${d[b]}` : ''} ${w === 'vorheriger' ? 'предыдущий' : 'следующий'} месяц`;
+      }],
       [/^((?:Mo|Di|Mi|Do|Fr|Sa|So)(?:, (?:Mo|Di|Mi|Do|Fr|Sa|So))*): Einträge lägen im anderen Monat$/, (m, d) =>
         `${d.replace(/Mo|Di|Mi|Do|Fr|Sa|So/g, (w) => ({ Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс' })[w])}: записи попали бы в другой месяц`],
       [/^Gerundet, laut Schein (.+)$/, 'Округлено, по наряду $1'],
@@ -362,7 +367,7 @@ if (LANG === 'ru') {
       [/^Unvollständig: (.+)$/, (m, x) => `Неполные: ${tr(x).replace(/ und /g, ' и ')}`],
       [/^Gesamt ([\d−+–].*)$/, 'Итого $1'],
       [/^Mit den Stunden der Abrechnung rechnet die App (.+) Netto anders\.$/, 'С часами из расчёта приложение получает нетто, отличающееся на $1.'],
-      [/^„(.+)“ erscheint nicht mehr in der Leiste\. .*$/, '«$1» больше не появляется в подсказках. Ваши табели не изменятся. Восстановить можно в настройках.'],
+      [/^„(.+)“ erscheint nicht mehr in der Leiste\.$/, '«$1» больше не появляется в подсказках.'],
       [/^Name in (\d+) Stundenzetteln?(?: und (\d+) Abrechnung(?:en)?)? geändert$/, (m, n, t) =>
         `Имя изменено в ${n} ${pl(n, 'табеле', 'табелях', 'табелях')}${t ? ` и ${t} ${pl(t, 'отчёте', 'отчётах', 'отчётах')}` : ''}`],
       [/^(\d+) (Seite|Seiten) abgezeichnet$/, (m, n) => `${n} ${pl(n, 'страница подписана', 'страницы подписаны', 'страниц подписано')}`],

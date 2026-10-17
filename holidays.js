@@ -49,7 +49,8 @@ function holidaysFor(year, state) {
     [fixed(8, 15), 'Mariä Himmelfahrt', inStates('SL')],
     [fixed(9, 20), 'Weltkindertag', inStates('TH')],
     [fixed(10, 3), 'Tag der Deutschen Einheit', true],
-    [fixed(10, 31), 'Reformationstag', inStates('BB', 'HB', 'HH', 'MV', 'NI', 'SN', 'ST', 'SH', 'TH')],
+    // HB, HH, NI und SH erst seit 2018; 2017 (500 Jahre Reformation) einmalig bundesweit
+    [fixed(10, 31), 'Reformationstag', inStates('BB', 'MV', 'SN', 'ST', 'TH') || (year >= 2018 && inStates('HB', 'HH', 'NI', 'SH')) || year === 2017],
     [fixed(11, 1), 'Allerheiligen', inStates('BW', 'BY', 'NW', 'RP', 'SL')],
     [bussUndBettag, 'Buß- und Bettag', inStates('SN')],
     [fixed(12, 25), '1. Weihnachtstag', true],
