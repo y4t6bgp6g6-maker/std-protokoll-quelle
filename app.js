@@ -1660,11 +1660,17 @@ function openReport(id, draft = null) {
   const s = currentSheet();
   const dayIndex = [0, 1, 2, 3, 4, 5, 6].find((i) => isoDate(sheetDate(s, i)) === rep.date);
   const day = s.days[dayIndex];
+  // Zeiten des Scheins (15-Minuten-Schritte) auf die Schritte des Zettels: Beginn früher, Ende später
+  const step = settings.minuteStep;
+  const down = (m) => (m == null ? m : Math.floor(m / step) * step);
+  const up = (m) => (m == null ? m : Math.ceil(m / step) * step);
   if (!draft) {
     const site = reportSite(rep);
-    draft = { start: rep.start, end: rep.end, site, work: reportWorkOptions(rep, site)[0] || '' };
+    draft = { start: down(rep.start), end: up(rep.end), site, work: reportWorkOptions(rep, site)[0] || '' };
   }
   const options = reportWorkOptions(rep, draft.site);
+  const rounded = (rep.start != null && draft.start !== rep.start) || (rep.end != null && draft.end !== rep.end);
+  const optSel = (o) => workParts(draft.work + ',').done.some((p) => sameKey(p) === sameKey(o));
   const done = reportEntered(day, rep);
   const me = sameKey(settings.name);
   const others = (rep.staff || []).filter((n) => sameKey(n) !== me);
@@ -1694,12 +1700,13 @@ function openReport(id, draft = null) {
       <div class="ws-label sec">${done ? `<span class="ws-done">${ICON.check} Schon eingetragen</span>` : 'Eintragen als'}</div>
       <div class="ws-form">
         <div class="row-times">${time('start', 'Beginn')}<span class="arrow">–</span>${time('end', 'Ende')}</div>
+        ${rounded ? `<div class="ws-round">Gerundet, laut Schein ${reportTimes(rep)}</div>` : ''}
         <div class="ws-field"><span class="ws-icon">${ICON.pin}</span><textarea class="ws-in" data-f="site" rows="1" maxlength="${MAX_LEN.site}" placeholder="Ort" autocapitalize="sentences">${escapeHtml(draft.site)}</textarea></div>
         <div class="ws-field"><span class="ws-icon">${ICON.tool}</span><textarea class="ws-in" data-f="work" rows="1" maxlength="${MAX_LEN.work}" placeholder="Arbeit" autocapitalize="sentences">${escapeHtml(draft.work)}</textarea></div>
         ${
           options.length > 1
             ? `<div class="ws-opts">${options
-                .map((o) => `<button class="ws-opt ${o === draft.work ? 'sel' : ''}" translate="no" data-o="${escapeHtml(o)}">${escapeHtml(o)}</button>`)
+                .map((o) => `<button class="ws-opt ${optSel(o) ? 'sel' : ''}" translate="no" data-o="${escapeHtml(o)}">${ICON.check}${escapeHtml(o)}</button>`)
                 .join('')}</div>`
             : ''
         }
@@ -1714,15 +1721,24 @@ function openReport(id, draft = null) {
   const fit = () => modal.querySelectorAll('.ws-in').forEach(fitTextarea);
   fit();
   requestAnimationFrame(fit);
-  modal.addEventListener('input', fit);
+  const markOpts = () => {
+    read();
+    modal.querySelectorAll('.ws-opt').forEach((b) => b.classList.toggle('sel', optSel(b.dataset.o)));
+  };
+  modal.addEventListener('input', () => (fit(), markOpts()));
   modal.addEventListener('click', (e) => {
     const t = e.target.closest('[data-m],[data-w],[data-o]');
     if (!t) return;
     read();
     if (t.dataset.o != null) {
-      draft.work = t.dataset.o;
+      // Mehrere Vorschläge wählbar: antippen hängt an bzw. nimmt wieder heraus, eigener Text bleibt
+      const parts = workParts(draft.work + ',').done;
+      const on = parts.some((p) => sameKey(p) === sameKey(t.dataset.o));
+      const next = on ? parts.filter((p) => sameKey(p) !== sameKey(t.dataset.o)) : [...parts, t.dataset.o];
+      if (next.join(', ').length > MAX_LEN.work) return toast('Kein Platz mehr in dieser Zeile');
+      draft.work = next.join(', ');
       modal.querySelector('[data-f="work"]').value = draft.work;
-      modal.querySelectorAll('.ws-opt').forEach((b) => b.classList.toggle('sel', b === t));
+      markOpts();
       fit();
     } else if (t.dataset.w) {
       const which = t.dataset.w;
@@ -5294,7 +5310,7 @@ function suggestionsFor(input) {
   if (field === 'work' && q && !list.length) list = match('');
   if (field === 'work') {
     // Was an der Baustelle dieser Zeile schon gemacht wurde, steht vorne (die häufigsten zuerst)
-    const siteInput = input.closest('.row')?.querySelector('[data-f="site"]');
+    const siteInput = input.closest('.row, .ws-form')?.querySelector('[data-f="site"]');
     const counts = workBySite.get(sameKey(siteInput ? siteInput.value : ''));
     if (counts) {
       const n = (v) => counts.get(sameKey(v)) || 0;
@@ -5343,6 +5359,7 @@ function showChips(input) {
     .join('');
   suggestGrid.scrollLeft = 0;
   suggestBar.classList.toggle('show', list.length > 0);
+  suggestBar.classList.toggle('in-modal', !!input.closest('#modal-layer'));
   placeSuggestBar();
 }
 /** Art der Arbeit: ein Komma am Ende (von der letzten Auswahl) wieder entfernen */
@@ -6005,9 +6022,14 @@ function renameAll(value) {
 
 document.addEventListener('focusin', (e) => {
   // Vorschläge nur für Baustelle und Arbeit (die Textfelder im Berichtsheft haben auch .txt, aber keine Vorschläge)
-  if (e.target.matches('.txt[data-f]')) showChips(e.target);
+  if (e.target.matches('.txt[data-f], .ws-in[data-f]')) showChips(e.target);
 });
 document.addEventListener('focusout', (e) => {
+  if (e.target.matches('.ws-in')) {
+    trimWorkInput(e.target);
+    if (suggestInput === e.target) hideChips();
+    return;
+  }
   if (!e.target.matches('.txt')) return;
   trimWorkInput(e.target);
   if (suggestInput === e.target) hideChips();

@@ -914,6 +914,7 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
   touch-action: pan-x;
 }
 #suggest-bar.show { display: block; }
+#suggest-bar.in-modal { z-index: 101; }
 .suggest-grid {
   display: flex;
   flex-direction: column;
@@ -1257,7 +1258,11 @@ body.tabs .to-top.floating { bottom: calc(var(--tab-h) + 16px); }
 .ws-in:focus { outline: none; border-bottom-color: var(--accent); }
 .ws-opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .ws-opt { padding: 5px 10px; border-radius: 14px; background: var(--fill); color: var(--text); font-size: 14px; text-align: left; }
+.ws-opt { display: inline-flex; align-items: center; gap: 4px; }
+.ws-opt svg { display: none; flex: none; }
 .ws-opt.sel { background: var(--accent-soft); color: var(--accent); }
+.ws-opt.sel svg { display: block; }
+.ws-round { display: inline-block; margin-top: 8px; padding: 3px 9px; border-radius: 10px; background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); font-size: 13px; }
 .ws-go-wrap { padding: 12px 16px 0; }
 .ws-go { width: 100%; min-height: 50px; border-radius: 14px; background: var(--accent-fill); color: var(--on-accent); font-size: 17px; font-weight: 600; }
 
