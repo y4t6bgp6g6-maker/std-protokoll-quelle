@@ -165,7 +165,7 @@ if (LANG === 'ru') {
       'Mitteilungen nur in der App vom Home-Bildschirm.': 'Уведомления только в приложении с экрана «Домой».',
       'Nur in der App vom Home-Bildschirm': 'Только в приложении с экрана «Домой»', 'Einstellungen übernommen': 'Настройки перенесены',
       'aus den Einstellungen': 'из настроек', 'keine (in den Einstellungen)': 'нет (в настройках)', 'Aus den Einstellungen übernehmen': 'Взять из настроек',
-      'Selbst unterschreiben': 'Подписать самому', Ort: 'Место', 'Ort fehlt': 'Нет места', 'Ort:': 'Место:', 'Name:': 'Имя:', 'Ort, Datum': 'Место, дата',
+      'Selbst unterschreiben': 'Подписать самому', 'Unterschrift fehlt': 'Нет подписи', 'Unterschreiben …': 'Подписать …', Ort: 'Место', 'Ort fehlt': 'Нет места', 'Ort:': 'Место:', 'Name:': 'Имя:', 'Ort, Datum': 'Место, дата',
       'Ort, Unterschrift': 'Место, подпись', Straße: 'Улица', Wohnort: 'Место жительства', Vorname: 'Имя', 'Geboren am': 'Дата рождения',
       Erweitert: 'Дополнительно',
 
@@ -306,6 +306,7 @@ if (LANG === 'ru') {
       [/^Monatsbericht · (.+)$/, 'Месячный отчёт · $1'],
       [/^Alle als Ausbilder abzeichnen \((\d+)\)$/, 'Подписать всё как наставник ($1)'],
       [/^Im Zettel steht (.+)\. Der (\S+) ist aber ein (\S+)\.$/, (m, r, d, w) => `В табеле указано ${r}. Но ${d} — это не понедельник.`],
+      [/^Konto: (.+)$/, 'Аккаунт: $1'],
       [/^(\d+) Einträge übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'запись', 'записи', 'записей')}`],
       [/^(\d+) (Tag|Tage) übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'день', 'дня', 'дней')}`],
       [/^vor (\d+) Min\.$/, '$1 мин. назад'],

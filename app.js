@@ -177,8 +177,6 @@ const DEFAULT_SETTINGS = {
   hoursPerDay: 8,
   minuteStep: 30,
   state: 'NI',
-  place: '',
-  signature: null,
   hiddenSuggestions: { site: [], work: [] },
   // Lohn (nur auf diesem iPhone): Stundenlohn, feste Zulage, Steuerklasse, Kirchensteuer, Kinder,
   // Zusatzbeitrag der Krankenkasse, Eigenbeitrag Betriebsrente (Entgeltumwandlung)
@@ -224,6 +222,13 @@ delete settings.prorateTarget;
 delete settings.credit;
 delete settings.overtime;
 settings.minuteStep = 30; // Zeitauswahl immer in 30-Minuten-Schritten
+// Seit v91: Ort und Unterschrift stehen in jeder Reisekostenabrechnung selbst, nicht mehr in den Einstellungen
+// (so gewünscht; die nächste Sicherung enthält sie nicht mehr)
+if ('place' in settings || 'signature' in settings) {
+  delete settings.place;
+  delete settings.signature;
+  queueMicrotask(() => saveSettings());
+}
 // Sa/So: keine wählbare Tagesart mehr (nur automatisch eingetragene Feiertage).
 // Erst speichern, wenn app.js ganz geladen ist: saveSheets braucht currentView und editorPending, die weiter unten stehen
 // (sonst bricht der Start ab und die App bleibt leer, z. B. wenn ein Feiertag am Wochenende nachgetragen wird)
@@ -3501,7 +3506,7 @@ function createTrip(from, to, sheet) {
     over: {},
     from: isoDate(from),
     to: isoDate(to),
-    place: settings.place,
+    place: '',
     signDate: isoDate(new Date()),
     name: (sheet && sheet.name) || settings.name,
     sentAt: null,
@@ -3677,7 +3682,7 @@ function tripBodyHTML(t) {
         <span class="trip-pick-info muted" translate="no">${escapeHtml(info) || '–'}</span>
       </button>`);
   }
-  const sig = settings.signature && settings.signature.strokes && settings.signature.strokes.length;
+  const sig = isSignature(t.signature);
   return `
     <h2 class="section-title">Reisetage</h2>
     <div class="card list">${picks.join('')}</div>
@@ -3694,7 +3699,8 @@ function tripBodyHTML(t) {
       <label class="field"><span>Ort</span><input data-tp="place" placeholder="z. B. Firmensitz" value="${escapeHtml(t.place || '')}" enterkeyhint="done"></label>
       ${pdfHintHTML(t.place)}
       <label class="field"><span>Datum</span><input type="date" data-tp="signDate" value="${t.signDate || ''}"></label>
-      <div class="field"><span>Unterschrift</span><span class="muted">${sig ? 'aus den Einstellungen' : 'keine (in den Einstellungen)'}</span></div>
+      ${sig ? `<div class="field sig-field"><span>Unterschrift</span>${signatureSVG(t.signature)}</div>` : ''}
+      <button class="list-btn" data-act="trip-sign">${sig ? 'Neu unterschreiben …' : 'Unterschreiben …'}</button>
     </div>
     <div class="card summary"><div class="sum-row"><span>Gesamtsumme</span><b id="trip-total">${fmtEuro(tripTotal(rows))}</b></div></div>`
         : ''
@@ -3860,8 +3866,7 @@ function tripProblems(t) {
   if (!(t.place || '').trim()) problems.push('Ort fehlt');
   if (pdfCharHint(t.place)) problems.push(`Ort: ${pdfCharHint(t.place)}`);
   if (pdfCharHint(t.name || settings.name)) problems.push(`Name: ${pdfCharHint(t.name || settings.name)}`);
-  if (!(settings.signature && settings.signature.strokes && settings.signature.strokes.length))
-    problems.push('Unterschrift fehlt (in den Einstellungen)');
+  if (!isSignature(t.signature)) problems.push('Unterschrift fehlt');
   return problems;
 }
 
@@ -3892,7 +3897,7 @@ function tripPdfFile(t) {
     total: tripTotal(rows),
     place: (t.place || '').trim(),
     signDate: t.signDate ? fmtShort(parseDate(t.signDate)) : '',
-    signature: settings.signature,
+    signature: isSignature(t.signature) ? t.signature : null,
   }));
   return new File([blob], pdfFileName('Reisekostenabrechnung', t.name || settings.name, tripTitle(t).replace(/^Reisekostenabrechnung ?/, '')), { type: 'application/pdf' });
 }
@@ -4006,12 +4011,9 @@ function signaturePad(onSave = null, title = 'Unterschrift') {
       const round = (v) => Math.round(v * 1000) / 1000;
       const sig = { ratio: round(h / w), strokes: strokes.map((st) => st.map(([x, y]) => [round(x), round(y)])) };
       closeModal();
-      if (onSave) return onSave(sig);
-      settings.signature = sig;
-      saveSettings();
+      return onSave(sig);
     }
     closeModal();
-    if (!onSave) renderSettings();
   });
 }
 
@@ -4040,7 +4042,6 @@ const setToggle = (icon, color, label, attrs) =>
 /** Unterseiten der Einstellungen: #/einstellungen/<name> */
 const SETTINGS_PAGES = {
   lohn: 'Lohn',
-  reisekosten: 'Reisekosten',
   vorschlaege: 'Vorschläge',
   scheine: 'Arbeitsscheine',
   sicherung: 'Datensicherung',
@@ -4058,7 +4059,6 @@ function settingsSummary() {
   const n = reports().length;
   return {
     lohn: settings.wage ? `${settings.wage} € · Kl. ${roman}` : `Klasse ${roman}`,
-    reisekosten: [settings.place ? settings.place : '', settings.signature ? 'Unterschrift' : ''].filter(Boolean).join(', ') || 'Ort, Unterschrift',
     vorschlaege: settings.typoHints !== false ? 'Korrektur an' : 'Korrektur aus',
     scheine: url ? `${n}${reportStore.at ? ` · ${sameDay(new Date(reportStore.at), new Date()) ? 'heute' : fmtDayMonth(new Date(reportStore.at))} abgeholt` : ''}` : 'nicht eingerichtet',
     sicherung: [url && settings.autoBackup !== false ? 'Drive' : 'von Hand', backupEncrypted() ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
@@ -4079,15 +4079,15 @@ function renderSettings() {
       <span class="nav-btn"></span>
     </header>
     <h1 class="large-title">Einstellungen</h1>
-    <div class="card s-profile">
-      <span class="s-avatar">${escapeHtml(initials)}</span>
-      <label class="s-pname s-namefield">
-        <input data-s="name" placeholder="Name eintragen" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done">
-        <span>Steht auf jedem neuen Stundenzettel</span>
-      </label>
-      ${pdfHintHTML(settings.name)}
-    </div>
-    <div class="card s-group">
+    <div class="card s-group s-me">
+      <div class="s-profile">
+        <span class="s-avatar">${escapeHtml(initials)}</span>
+        <label class="s-pname s-namefield">
+          <input data-s="name" placeholder="Name eintragen" value="${escapeHtml(settings.name)}" autocomplete="name" enterkeyhint="done">
+          <span>Steht auf jedem neuen Stundenzettel</span>
+        </label>
+        ${pdfHintHTML(settings.name)}
+      </div>
       ${setLink('#/einstellungen/konto', 'person', 'gray', 'Konto', sum.konto)}
     </div>
     <div class="card s-group">
@@ -4103,7 +4103,6 @@ function renderSettings() {
     </div>
     <div class="card s-group">
       ${setLink('#/einstellungen/lohn', 'euro', 'blue', 'Lohn', sum.lohn)}
-      ${setLink('#/einstellungen/reisekosten', 'case', 'orange', 'Reisekosten', sum.reisekosten)}
       ${setLink('#/einstellungen/vorschlaege', 'text', 'teal', 'Vorschläge', sum.vorschlaege)}
       ${setToggle('book', 'green', 'Berichtsheft', `data-s="bhOn" ${settings.bhOn ? 'checked' : ''}`)}
     </div>
@@ -4131,20 +4130,6 @@ function renderSettingsPage(sub) {
       <label class="field"><span>Betriebsrente (dein Beitrag)</span><input data-s="bav" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.bav)}" enterkeyhint="done"><span class="unit">€</span></label>
     </div>
     <p class="footnote">Für das geschätzte Netto in der Übersicht.</p>
-
-`,
-    reisekosten: `
-    <div class="card form">
-      <label class="field"><span>Ort</span><input data-s="place" placeholder="z. B. Firmensitz" value="${escapeHtml(settings.place || '')}" enterkeyhint="done"></label>
-      ${
-        settings.signature
-          ? `<div class="field sig-field"><span>Unterschrift</span>${signatureSVG(settings.signature)}</div>
-      <button class="list-btn" data-act="sign">Neu unterschreiben …</button>
-      <button class="list-btn destructive" data-act="sign-clear">Unterschrift löschen</button>`
-          : `<button class="list-btn" data-act="sign">Unterschrift hinzufügen …</button>`
-      }
-    </div>
-    <p class="footnote">Steht unten auf der Reisekostenabrechnung.</p>
 
 `,
     vorschlaege: hiddenSuggestionsHTML().replace('<h2 class="section-title">Vorschläge</h2>', ''),
@@ -4350,7 +4335,7 @@ function mergeBackup(data) {
   // Die fest vorgegebenen Werte (Wochenstunden, Bundesland, Zeitschritte) bleiben unverändert.
   let settingsRestored = false;
   if (!settings.name.trim() && data.settings && typeof data.settings === 'object' && String(data.settings.name || '').trim()) {
-    const fixed = ['target', 'hoursPerDay', 'state', 'minuteStep', 'signature'];
+    const fixed = ['target', 'hoursPerDay', 'state', 'minuteStep', 'signature', 'place'];
     for (const [k, v] of Object.entries(data.settings)) if (!fixed.includes(k)) settings[k] = v;
     settings.hiddenSuggestions = { site: [], work: [], ...settings.hiddenSuggestions };
     saveSettings();
@@ -4373,13 +4358,7 @@ function mergeBackup(data) {
     else same++;
   }
   saveSheets();
-  // Unterschrift aus der Sicherung nur, wenn auf diesem Gerät noch keine gesetzt ist
-  let signature = false;
-  if (!settings.signature && data.settings && isSignature(data.settings.signature)) {
-    settings.signature = data.settings.signature;
-    saveSettings();
-    signature = true;
-  }
+  const signature = false; // Unterschrift der Einstellungen gibt es seit v91 nicht mehr
   // Reisekostenabrechnungen (gleiche ID): gleich → nichts, verschieden → Rückfrage wie bei den Zetteln
   let tripsAdded = 0;
   let tripsSame = 0;
@@ -5928,16 +5907,19 @@ document.addEventListener('click', (e) => {
       // direkt im Antippen ausführen: Teilen-Menü und Zwischenablage gehen in Safari sonst nicht
       sendTripWithCheck(currentTrip());
       break;
-    case 'sign':
-      signaturePad();
+    case 'trip-sign': {
+      // Unterschrift je Abrechnung (seit v91 nicht mehr aus den Einstellungen)
+      const t = currentTrip();
+      if (!t) break;
+      signaturePad((sig) => {
+        t.signature = sig;
+        saveTrips(t);
+        const y = window.scrollY;
+        renderTrip(t.id);
+        window.scrollTo(0, y);
+      });
       break;
-    case 'sign-clear':
-      confirmDialog('Unterschrift löschen?', 'Neue Abrechnungen haben dann keine Unterschrift.', 'Löschen', () => {
-        settings.signature = null;
-        saveSettings();
-        renderSettings();
-      }, true);
-      break;
+    }
     case 'search':
       searchQuery = '';
       renderList();

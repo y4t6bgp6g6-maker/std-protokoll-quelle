@@ -1638,6 +1638,9 @@ html.locked, html.locked body { background: #0b1d4a; }
 .s-pname input::placeholder { color: var(--muted); font-weight: 600; }
 .s-pname span { font-size: 13px; color: var(--muted); }
 .s-group { padding: 0; overflow: hidden; margin-bottom: 22px; }
+/* Name und Konto in einer Karte */
+.s-me .s-profile { margin: 0; }
+.s-me .s-profile + .s-row { border-top: 0.5px solid var(--sep); }
 .s-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 50px; padding: 0 16px; color: inherit; text-decoration: none; font-size: 17px; }
 .s-row + .s-row { border-top: 0.5px solid var(--sep); }
 .s-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }

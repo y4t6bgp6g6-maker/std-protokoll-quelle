@@ -5,7 +5,7 @@
 
 const BH_KEY = 'stdprotokoll.berichtsheft.v1';
 // profile: Angaben fürs Deckblatt/Vorblatt (Datumsfelder als 'JJJJ-MM-TT')
-// sigs: gespeicherte Unterschriften { azubi, eltern, ausbilder } wie settings.signature
+// sigs: gespeicherte Unterschriften { azubi, eltern, ausbilder } ({ ratio, strokes } wie bei signaturePad)
 // autoSign: jeder geschriebene Bericht trägt von selbst die Unterschrift des Azubis (Datum = letzte Änderung)
 // hefte: [{ id, jahr, start, end, weeks: { Montag 'JJJJ-MM-TT': Woche }, months: { 'JJJJ-MM': Monat } }]
 // Woche: { days: [{ lines: [{ t, h }] (bis 5 Zeilen: Tätigkeit, Einzelstunden), hours (Gesamtstunden),
@@ -728,15 +728,9 @@ function signCardHTML(e, lastDay) {
     .join('')}</div>`;
 }
 
-const settingsSig = () => (isSignature(settings.signature) ? settings.signature : null);
-/** Unterschrift für eine Rolle festlegen: der Azubi kann die aus den Einstellungen übernehmen (falls dort eine ist) */
+/** Unterschrift für eine Rolle festlegen (seit v91 nur noch selbst unterschreiben, die Einstellungen haben keine mehr) */
 function pickSignature(role, done) {
-  const draw = () => signaturePad(done, BH_ROLES.find((r) => r[0] === role)[1]);
-  if (role !== 'azubi' || !settingsSig()) return draw();
-  actionSheet([
-    { label: 'Aus den Einstellungen übernehmen', run: () => done(structuredClone(settingsSig())) },
-    { label: 'Selbst unterschreiben', run: draw },
-  ]);
+  signaturePad(done, BH_ROLES.find((r) => r[0] === role)[1]);
 }
 /** Gespeicherte Unterschrift der Rolle benutzen; fehlt sie, erst festlegen */
 function withSignature(role, then) {
@@ -888,7 +882,6 @@ function editSignature(role) {
   };
   if (!bh.sigs[role]) return pickSignature(role, set);
   actionSheet([
-    ...(role === 'azubi' && settingsSig() ? [{ label: 'Aus den Einstellungen übernehmen', run: () => set(structuredClone(settingsSig())) }] : []),
     { label: 'Neu unterschreiben', run: () => signaturePad(set, label) },
     {
       label: 'Unterschrift löschen',
