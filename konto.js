@@ -197,6 +197,12 @@ async function accountPassword() {
 // ───────── Sicherung auf dem Team-Server ─────────
 
 let accountBusy = false;
+/** Kurzer Fingerabdruck der Daten (ohne Zeitstempel der Sicherung), um unveränderte Stände nicht erneut zu senden */
+function textHash(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + s.length.toString(36);
+}
 /** Ergebnis: true = hochgeladen */
 async function accountBackup(force = false) {
   if (!team || !accountOk() || accountRestorePending() || accountBusy || !cryptStore || !navigator.onLine) return false;
