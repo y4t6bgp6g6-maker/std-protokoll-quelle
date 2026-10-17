@@ -139,15 +139,20 @@ async function accountSetup(user, pw, mode, again) {
   }
 }
 
+/** Konto und Sicherungs-Schlüssel von diesem iPhone entfernen (Abmelden, Konto gelöscht) */
+function accountForget() {
+  account = null;
+  saveAccount();
+  cryptStore = null;
+  try {
+    localStorage.removeItem(CRYPT_KEY);
+  } catch {}
+  accountRerender();
+}
+
 function accountLogout() {
   confirmDialog('Abmelden?', 'Ohne Konto ist das Team gesperrt und Sicherungen sind nicht verschlüsselt.', 'Abmelden', () => {
-    account = null;
-    saveAccount();
-    cryptStore = null;
-    try {
-      localStorage.removeItem(CRYPT_KEY);
-    } catch {}
-    accountRerender();
+    accountForget();
   }, true);
 }
 
@@ -158,13 +163,7 @@ function accountDelete() {
     } catch (e) {
       if (e.message !== 'unknown') return toast(accountError(e));
     }
-    account = null;
-    saveAccount();
-    cryptStore = null;
-    try {
-      localStorage.removeItem(CRYPT_KEY);
-    } catch {}
-    accountRerender();
+    accountForget();
   }, true);
 }
 

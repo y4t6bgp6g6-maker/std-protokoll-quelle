@@ -368,21 +368,6 @@ const payKey = (year, month) => `${year}-${pad(month)}`;
   Object.values(payslips).forEach((p) => p && p.pay && repairPayslip(p));
   if (JSON.stringify(payslips) !== before) savePayslips();
 }
-const PS_LABELS = {
-  rate: 'Stundenlohn',
-  zulage: 'Zulagen',
-  brutto: 'Gesamt-Brutto',
-  steuer: 'Steuern',
-  sv: 'Sozialabgaben',
-  netto: 'Netto-Verdienst',
-  auszahlung: 'Auszahlung',
-  nettoSonst: 'Weitere Netto-Be-/Abzüge',
-  'hours.arbeit': 'Arbeitsstunden',
-  'hours.ueber': 'Überstunden',
-  'hours.urlaub': 'Urlaub',
-  'hours.krank': 'Krankheit',
-  'hours.feiertag': 'Feiertage',
-};
 const HOUR_KINDS = [
   ['arbeit', 'Arbeitsstunden'],
   ['ueber', 'Überstunden'],
@@ -498,15 +483,6 @@ function payslipCompare(p) {
 /** „+3,00 h“, „−8,00 h“, „0,00 h“ */
 const fmtHDiff = (h) => (Math.abs(h) < 0.005 ? '0,00 h' : `${h > 0 ? '+' : '−'}${fmtDec(Math.abs(h) * 60)} h`);
 const fmtEuroDiff = (v) => (Math.abs(v) < 0.005 ? '0,00 €' : `${v > 0 ? '+' : '−'}${fmtMoney(Math.abs(v), true)}`);
-
-/** Kurzfassung für die Monatstabelle in der Übersicht */
-function payslipSummary(c) {
-  if (c.hoursOk && c.netDiff != null && Math.abs(c.netDiff) < 0.05)
-    return { ok: true, text: c.shifted ? 'Stimmt – Stunden teils anders verbucht' : 'Stunden und Netto stimmen' };
-  const parts = HOUR_KINDS.filter(([k]) => (k === 'ueber' || !c.shifted) && Math.abs(c.hourDiff[k]) >= 0.01).map(([k, label]) => `${label} ${fmtHDiff(c.hourDiff[k])}`);
-  if (c.netDiff != null && Math.abs(c.netDiff) >= 0.05) parts.push(`Netto ${fmtEuroDiff(c.netDiff)}`);
-  return { ok: false, text: parts.join(' · ') };
-}
 
 /** Zeile einer Vergleichstabelle: Bezeichnung | Zettel/App | Abrechnung | Unterschied (+ grün, − rot, 0 grau) */
 function psRow(label, a, b, diff, cls = '', neutral = false) {
@@ -1739,7 +1715,7 @@ function enterReport(rep, s, dayIndex, draft) {
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
   ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
-  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
+  ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team', 'teamSheet']],
   ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report']],
@@ -1782,11 +1758,9 @@ const svg = (path, size = 22) =>
 const fillIcon = (d, size = 25) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="${d}"/></svg>`;
 const ICON = {
-  gear: svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'),
   plus: svg('<path d="M12 5v14M5 12h14"/>', 20),
   back: svg('<path d="M15 18l-6-6 6-6"/>', 24),
   more: svg('<circle cx="5" cy="12" r="1.3" fill="currentColor"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/><circle cx="19" cy="12" r="1.3" fill="currentColor"/>'),
-  calendar: svg('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>', 18),
   send: svg('<path d="M4 4h16v16H4z" stroke="none"/><path d="M22 6l-10 7L2 6"/><rect x="2" y="4" width="20" height="16" rx="2"/>', 20),
   check: svg('<path d="M20 6L9 17l-5-5"/>', 14),
   close: svg('<path d="M18 6L6 18M6 6l12 12"/>', 16),
@@ -1925,11 +1899,6 @@ function route() {
     renderReport(decodeURIComponent(am[1]));
     syncNav();
     window.scrollTo(0, 0);
-  } else if (hash === '#/reisekosten') {
-    currentView = 'trips';
-    renderTripList();
-    syncNav();
-    window.scrollTo(0, 0);
   } else if (jm) {
     currentView = 'year';
     renderYear(Number(jm[1]));
@@ -2059,7 +2028,7 @@ const BACK_TARGETS = [
   [/^#\/team\/[^/]+\/.+$/, '#/team'],
   [/^#\/fehler$/, '#/team'],
   [/^#\/heft-angaben$/, '#/'],
-  [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'],
+  [/^#\/(uebersicht|einstellungen|reisekosten|zettel\/.+|heft\/[^/]+)$/, '#/'], // #/reisekosten gab es bis v96
 ];
 let backTarget = null;
 function goBack() {
@@ -2278,21 +2247,6 @@ function updateTopButton() {
 window.addEventListener('scroll', () => requestAnimationFrame(updateTopButton), { passive: true });
 
 const fmtNum = (n) => String(Math.round(n * 10) / 10).replace('.', ',');
-const fmtDays = (n) => `${fmtNum(n)} ${n === 1 ? 'Tag' : 'Tage'}`;
-
-function statsCardHTML() {
-  const year = new Date().getFullYear();
-  const st = absenceStats().get(year) || { urlaub: 0, krank: 0 };
-  const ot = yearBalance(countedOvertime(year, overtimeAccount().get(year) || new Map()));
-  return `<a draggable="false" class="card stats-card" href="#/uebersicht">
-    <span class="trips-icon">${ICON.yearCal}</span>
-    <span class="stats-item"><span class="trips-title">Übersicht ${year}</span><span class="stats-label">${st.urlaub} ${
-      st.urlaub === 1 ? 'Tag' : 'Tage'
-    } Urlaub genommen</span></span>
-    <span class="stats-ot"><b class="${balanceClass(ot)}">${fmtSigned(ot)}</b><span class="stats-label">Überstunden</span></span>
-    <span class="list-chevron">${ICON.chevronRight}</span>
-  </a>`;
-}
 
 const balanceClass = (min) => (min > 0 ? 'plus' : min < 0 ? 'minus' : '');
 
@@ -3292,6 +3246,21 @@ function openPdfPreview() {
   });
 }
 
+/** Datei teilen (Teilen-Menü, ohne title/text – in der Mail steht nur der Anhang), sonst herunterladen.
+ *  false = im Teilen-Menü abgebrochen */
+async function shareOrDownload(file) {
+  if (!(navigator.canShare && navigator.canShare({ files: [file] }))) {
+    downloadFile(file);
+    return true;
+  }
+  try {
+    await navigator.share({ files: [file] });
+  } catch (e) {
+    if (e && e.name === 'AbortError') return false;
+    downloadFile(file);
+  }
+  return true;
+}
 function downloadFile(file) {
   const url = URL.createObjectURL(file);
   const a = document.createElement('a');
@@ -3319,17 +3288,7 @@ async function sharePdf(s, isSend) {
       () => {}
     );
   }
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      // Ohne title/text, damit in der Mail nur der Anhang steht
-      await navigator.share({ files: [file] });
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      downloadFile(file);
-    }
-  } else {
-    downloadFile(file);
-  }
+  if (!(await shareOrDownload(file))) return;
   if (isSend && !s.sentAt) {
     confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann ist die KW in der Liste nicht mehr orange.', 'Ja, gesendet', () => {
       s.sentAt = Date.now();
@@ -3486,101 +3445,12 @@ function dropEmptyTrip() {
   }
 }
 
-/** Karte auf der Startseite: führt zur Liste der Reisekostenabrechnungen */
-function tripsCardHTML() {
-  const list = trips.filter((t) => t.dates.length);
-  const open = list.filter((t) => !t.sentAt).length;
-  return `<a draggable="false" class="card stats-card trips-card" href="#/reisekosten">
-    <span class="trips-icon">${ICON.suitcase}</span>
-    <span class="stats-item"><span class="trips-title">Reisekosten</span><span class="stats-label">${
-      list.length ? `${list.length} ${list.length === 1 ? 'Abrechnung' : 'Abrechnungen'}${open ? ` · ${open} offen` : ''}` : 'Noch keine Abrechnung'
-    }</span></span>
-    <span class="list-chevron">${ICON.chevronRight}</span>
-  </a>`;
-}
-
-const tripFirstDate = (t) => parseDate([...t.dates].sort()[0]);
-const tripLastDate = (t) => parseDate([...t.dates].sort().at(-1));
-
-function renderTripList() {
-  const list = trips.filter((t) => t.dates.length);
-  const groups = new Map();
-  for (const t of list) {
-    const d = tripFirstDate(t);
-    const key = d.getFullYear() * 100 + d.getMonth() + 1;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(t);
-  }
-  const keys = [...groups.keys()].sort((a, b) => b - a);
-  app.innerHTML = `
-    <header class="nav">
-      <button class="nav-btn back" data-act="back" aria-label="Zurück">${ICON.back}</button>
-      <span class="nav-title"></span>
-      <span class="nav-btn"></span>
-    </header>
-    <h1 class="large-title">Reisekosten</h1>
-    ${
-      keys.length
-        ? keys
-            .map((k) => {
-              const items = groups.get(k).sort((a, b) => tripFirstDate(b) - tripFirstDate(a));
-              return `<h2 class="section-title">${MONTHS[(k % 100) - 1]} ${Math.floor(k / 100)}</h2>
-          <div class="card list">${items.map(tripRowHTML).join('')}</div>`;
-            })
-            .join('')
-        : `<div class="empty">
-      <div class="empty-icon">${svg('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>', 44)}</div>
-      <p><b>Noch keine Reisekostenabrechnung</b></p>
-      <p class="muted">Tippe unten auf „Neue Reisekostenabrechnung“ und wähle eine Woche.</p>
-    </div>`
-    }
-    <div class="bottom-bar">
-      <button class="to-top" data-act="to-top" aria-label="Nach oben">${ICON.up}</button>
-      <button class="primary" data-act="trip-new">${ICON.plus} Neue Reisekostenabrechnung</button>
-    </div>`;
-}
-
-function tripRowHTML(t) {
-  const sent = !!t.sentAt;
-  const rows = tripRows(t);
-  const sites = joinSites(
-    uniqueTexts(
-      rows.flatMap((r) => {
-        const day = sheetDayFor(r.date);
-        return day && canWork(day) ? day.rows.map((x) => (x.site || '').trim()) : [];
-      })
-    )
-  );
-  return `<div class="swipe">
-    <div class="swipe-track">
-      <a draggable="false" class="list-row" href="#/reise/${encodeURIComponent(t.id)}">
-        <span class="status ${sent ? 'sent' : 'open'}">${sent ? ICON.check : ''}</span>
-        <span class="list-main">
-          <span class="list-title">${fmtShort(tripFirstDate(t))} – ${fmtShort(tripLastDate(t))}</span>
-          <span class="list-sub trip-sites">${sent ? 'gesendet' : 'offen'}${sites ? ` · <span translate="no">${escapeHtml(sites)}</span>` : ''}</span>
-        </span>
-        <span class="list-hours">${fmtEuro(tripTotal(rows))}</span>
-        <span class="list-chevron">${ICON.chevronRight}</span>
-      </a>
-      <button class="swipe-del" data-act="trip-delete" data-id="${t.id}">Löschen</button>
-    </div>
-  </div>`;
-}
-
-function newTripFromList() {
-  weekPicker(new Date(), null, (anchor) => {
-    const monday = mondayOf(anchor);
-    createTrip(monday, addDays(monday, 6), existingSheet(anchor));
-  }, true);
-}
-
-function askDeleteTrip(t, leave, onCancel = null) {
+function askDeleteTrip(t) {
   confirmDialog('Abrechnung löschen?', `${escapeHtml(tripTitle(t))} wird endgültig gelöscht.`, 'Löschen', () => {
     trips = trips.filter((x) => x !== t);
     saveTrips();
-    if (leave) goBack();
-    else renderTripList();
-  }, true, 'Abbrechen', onCancel);
+    goBack();
+  }, true, 'Abbrechen');
 }
 
 function renderTrip(id) {
@@ -3772,7 +3642,7 @@ function tripMoreMenu() {
     {
       label: 'Abrechnung löschen',
       destructive: true,
-      run: () => askDeleteTrip(t, true),
+      run: () => askDeleteTrip(t),
     },
   ]);
 }
@@ -3866,16 +3736,7 @@ async function shareTripPdf(t) {
       () => {}
     );
   }
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file] });
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      downloadFile(file);
-    }
-  } else {
-    downloadFile(file);
-  }
+  if (!(await shareOrDownload(file))) return;
   if (!t.sentAt) {
     confirmDialog('Wurde die Abrechnung gesendet?', 'Dann wird sie als gesendet markiert.', 'Ja, gesendet', () => {
       t.sentAt = Date.now();
@@ -4532,7 +4393,6 @@ async function importBackup(input) {
   if (conflicts.some((c) => c.trip)) saveTrips();
   if (currentView === 'settings' || currentView === 'settingsSub') renderSettings();
   if (currentView === 'list') renderList();
-  if (currentView === 'trips') renderTripList();
   const done = [total ? `${total} Stundenzettel` : '', tripCount ? `${tripCount} Reisekostenabrechnung${tripCount === 1 ? '' : 'en'}` : '', reportCount ? `${reportCount} Arbeitsschein${reportCount === 1 ? '' : 'e'}` : ''].filter(Boolean);
   infoDialog(done.length ? `${done.join(' und ')} eingelesen` : 'Nichts eingelesen', `<ul class="problem-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
 }
@@ -4877,8 +4737,8 @@ function timePicker(title, initial, hasValue, onDone, onCancel = null) {
   );
 }
 
-/** Wochenwahl; forTrip: für eine Reisekostenabrechnung (ganze Woche, ohne Hinweise zu Stundenzetteln) */
-function weekPicker(initial, excludeId, onPick, forTrip = false, withImport = false) {
+/** Wochenwahl; withImport: darunter „Datei einlesen …“ (beim „+“) */
+function weekPicker(initial, excludeId, onPick, withImport = false) {
   let selected = startOfDay(initial);
   let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
   const modal = openModal(`${modalHead('Woche wählen', 'Übernehmen')}<div class="wp"></div>`, 'sheet wp-sheet');
@@ -4886,14 +4746,13 @@ function weekPicker(initial, excludeId, onPick, forTrip = false, withImport = fa
   if (withImport) wp.insertAdjacentHTML('afterend', `<button class="modal-wide wp-import" data-wp="import">${ICON.doc} Datei einlesen …</button>`);
   const openedAt = Date.now();
 
-  // Wochen, für die es schon einen Zettel bzw. eine Abrechnung gibt: Montag → 'sent' oder 'open' (offen hat Vorrang)
+  // Wochen, für die es schon einen Zettel gibt: Montag → 'sent' oder 'open' (offen hat Vorrang)
   const known = new Map();
   const mark = (monday, sent) => {
     const k = isoDate(mondayOf(monday));
     known.set(k, known.get(k) === 'open' || !sent ? 'open' : 'sent');
   };
-  if (forTrip) for (const t of trips) for (const d of new Set([t.from, ...t.dates])) mark(parseDate(d), !!t.sentAt);
-  else for (const sh of sheets) if (sh.id !== excludeId) mark(parseDate(sh.weekStart), !!sh.sentAt);
+  for (const sh of sheets) if (sh.id !== excludeId) mark(parseDate(sh.weekStart), !!sh.sentAt);
 
   /** Ein Monat als Raster: Kopfzeile, KW-Spalte, Tage – immer 6 Wochen, damit der Kalender beim Blättern gleich hoch bleibt */
   function gridHTML(m) {
@@ -4912,7 +4771,7 @@ function weekPicker(initial, excludeId, onPick, forTrip = false, withImport = fa
                   'wp-day',
                   d.getMonth() !== m.getMonth() ? 'out' : '',
                   inWeek ? 'in-week' : '',
-                  inWeek && (forTrip || (d.getMonth() + 1 === preview.month && d.getFullYear() === preview.year)) ? 'in-sheet' : '',
+                  inWeek && d.getMonth() + 1 === preview.month && d.getFullYear() === preview.year ? 'in-sheet' : '',
                   sameDay(d, selected) ? 'sel' : '',
                   sameDay(d, today) ? 'today' : '',
                   holidayName(d) ? 'holiday' : '',
@@ -4941,19 +4800,11 @@ function weekPicker(initial, excludeId, onPick, forTrip = false, withImport = fa
         <button class="icon-btn" data-wp="next" aria-label="Nächster Monat">${ICON.chevronRight}</button>
       </div>
       <div class="wp-viewport"><div class="wp-strip">${gridHTML(prevMonth)}${gridHTML(month)}${gridHTML(nextMonth)}</div></div>
-      ${
-        forTrip
-          ? `<div class="wp-preview">
-        <b>Woche ${fmtShort(mondayOf(selected))} – ${fmtShort(addDays(mondayOf(selected), 6))}</b>
-        <span class="muted">Danach tippst du die Reisetage an.</span>
-        ${holidaysLine()}
-      </div>`
-          : `<div class="wp-preview">
+      <div class="wp-preview">
         <b>${sheetTitle(preview)}</b>
         <span class="muted">${exists ? (excludeId ? 'Für diese Woche gibt es schon einen Zettel' : 'Gibt es schon – wird geöffnet') : 'Ausgegraute Tage gehören zum anderen Monat'}</span>
         ${holidaysLine()}
-      </div>`
-      }`;
+      </div>`;
     viewport = wp.querySelector('.wp-viewport');
     strip = wp.querySelector('.wp-strip');
   }
@@ -5639,7 +5490,7 @@ document.addEventListener('click', (e) => {
       // Wochenauswahl mit „Datei einlesen …“
       weekPicker(new Date(), null, (anchor) => {
         location.hash = `#/zettel/${encodeURIComponent(openOrCreate(anchor))}`;
-      }, false, true);
+      }, true);
       break;
     case 'gap': {
       // Fehlende Woche: einlesen oder neu erstellen (dann immer erst die Wochenauswahl, bei der ersten fehlenden Woche)
@@ -5822,15 +5673,6 @@ document.addEventListener('click', (e) => {
       saveSettings();
       renderSettings();
       toast('Vorschlag wiederhergestellt');
-      break;
-    }
-    case 'trip-new':
-      newTripFromList();
-      break;
-    case 'trip-delete': {
-      const t = findTrip(el.dataset.id);
-      clearTimeout(swipeTimer);
-      if (t) askDeleteTrip(t, false, closeSwipe);
       break;
     }
     case 'trip-toggle':

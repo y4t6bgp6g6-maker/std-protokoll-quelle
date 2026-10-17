@@ -106,15 +106,7 @@ function moneyAfter(lines, re, ahead = 2) {
   }
   return null;
 }
-/** Abstand zweier Wörter (Einfügen, Löschen, Ersetzen je 1) */
-function editDistance(a, b) {
-  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
-  for (let j = 1; j <= b.length; j++) d[0][j] = j;
-  for (let i = 1; i <= a.length; i++)
-    for (let j = 1; j <= b.length; j++)
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-  return d[a.length][b.length];
-}
+// editDistance (Abstand zweier Wörter) steht in app.js
 
 /**
  * Abrechnungsmonat. Die Texterkennung liest „für Mai 2025“ oft fehlerhaft („rur November 2025“, „Für Uli 2025“,

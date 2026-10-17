@@ -540,6 +540,7 @@ function teamSiteParts(name) {
     nums: (core.match(/\d+/g) || []).join(' '),
   };
 }
+/** Abstand zweier Texte: Einfügen, Löschen, Ersetzen je 1, ohne Vertauschen (wie im Worker; auch die Server-Seite nutzt ihn) */
 function teamEditDistance(a, b) {
   const row = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {

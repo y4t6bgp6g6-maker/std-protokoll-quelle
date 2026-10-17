@@ -373,25 +373,12 @@ const adminDictKey = (s) =>
     .normalize('NFD')
     .replace(/\p{M}/gu, '')
     .replace(/[^\p{L}\p{N}]/gu, '');
-/** Abstand wie im Worker (ohne Vertauschen), damit nur vorgeschlagen wird, was das Wörterbuch dort auch ersetzt */
-function adminDictDistance(a, b) {
-  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    let prev = row[0];
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const t = row[j];
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
-      prev = t;
-    }
-  }
-  return row[b.length];
-}
 /** Gleiche Regel wie dictFuzzy im Worker: ab 6 Buchstaben, erster Buchstabe und Ziffern gleich, ein Tippfehler (ab 12 zwei) */
 function adminDictNear(a, b) {
   if (a.length < 6 || b.length < 6 || a[0] !== b[0] || a.replace(/\D/g, '') !== b.replace(/\D/g, '')) return false;
   const max = Math.min(a.length, b.length) >= 12 ? 2 : 1;
-  return Math.abs(a.length - b.length) <= max && adminDictDistance(a, b) <= max;
+  // Abstand wie im Worker (ohne Vertauschen): teamEditDistance aus team.js
+  return Math.abs(a.length - b.length) <= max && teamEditDistance(a, b) <= max;
 }
 
 /** Schreibweisen aus den Zetteln (laufender Monat und Vormonat), die sich nur in Groß-/Kleinschreibung, Satzzeichen

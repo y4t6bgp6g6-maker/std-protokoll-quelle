@@ -19,22 +19,20 @@ if (LANG === 'ru') {
       Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс', 'Mo–Fr': 'Пн–Пт',
       ...months,
       ...monthsShort,
-
       // ── Leiste, Navigation, allgemeine Knöpfe ──
       Übersicht: 'Обзор', Zettel: 'Табели', Team: 'Команда', Optionen: 'Настройки', Einstellungen: 'Настройки',
       Zurück: 'Назад', Weiter: 'Далее', Fertig: 'Готово', Abbrechen: 'Отмена', Löschen: 'Удалить', Speichern: 'Сохранить',
       Übernehmen: 'Применить', Entfernen: 'Убрать', Schließen: 'Закрыть', Senden: 'Отправить', Teilen: 'Поделиться',
-      Kopieren: 'Копировать', Ersetzen: 'Заменить', Verwerfen: 'Отменить изменения', Wiederholen: 'Повторить', Mehr: 'Ещё',
+      Ersetzen: 'Заменить', Verwerfen: 'Отменить изменения', Wiederholen: 'Повторить', Mehr: 'Ещё',
       'Weitere Aktionen': 'Другие действия', Hinzufügen: 'Добавить', Suchen: 'Поиск', Neu: 'Новый', 'Nach oben': 'Наверх',
       Eintragen: 'Внести', Ausblenden: 'Скрыть', Wiederherstellen: 'Восстановить', Verlassen: 'Выйти', Beitreten: 'Вступить',
       'Weiter bearbeiten': 'Продолжить редактирование', Vorschau: 'Предпросмотр', Bitte: 'Пожалуйста',
       'Keine Verbindung': 'Нет связи', Offline: 'Нет сети', 'Wird geladen …': 'Загрузка …', 'Wird eingelesen …': 'Загружается …',
       'Erst speichern?': 'Сначала сохранить?', 'Änderungen verwerfen?': 'Отменить изменения?', Vorschläge: 'Подсказки',
       'Speichern fehlgeschlagen – Speicher voll?': 'Не удалось сохранить – память заполнена?', 'Speichern fehlgeschlagen!': 'Не удалось сохранить!',
-      'Kopieren fehlgeschlagen': 'Не удалось скопировать', 'Bitte noch einmal tippen.': 'Нажмите ещё раз.', 'Bitte noch einmal versuchen.': 'Попробуйте ещё раз.',
+      'Bitte noch einmal versuchen.': 'Попробуйте ещё раз.',
       'Bitte prüfen': 'Проверьте', 'Trotzdem senden': 'Всё равно отправить', 'Trotzdem eintragen': 'Всё равно внести', 'Trotzdem ändern': 'Всё равно изменить',
       'Neu beginnen': 'Начать заново', 'So lassen': 'Оставить так', 'Für alle': 'Для всех',
-
       // ── Stundenzettel ──
       Stundenzettel: 'Табель', 'Neuer Stundenzettel': 'Новый табель', 'Neuen Stundenzettel erstellen': 'Создать новый табель',
       'Stundenzettel löschen': 'Удалить табель', 'Stundenzettel löschen?': 'Удалить табель?', 'Stundenzettel gespeichert': 'Табель сохранён',
@@ -65,7 +63,7 @@ if (LANG === 'ru') {
       'PDF-Vorschau': 'Предпросмотр PDF', 'Antippen zum Vergrößern': 'Нажмите, чтобы увеличить', 'PDF-Vorschau vergrößern': 'Увеличить предпросмотр PDF',
       'PDF konnte nicht erstellt werden': 'Не удалось создать PDF', 'Nächstes Blatt': 'Следующий лист', 'Vorheriges Blatt': 'Предыдущий лист',
       'Kyrillisch wird im PDF zu „?“': 'Кириллица в PDF станет «?»', Name: 'Имя', 'Name eintragen': 'Укажите имя',
-      'Name fehlt (in den Einstellungen)': 'Нет имени (в настройках)', 'Unterschrift fehlt (in den Einstellungen)': 'Нет подписи (в настройках)',
+      'Name fehlt (in den Einstellungen)': 'Нет имени (в настройках)',
       Suche: 'Поиск', 'Baustelle, Urlaub oder Datum': 'Объект, отпуск или дата',
       'Suche nach einer Baustelle (z. B. „Lindenstraße“), nach „Urlaub“ oder „Krank“ oder nach einem Datum (z. B. „15.09.“).':
         'Ищите объект (напр. «Lindenstraße»), «Отпуск», «Болен» или дату (напр. «15.09.»).',
@@ -78,10 +76,9 @@ if (LANG === 'ru') {
       Arbeitstage: 'Рабочие дни', 'Arbeits- und Fahrzeiten': 'Рабочее время и дорога', Fahrzeit: 'Время в пути', Arbeitszeit: 'Рабочее время',
       Arbeitsbeginn: 'Начало работы', Arbeitsende: 'Конец работы', Arbeitsanfang: 'Начало работы', Arbeitsstunden: 'Рабочие часы',
       Material: 'Материал', 'Durchgeführte Arbeiten': 'Выполненные работы', Mitarbeiter: 'Сотрудник', Unterschrift: 'Подпись',
-      'Unterschrift hinzufügen …': 'Добавить подпись …', 'Unterschrift löschen': 'Удалить подпись', 'Unterschrift löschen?': 'Удалить подпись?',
+      'Unterschrift löschen': 'Удалить подпись',
       'Unterschrift übernommen': 'Подпись перенесена', 'Mit dem Finger unterschreiben': 'Подпишите пальцем', 'Neu unterschreiben': 'Подписать заново',
-      'Neu unterschreiben …': 'Подписать заново …', 'Neue Abrechnungen haben dann keine Unterschrift.': 'Новые отчёты тогда будут без подписи.',
-
+      'Neu unterschreiben …': 'Подписать заново …',
       // ── Übersicht, Karten ──
       Überstunden: 'Переработка', 'Überstd.': 'Перераб.', Stunden: 'Часы', 'Stunden Gesamt': 'Всего часов', Saldo: 'Сальдо',
       'davon Überstunden': 'из них переработка', Jahresübersicht: 'Обзор года', 'Jahr unvollständig': 'Год неполный',
@@ -99,7 +96,6 @@ if (LANG === 'ru') {
         'Часы и зарплата рассчитаны до конца месяца: рабочие дни с сегодняшнего без записи считаются по 8 ч, переработка – только по внесённым дням.',
       'pro Werktag. Unvollständige Monate zählen nicht.': 'в рабочий день. Неполные месяцы не учитываются.',
       'Überstunden: alles über': 'Переработка: всё сверх',
-
       // ── Team ──
       'Team diesen Monat': 'Команда в этом месяце',
       // ── Konto ──
@@ -113,7 +109,7 @@ if (LANG === 'ru') {
       'Im Team wird automatisch auf dem Team-Server gesichert.': 'В команде копия автоматически сохраняется на сервере команды.',
       'Noch nicht auf dem Team-Server gesichert': 'Ещё не сохранено на сервере команды',
       'Benutzername: mindestens 3 Zeichen, nur Buchstaben, Ziffern, . - _': 'Имя пользователя: не меньше 3 знаков, только буквы, цифры, . - _',
-      'Passwort: mindestens 6 Zeichen': 'Пароль: не меньше 6 знаков', 'Passwort wiederholen': 'Повторите пароль',
+      'Passwort: mindestens 6 Zeichen': 'Пароль: не меньше 6 знаков',
       'Ohne Passwort lässt sich keine Sicherung öffnen.': 'Без пароля резервную копию не открыть.', 'Wird eingerichtet …': 'Настройка …',
       'Konto erstellt': 'Аккаунт создан', 'Abmelden?': 'Выйти?',
       'Ohne Konto ist das Team gesperrt und Sicherungen sind nicht verschlüsselt.': 'Без аккаунта команда недоступна, а копии не шифруются.',
@@ -135,7 +131,6 @@ if (LANG === 'ru') {
       'Noch keine Zettel von Kollegen': 'Табелей коллег пока нет', 'Zettel der Kollegen sehen': 'Смотреть табели коллег', Du: 'Вы',
       'Deine Zettel des laufenden Monats sind dann für das Team sichtbar.': 'Тогда ваши табели текущего месяца будут видны команде.',
       'Einträge im Team': 'Записи в команде', 'Im Stundenzettel als': 'В табеле как', Person: 'Человек', Personen: 'Человек',
-
       // ── Einstellungen ──
       Sprache: 'Язык', Design: 'Оформление', Hell: 'Светлое', Dunkel: 'Тёмное', Automatisch: 'Автоматически',
       Lohn: 'Зарплата', Stundenlohn: 'Почасовая ставка', 'Stundenlohn in den Einstellungen eintragen': 'Укажите почасовую ставку в настройках',
@@ -146,35 +141,25 @@ if (LANG === 'ru') {
       Bundesland: 'Федеральная земля', Datensicherung: 'Резервная копия', 'Sicherung einlesen': 'Загрузить резервную копию',
       'Sicherung speichern …': 'Сохранить резервную копию …', 'Sicherung verschlüsseln': 'Шифровать резервную копию',
       'Sicherung bereit': 'Резервная копия готова', 'Sicherung nicht möglich': 'Резервное копирование невозможно',
-      'Zum Speichern auf „Teilen“ tippen.': 'Чтобы сохранить, нажмите «Поделиться».', Gesichert: 'Сохранено', 'Noch nicht gesichert': 'Ещё не сохранено',
+      'Zum Speichern auf „Teilen“ tippen.': 'Чтобы сохранить, нажмите «Поделиться».', Gesichert: 'Сохранено',
       'Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.': 'Ваши данные хранятся только на этом iPhone – время от времени делайте резервную копию.',
-      'Passwort für Sicherungen': 'Пароль для резервных копий', Passwort: 'Пароль', 'Passwort ändern': 'Изменить пароль', 'Passwort gespeichert': 'Пароль сохранён',
+      Passwort: 'Пароль', 'Passwort ändern': 'Изменить пароль',
       'Passwort falsch': 'Неверный пароль', 'Mindestens 6 Zeichen.': 'Не менее 6 символов.', 'Die beiden Passwörter sind verschieden.': 'Пароли не совпадают.',
-      'Passwort fehlt – bitte neu festlegen.': 'Нет пароля – задайте его заново.',
-      'Passwort für die Sicherung fehlt – in den Einstellungen neu festlegen.': 'Нет пароля для резервной копии – задайте его заново в настройках.',
-      'Passwort für die Sicherung fehlt – unter Datensicherung neu festlegen.': 'Нет пароля для резервной копии – задайте его заново в разделе «Резервная копия».',
       'Ohne Passwort lässt sich eine Sicherung nicht öffnen – gut aufbewahren, z. B. in den iPhone-Passwörtern.':
         'Без пароля резервную копию не открыть – храните его надёжно, напр. в паролях iPhone.',
-      'Automatisch in Google Drive': 'Автоматически в Google Drive', 'In Google Drive gesichert': 'Сохранено в Google Drive',
-      'Jetzt in Google Drive sichern': 'Сохранить в Google Drive сейчас', 'Sichern …': 'Сохранение …', 'Sichern fehlgeschlagen': 'Не удалось сохранить',
+      'Sichern …': 'Сохранение …',
       'Mit Face ID sperren': 'Блокировать с Face ID', 'Mit Face ID entsperren': 'Разблокировать с Face ID', Entsperren: 'Разблокировать',
       'Face ID eingerichtet': 'Face ID настроен', 'Face ID nicht eingerichtet': 'Face ID не настроен', 'Sperre neu einrichten': 'Настроить блокировку заново',
       'Std-Protokoll ist gesperrt': 'Std-Protokoll заблокирован', 'Nicht entsperrt.': 'Не разблокировано.', 'nicht eingerichtet': 'не настроено',
-      Version: 'Версия', 'Neue Version': 'Новая версия', 'Version ?': 'Версия ?', Anleitung: 'Инструкция', 'Anleitung: Einrichten': 'Инструкция: настройка',
+      Version: 'Версия', 'Version ?': 'Версия ?',
       Meldungen: 'Уведомления', Meldung: 'Уведомление', Mitteilungen: 'Уведомления', 'Mitteilungen nicht erlaubt': 'Уведомления не разрешены',
       'Mitteilungen nur in der App vom Home-Bildschirm.': 'Уведомления только в приложении с экрана «Домой».',
       'Nur in der App vom Home-Bildschirm': 'Только в приложении с экрана «Домой»', 'Einstellungen übernommen': 'Настройки перенесены',
-      'aus den Einstellungen': 'из настроек', 'keine (in den Einstellungen)': 'нет (в настройках)', 'Aus den Einstellungen übernehmen': 'Взять из настроек',
-      'Selbst unterschreiben': 'Подписать самому', 'Unterschrift fehlt': 'Нет подписи', 'Unterschreiben …': 'Подписать …', Ort: 'Место', 'Ort fehlt': 'Нет места', 'Ort:': 'Место:', 'Name:': 'Имя:', 'Ort, Datum': 'Место, дата',
-      'Ort, Unterschrift': 'Место, подпись', Straße: 'Улица', Wohnort: 'Место жительства', Vorname: 'Имя', 'Geboren am': 'Дата рождения',
-      Erweitert: 'Дополнительно',
-
+      'aus den Einstellungen': 'из настроек',
+      'Unterschrift fehlt': 'Нет подписи', 'Unterschreiben …': 'Подписать …', Ort: 'Место', 'Ort fehlt': 'Нет места', 'Ort:': 'Место:', 'Name:': 'Имя:', 'Ort, Datum': 'Место, дата',
+      Straße: 'Улица', Wohnort: 'Место жительства', Vorname: 'Имя', 'Geboren am': 'Дата рождения',
       // ── Bundesländer ──
-      'Baden-Württemberg': 'Баден-Вюртемберг', Bayern: 'Бавария', Berlin: 'Берлин', Brandenburg: 'Бранденбург', Bremen: 'Бремен',
-      Hamburg: 'Гамбург', Hessen: 'Гессен', 'Mecklenburg-Vorpommern': 'Мекленбург-Передняя Померания', Niedersachsen: 'Нижняя Саксония',
-      'Nordrhein-Westfalen': 'Северный Рейн-Вестфалия', 'Rheinland-Pfalz': 'Рейнланд-Пфальц', Saarland: 'Саар', Sachsen: 'Саксония',
-      'Sachsen-Anhalt': 'Саксония-Анхальт', 'Schleswig-Holstein': 'Шлезвиг-Гольштейн', Thüringen: 'Тюрингия',
-
+      Niedersachsen: 'Нижняя Саксония',
       // ── Feiertage ──
       Neujahr: 'Новый год', 'Heilige Drei Könige': 'Крещение (Богоявление)', 'Internationaler Frauentag': 'Международный женский день',
       Karfreitag: 'Страстная пятница', Ostersonntag: 'Пасха', Ostermontag: 'Пасхальный понедельник', 'Tag der Arbeit': 'День труда',
@@ -182,10 +167,9 @@ if (LANG === 'ru') {
       'Mariä Himmelfahrt': 'Успение Богородицы', Weltkindertag: 'Всемирный день ребёнка', 'Tag der Deutschen Einheit': 'День германского единства',
       Reformationstag: 'День Реформации', Allerheiligen: 'День всех святых', 'Buß- und Bettag': 'День покаяния и молитвы',
       '1. Weihnachtstag': 'Рождество', '2. Weihnachtstag': 'Второй день Рождества',
-
       // ── Lohnabrechnung ──
       Lohnabrechnung: 'Расчётный лист', Abrechnung: 'Расчёт', Abrechnungen: 'Расчёты', 'Noch keine Lohnabrechnung': 'Расчётных листов пока нет',
-      'Noch keine Abrechnung': 'Расчётов пока нет', 'Lohnabrechnung einlesen …': 'Загрузить расчётный лист …', 'Lohnabrechnung wird gelesen …': 'Расчётный лист читается …',
+      'Lohnabrechnung einlesen …': 'Загрузить расчётный лист …', 'Lohnabrechnung wird gelesen …': 'Расчётный лист читается …',
       'Lohnabrechnung löschen': 'Удалить расчётный лист', 'Abrechnung löschen': 'Удалить расчёт', 'Abrechnung löschen?': 'Удалить расчёт?',
       'Lohnabrechnung im Vergleich': 'Сравнение с расчётным листом', 'Foto der Abrechnung – sie wird mit deinen Zetteln verglichen.': 'Фото расчётного листа – он сравнивается с вашими табелями.',
       'Auf dem Foto wurde keine Lohnabrechnung erkannt.': 'На фото не распознан расчётный лист.', 'Das Jahr war auf dem Foto nicht lesbar.': 'Год на фото не читается.',
@@ -199,38 +183,33 @@ if (LANG === 'ru') {
       Zulagen: 'Надбавки', 'Weitere Netto-Be-/Abzüge': 'Прочие начисления/удержания нетто', 'Weitere Netto-Be-/Abzüge (+/−)': 'Прочие начисления/удержания нетто (+/−)',
       '± weitere Be-/Abzüge': '± прочие начисления/удержания', 'Netto − Abschlag − Betriebsrente': 'Нетто − аванс − пенсия от работодателя',
       Gesamtsumme: 'Общая сумма', 'Lohnarten ergeben das Gesamt-Brutto': 'Виды оплаты дают общее брутто', 'Abrechnung stimmt': 'Расчёт сходится',
-      'Stunden und Netto stimmen': 'Часы и нетто сходятся', 'Std. stimmen insgesamt': 'Часы в целом сходятся', 'Std. und Netto stimmen insgesamt': 'Часы и нетто в целом сходятся',
-      'Stimmt – Stunden teils anders verbucht': 'Сходится – часы частично учтены иначе', 'Überstunden falsch verbucht': 'Переработка учтена неверно',
+      'Std. stimmen insgesamt': 'Часы в целом сходятся', 'Std. und Netto stimmen insgesamt': 'Часы и нетто в целом сходятся',
+      'Überstunden falsch verbucht': 'Переработка учтена неверно',
       'Gesamtstunden stimmen': 'Общее число часов сходится', 'Abrechnungen fehlen': 'Нет расчётов', 'Mit den Stunden der Abrechnung rechnet die App dasselbe Netto.':
         'С часами из расчёта приложение получает то же нетто.', 'Netto anders.': 'нетто другое.', Steuertarif: 'Налоговая шкала', '(wie Jahr)': '(как год)',
       'Krankheit (Entgeltfortzahlung)': 'Болезнь (сохранение оплаты)', 'Monate in diesem Vergleich:': 'Месяцы в этом сравнении:',
       'Pauschale': 'Паушальная сумма', Pauschalen: 'Паушальные суммы',
-
       // ── Reisekosten ──
       Reisekosten: 'Командировочные', Reisekostenabrechnung: 'Отчёт о командировке', 'Neue Reisekostenabrechnung': 'Новый отчёт о командировке',
-      'Noch keine Reisekostenabrechnung': 'Отчётов о командировках пока нет', 'Reisekostenabrechnung öffnen': 'Открыть отчёт о командировке',
-      'Tippe unten auf „Neue Reisekostenabrechnung“ und wähle eine Woche.': 'Нажмите внизу «Новый отчёт о командировке» и выберите неделю.',
+      'Reisekostenabrechnung öffnen': 'Открыть отчёт о командировке',
       Reiseanlass: 'Цель поездки', Reisebeginn: 'Начало поездки', Reiseende: 'Конец поездки', Reiseorte: 'Места поездки', 'Reiseorte (Baustellen)': 'Места поездки (объекты)',
       Reisetage: 'Дни поездки', 'Reisetage antippen.': 'Отметьте дни поездки.', 'Bitte zuerst die Reisetage antippen': 'Сначала отметьте дни поездки',
-      'Danach tippst du die Reisetage an.': 'Затем отметьте дни поездки.', Verpflegung: 'Суточные', Fahrstrecke: 'Маршрут',
+      Verpflegung: 'Суточные', Fahrstrecke: 'Маршрут',
       'Wurde die Abrechnung gesendet?': 'Отчёт отправлен?', 'Dann wird sie als gesendet markiert.': 'Тогда он будет отмечен как отправленный.',
-      'Steht unten auf der Reisekostenabrechnung.': 'Стоит внизу отчёта о командировке.', 'Vor Ort': 'На месте', 'z. B. Firmensitz': 'напр. офис фирмы',
+      'Vor Ort': 'На месте', 'z. B. Firmensitz': 'напр. офис фирмы',
       'Deine Änderungen an Uhrzeiten, Reiseanlass und Verpflegung werden verworfen.': 'Ваши изменения времени, цели поездки и суточных будут отменены.',
       'Neu aus Stundenzettel übernehmen': 'Заново взять из табеля', 'Neu übernehmen?': 'Взять заново?', 'Reisekostenabrechnung doppelt': 'Отчёт о командировке дважды',
       'Reisekostenabrechnung mehrfach': 'Отчёт о командировке несколько раз',
-
       // ── Arbeitsscheine ──
       Arbeitsschein: 'Наряд', Arbeitsscheine: 'Наряды', 'Alle Arbeitsscheine': 'Все наряды', 'Noch keine Arbeitsscheine': 'Нарядов пока нет',
       'Arbeitsschein löschen': 'Удалить наряд', 'Arbeitsschein löschen?': 'Удалить наряд?', 'Keine neuen Arbeitsscheine': 'Новых нарядов нет',
-      'Arbeitsscheine jetzt abholen': 'Получить наряды сейчас', 'Jetzt abholen': 'Получить сейчас', 'Abholen fehlgeschlagen': 'Не удалось получить',
-      Abholadresse: 'Адрес получения', 'Abholadresse kopiert': 'Адрес получения скопирован', 'Abholadresse übernommen': 'Адрес получения перенесён',
-      'Fertige Abholadresse kopieren': 'Скопировать готовый адрес получения', 'Link einfügen': 'Вставить ссылку', 'Adresse fehlt': 'Нет адреса',
-      'Schlüssel in der Abholadresse falsch': 'Неверный ключ в адресе получения', 'Google-Skript noch nicht aktualisiert': 'Скрипт Google ещё не обновлён',
+      'Jetzt abholen': 'Получить сейчас', 'Abholen fehlgeschlagen': 'Не удалось получить',
+      Abholadresse: 'Адрес получения',
+      'Link einfügen': 'Вставить ссылку',
+      'Schlüssel in der Abholadresse falsch': 'Неверный ключ в адресе получения',
       'Kein Stundenzettel für diesen Tag': 'На этот день нет табеля', 'Im Stundenzettel kein Eintrag': 'В табеле нет записи', 'kein Arbeitsschein': 'нет наряда',
-      'keine Zeiten im Arbeitsschein': 'в наряде нет времени', 'Die App holt neue Scheine beim Öffnen und beim Öffnen eines Zettels.':
-        'Приложение получает новые наряды при запуске и при открытии табеля.',
+      'keine Zeiten im Arbeitsschein': 'в наряде нет времени',
       'Betreff kopiert – in Mail bei „Betreff“ einsetzen': 'Тема скопирована – вставьте в письмо в поле «Тема»',
-
       // ── Einlesen, Konflikte ──
       'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Datum prüfen': 'Проверьте дату', 'Wahrscheinlich gemeint': 'Скорее всего', 'Weniger wahrscheinlich': 'Менее вероятно', 'nicht eingelesen': 'не загружено', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
       'Einlesen nicht möglich': 'Загрузка невозможна', 'Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.': 'Можно загружать и табели Numbers или PDF, а также наряды.',
@@ -243,7 +222,6 @@ if (LANG === 'ru') {
       'schon vorhanden, mit Unterschieden': 'уже есть, с отличиями', '(schon vorhanden)': '(уже есть)', Datei: 'Файл', 'eben eingelesen': 'только что загружено',
       'ist verschlüsselt.': 'зашифрован.', 'nur Numbers-, PDF- oder Sicherungsdateien': 'только файлы Numbers, PDF или резервные копии',
       'Kein Eintrag': 'Нет записи', 'Noch nicht eingetragen': 'Ещё не внесено', 'Schon eingetragen': 'Уже внесено', 'Eingetragen': 'Внесено', 'Übernommen': 'Перенесено', 'Ganzen Tag übernehmen': 'Перенести весь день', 'Eintrag übernommen': 'Запись перенесена',
-
       // ── Berichtsheft ──
       Berichtsheft: 'Дневник обучения', 'Neues Berichtsheft': 'Новый дневник обучения', 'Noch kein Berichtsheft': 'Дневника обучения пока нет',
       'Berichtsheft senden': 'Отправить дневник', 'Berichtsheft löschen': 'Удалить дневник', 'Wochen und Monate als PDF': 'Недели и месяцы в PDF',
@@ -268,27 +246,15 @@ if (LANG === 'ru') {
       'Das Ausbildungsjahr beginnt am': 'Учебный год начинается', Deckblatt: 'Обложка', Vorblatt: 'Титульный лист', Bericht: 'Отчёт',
       Ausbildungsnachweis: 'Подтверждение обучения', 'Ausbildungsbeginn fehlt': 'Нет начала обучения', offen: 'открыто', unterschrieben: 'подписано', abgezeichnet: 'подписано наставником',
       Zeile: 'Строка', Std: 'ч',
-
       // ── Anleitung (Google-Skript) ──
-      'Arbeitsscheine kommen von selbst in die App, und die App sichert sich täglich in dein Google Drive. Einmal einrichten, am besten am Computer.':
-        'Наряды сами приходят в приложение, а приложение ежедневно сохраняет копию в ваш Google Drive. Настроить один раз, лучше на компьютере.',
-      '1 · Google-Skript anlegen': '1 · Создать скрипт Google', '2 · Adresse in die App': '2 · Адрес в приложение', '3 · Testen': '3 · Проверка',
-      '4 · Arbeitsscheine schicken': '4 · Отправка нарядов', 'Skript später ändern': 'Изменить скрипт позже', 'App neu installiert?': 'Приложение переустановлено?',
-      'Code kopieren': 'Скопировать код', 'Code kopiert': 'Код скопирован', 'Der Code enthält deinen Schlüssel – nicht weitergeben.': 'Код содержит ваш ключ – не передавайте его.',
-      'Web-App-URL einfügen': 'Вставить URL веб-приложения', 'Web-App-URL': 'URL веб-приложения', 'In dieser App übernehmen': 'Применить в этом приложении',
-      'Bitte die Web-App-URL aus Schritt 7 einfügen. Sie endet auf „/exec“.': 'Вставьте URL веб-приложения из шага 7. Он заканчивается на «/exec».',
-      'Am Computer: fertige Adresse kopieren und am iPhone unter Optionen → Abholadresse einfügen.': 'На компьютере: скопируйте готовый адрес и вставьте на iPhone в «Настройки → Адрес получения».',
-      'In Drive erscheint der Ordner „Std-Protokoll-Sicherungen“.': 'В Drive появится папка «Std-Protokoll-Sicherungen».',
-      '„Unsicher“ heißt nur: Google hat dein eigenes Skript nicht geprüft. Eine Fehlermeldung danach ist normal.':
-        '«Небезопасно» значит только: Google не проверял ваш собственный скрипт. Сообщение об ошибке после этого – это нормально.',
-      'Neuen Code einfügen und speichern': 'Вставить новый код и сохранить', 'Beim Senden des Arbeitsberichts die Gmail-Adresse dieses Google-Kontos ins Feld':
-        'При отправке отчёта о работе укажите адрес Gmail этого аккаунта Google в поле',
+
+
 
       // ── Server-Seite, Wörterbuch ──
       Server: 'Сервер', Antwortzeit: 'Время ответа', Speicher: 'Память', Fehlerberichte: 'Отчёты об ошибках', 'Keine Fehler': 'Ошибок нет',
       Codestelle: 'Место в коде', Datenbank: 'База данных', Wörterbuch: 'Словарь', 'Richtige Schreibweise': 'Правильное написание',
       Anfragen: 'Запросы', Gelesen: 'Прочитано', Geschrieben: 'Записано', KI: 'ИИ', 'Löschung am': 'Удаление',
-      'Team-Code': 'Код команды', 'Neuer Team-Code': 'Новый код команды', 
+      'Team-Code': 'Код команды', 'Neuer Team-Code': 'Новый код команды',
       'Alle müssen danach den neuen Code eingeben.': 'Потом всем нужно ввести новый код.', 'Mindestens 6 Zeichen, ohne Leerzeichen': 'Минимум 6 символов, без пробелов',
       'Das ist der Admin-Code': 'Это код администратора', statt: 'вместо', 'ohne Konto': 'без аккаунта', 'nicht im Team': 'не в команде', 'keine Sicherung': 'нет копии',
       'Aus dem Team entfernen': 'Удалить из команды', 'Ins Wörterbuch': 'В словарь', Ändern: 'Изменить',
@@ -374,25 +340,17 @@ if (LANG === 'ru') {
     exact: {
       'Der Vergleich zählt nur vollständige Monate mit Stundenzetteln und Lohnabrechnung. Unter „Nach Stundenzetteln“ zählen Überstunden und Lohn nur vollständige Monate.':
         'Сравнение учитывает только полные месяцы с табелями и расчётным листом. В разделе «По табелям» переработка и зарплата учитываются только за полные месяцы.',
-      Korrektur: 'Исправление', Unterschrift: 'Подпись', 'Korrektur an': 'исправление вкл.', 'Vorschläge über der Tastatur': 'Подсказки над клавиатурой', Warnzeichen: 'Предупреждения', 'alles an': 'всё вкл.', 'Korrektur aus': 'исправление выкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
+      Korrektur: 'Исправление', Unterschrift: 'Подпись', 'Vorschläge über der Tastatur': 'Подсказки над клавиатурой', Warnzeichen: 'Предупреждения', 'alles an': 'всё вкл.', 'Pause fehlt': 'нет перерыва', 'kein Eintrag': 'нет записи', Datum: 'Дата', Mit: 'С кем', 'Eintragen als': 'Внести как', Abschluss: 'Завершение', 'Nicht mehr verfügbar': 'Больше недоступно',
       Seite: 'Страница', Seiten: 'Страницы', 'Mit den Stunden der Abrechnung rechnet die App dasselbe Netto.': 'С часами из расчёта приложение получает то же нетто.',
       netto: 'нетто', davon: 'из них', 'von Hand': 'вручную', verschlüsselt: 'зашифровано', '5 oder mehr': '5 или больше',
       'Sicherung einlesen …': 'Загрузить резервную копию …', 'Ur.': 'Отп.', 'Kr.': 'Бол.', 'Fe.': 'Пр.', 'Fr.': 'Вых.',
       // Anleitung (Knöpfe wie auf der russischen Google-Seite)
-      'App neu installiert?': 'Приложение переустановлено?',
-      'Nicht neu einrichten – erst die neueste Sicherung aus Drive (Ordner „Std-Protokoll-Sicherungen“) unter Optionen →':
-        'Не настраивайте заново – сначала загрузите последнюю копию из Drive (папка «Std-Protokoll-Sicherungen») в «Настройки →',
-      '(bei verschlüsselter Sicherung mit deinem Passwort). Dann läuft alles wieder.': '» (для зашифрованной копии – с вашим паролем). Тогда всё снова заработает.',
-      'öffnen und mit dem Google-Konto anmelden, in dem die Arbeitsscheine ankommen. Dann': 'откройте и войдите в аккаунт Google, на который приходят наряды. Затем',
-      'Neues Projekt': 'Новый проект', 'Code kopieren, im Editor alles markieren und ersetzen:': 'Скопируйте код, в редакторе выделите всё и замените:',
-      'Oben links auf „Unbenanntes Projekt“ tippen,': 'Слева вверху нажмите «Проект без названия»,', 'nennen. Dann speichern': 'назовите. Затем сохраните',
-      Daneben: 'Рядом', auswählen: 'выберите', Ausführen: 'Выполнить', und: 'и', 'Google fragt nach Erlaubnis:': 'Google запросит разрешение:',
-      'Berechtigungen prüfen': 'Проверить разрешения', '→ dein Konto →': '→ ваш аккаунт →', Erweitert: 'Дополнительные настройки',
-      'Std-Protokoll öffnen (unsicher)': 'Перейти на страницу «Std-Protokoll» (небезопасно)', 'Alle auswählen': 'Выбрать все', Weiter: 'Далее',
-      'Oben rechts': 'Справа вверху', Bereitstellen: 'Начать развертывание', 'Neue Bereitstellung': 'Новое развертывание', '→ Zahnrad': '→ шестерёнка',
-      'Web-App': 'Веб-приложение', 'Einstellen:': 'Настройте:', 'Ausführen als: Ich': 'Запуск от имени: Я', 'Zugriff: Jeder': 'Доступ: Все',
-      '. Dann': '. Затем', Bei: 'В поле', auf: 'нажмите', 'tippen.': '.', 'schreiben.': '.', 'Bereitstellungen verwalten': 'Управление развертываниями',
-      '→ Stift': '→ карандаш', '. Die Adresse bleibt gleich.': '. Адрес остаётся прежним.', 'Neue Version': 'Новая версия',
+
+      auswählen: 'выберите', und: 'и',
+      Weiter: 'Далее',
+      '→ Zahnrad': '→ шестерёнка',
+      'Web-App': 'Веб-приложение',
+      '. Dann': '. Затем', Bei: 'В поле', auf: 'нажмите', 'tippen.': '.', 'schreiben.': '.',
     },
     parts: { Unterschrift: 'подпись', heute: 'сегодня', verschlüsselt: 'зашифровано', 'von Hand': 'вручную', 'ohne Eintrag': 'без записи', 'liegt vor Beginn': 'раньше начала', 'Ende': 'Конец', 'Beginn': 'Начало', 'Art der Arbeit': 'Вид работ', Baustelle: 'Объект', Montag: 'Понедельник', Dienstag: 'Вторник', Mittwoch: 'Среда', Donnerstag: 'Четверг', Freitag: 'Пятница', Samstag: 'Суббота', Sonntag: 'Воскресенье' },
     patterns: [
