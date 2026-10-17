@@ -18,9 +18,9 @@ async function inflate(bytes, format) {
 }
 
 const WEEKDAY_KEYS = ['montag', 'dienstag', 'mittwoch', 'donnerstag', 'freitag', 'samstag', 'sonntag'];
-/** „Dienstag “, „Di“, „DIENSTAG“ → 1; sonst -1 */
+/** „Dienstag “, „Di“, „DIENSTAG“, „Mo 05.01.“ → Wochentag 0–6 (erstes Wort); sonst -1 */
 function weekdayIndex(text) {
-  const t = String(text || '').trim().toLowerCase();
+  const t = String(text || '').trim().toLowerCase().split(/[\s,]+/)[0];
   if (!t) return -1;
   const i = WEEKDAY_KEYS.findIndex((k) => t === k || t.startsWith(k));
   if (i >= 0) return i;
@@ -118,7 +118,9 @@ function columnKind(text) {
   return null;
 }
 
-const STOP_WORDS = /stunden\s*gesamt|überstunden|summe|^stunden:$/i;
+// Summenzeilen unter der Tabelle: nur ganze Zellen („Überstunden“, „Stunden Gesamt: 40,00 h“), damit Einträge wie
+// „Überstundenfrei“ oder „Überstunden abbauen“ die Tabelle nicht beenden
+const STOP_WORDS = /^(stunden\s*gesamt|überstunden|summe)\b[^a-zäöüß]*(h|std\.?)?$|^stunden:$/i;
 
 // ───────────────────────── ZIP ─────────────────────────
 
@@ -165,6 +167,7 @@ function snappyDecompress(src) {
   let len = 0;
   let shift = 0;
   for (;;) {
+    if (i >= src.length) throw new Error('Datei beschädigt');
     const b = src[i++];
     len |= (b & 0x7f) << shift;
     shift += 7;
@@ -233,6 +236,7 @@ function readVarint(b, pos) {
   let n = 0;
   let mul = 1;
   for (;;) {
+    if (pos.i >= b.length) throw new Error('Datei beschädigt'); // sonst Endlosschleife bei abgeschnittenen Daten
     const x = b[pos.i++];
     n += (x & 0x7f) * mul;
     mul *= 128;
@@ -310,7 +314,11 @@ function dataList(objects, id) {
     const ef = pbParse(e);
     const s = pbGet(ef, 3);
     const r = pbGet(ef, 4);
-    out.set(pbGet(ef, 1), s ? utf8.decode(s) : r ? { ref: pbRef(r) } : null);
+    // Formatierter Text (Zelltyp 9): Feld 9 zeigt auf die Nutzlast (Typ 6218), deren Feld 1 auf den Text-Speicher
+    const payload = pbGet(ef, 9) && objects.get(pbRef(pbGet(ef, 9)));
+    const storage = payload && pbGet(pbParse(payload.data), 1);
+    const ref = storage ? pbRef(storage) : r ? pbRef(r) : null;
+    out.set(pbGet(ef, 1), s ? utf8.decode(s) : ref != null ? { ref } : null);
   }
   return out;
 }
@@ -406,6 +414,12 @@ function cellClock(c) {
   if (c.duration != null) return Math.round(c.duration / 60) % 1441;
   if (c.text) return parseClock(c.text);
   if (c.number != null && c.number < 1) return Math.round(c.number * 1440); // Bruchteil eines Tages
+  if (c.number != null && c.number <= 24) {
+    // Als Zahl getippt: „7“, „7,30“ (= 7:30), „7,5“ (= 7½ Stunden)
+    const h = Math.floor(c.number);
+    const f = Math.round((c.number - h) * 100);
+    return h * 60 + ([25, 50, 75].includes(f) || f >= 60 ? Math.round((c.number - h) * 60) : f);
+  }
   return null;
 }
 function cellPause(c) {
@@ -445,6 +459,10 @@ function gridToParsed(grid) {
       kinds.forEach((k, ci) => {
         if (k && cols[k] == null) cols[k] = ci;
       });
+      // „Datum“ und „Tag“ nebeneinander: der Wochentag steht unter „Tag“, unter „Datum“ oft ein echtes Datum
+      const head = grid[r].map((c) => cellText(c).toLowerCase());
+      if (head.includes('tag')) cols.day = head.indexOf('tag');
+      if (head.includes('datum')) cols.date = head.indexOf('datum');
     }
   }
   if (header < 0) throw new Error('Keine Tabelle mit „Tag“ und „Arbeitsbeginn“ gefunden');
@@ -453,7 +471,9 @@ function gridToParsed(grid) {
   for (let r = header + 1; r < grid.length; r++) {
     const row = grid[r];
     if (row.some((c) => STOP_WORDS.test(cellText(c)))) break;
-    const day = cols.day != null ? weekdayIndex(cellText(row[cols.day])) : -1;
+    let day = cols.day != null ? weekdayIndex(cellText(row[cols.day])) : -1;
+    const date = day < 0 && cols.date != null ? cellDateValue(row[cols.date]) : null;
+    if (date) day = (date.getDay() + 6) % 7;
     if (day >= 0) {
       if (current) finishDay(current);
       current = { day, rows: [], pause: null, status: null, texts: [] };
@@ -519,7 +539,8 @@ async function pdfStream(objText, bytesOf, objects) {
 // MacRoman 0x80–0xFF
 const MAC_ROMAN =
   'ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»… ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ';
-const WIN_ANSI_HIGH = { 0x80: '€', 0x82: '‚', 0x84: '„', 0x85: '…', 0x91: '‘', 0x92: '’', 0x93: '“', 0x94: '”', 0x96: '–', 0x97: '—' };
+// WinAnsi 0x80–0x9F: Umkehrung der Tabelle, mit der pdf.js schreibt (š, ž, •, ™ …)
+const WIN_ANSI_HIGH = Object.fromEntries(Object.entries(WIN_ANSI).map(([u, c]) => [c, String.fromCodePoint(Number(u))]));
 
 function parseToUnicode(cmap) {
   const map = new Map();
@@ -658,6 +679,9 @@ async function readPdfItems(buf) {
   let wordSpace = 0;
   let hScale = 1;
   const operands = [];
+  // Gefüllte Rechtecke (von oben links): im PDF der App je Tag eine graue Fläche in der Spalte „Tag“
+  const rects = [];
+  let pendingRects = [];
   const show = (codes) => {
     if (!font) return;
     let str = '';
@@ -687,6 +711,23 @@ async function readPdfItems(buf) {
         break;
       case 'cm':
         ctm = mul([num(6), num(5), num(4), num(3), num(2), num(1)], ctm);
+        break;
+      case 're': {
+        const [x0, y0, x1, y1] = [[num(4), num(3)], [num(4) + num(2), num(3) + num(1)]].flatMap(([x, y]) => [x * ctm[0] + y * ctm[2] + ctm[4], x * ctm[1] + y * ctm[3] + ctm[5]]);
+        pendingRects.push({ x: Math.min(x0, x1), w: Math.abs(x1 - x0), top: pageH - Math.max(y0, y1), h: Math.abs(y1 - y0) });
+        break;
+      }
+      case 'f':
+      case 'F':
+      case 'f*':
+      case 'B':
+      case 'B*':
+        rects.push(...pendingRects);
+        pendingRects = [];
+        break;
+      case 'n':
+      case 'S':
+        pendingRects = []; // Umriss oder Beschneidung (W n), keine Fläche
         break;
       case 'BT':
         tm = [1, 0, 0, 1, 0, 0];
@@ -758,7 +799,9 @@ async function readPdfItems(buf) {
     } else merged.push({ ...it });
   }
   // Ligaturen wie „ﬂ“ und „ﬀ“ in normale Buchstaben zerlegen
-  return merged.filter((it) => it.text.trim()).map((it) => ({ ...it, text: it.text.replace(/[\uFB00-\uFB06]/g, (c) => c.normalize('NFKC')).trim() }));
+  const out = merged.filter((it) => it.text.trim()).map((it) => ({ ...it, text: it.text.replace(/[\uFB00-\uFB06]/g, (c) => c.normalize('NFKC')).trim() }));
+  out.rects = rects;
+  return out;
 }
 
 /** PDF-Texte → Zwischenformat */
@@ -773,16 +816,6 @@ function pdfItemsToParsed(items) {
   }
   lines.forEach((l) => l.items.sort((a, b) => a.x - b.x));
 
-  // Kopf
-  for (const l of lines) {
-    l.items.forEach((it, i) => {
-      const t = it.text.toLowerCase();
-      const next = l.items[i + 1];
-      if (/^name:?$/.test(t) && next) result.name = l.items.slice(i + 1).filter((x) => !/:$/.test(x.text)).map((x) => x.text).join(' ').trim();
-      else if (/^woche\s*von:?$/.test(t) && next) result.from = parseDateText(next.text);
-      else if (/^bis:?$/.test(t) && next) result.to = parseDateText(next.text);
-    });
-  }
   const isHeader = (l) => {
     const kinds = l.items.map((it) => columnKind(it.text));
     return kinds.includes('day') && kinds.includes('start');
@@ -797,12 +830,32 @@ function pdfItemsToParsed(items) {
     }),
   });
   let headerLine = null;
+  let headerTop = 0;
   for (let i = 0; i < lines.length && !headerLine; i++) {
     const next = lines[i + 1];
     if (isHeader(lines[i])) headerLine = lines[i];
     else if (next && next.y - lines[i].y < 14 && isHeader(joinHeader(lines[i], next))) headerLine = joinHeader(lines[i], next);
+    headerTop = lines[i].y;
   }
   if (!headerLine) throw new Error('Keine Tabelle mit „Tag“ und „Arbeitsbeginn“ gefunden');
+  // Kopf: nur über der Tabelle (sonst träfe „Bis“ als Spaltenüberschrift); Wert ist das nächste Feld bis zur nächsten Bezeichnung
+  const isLabel = (t) => /:$/.test(t) || /^(name|woche\s*von|von|bis)$/i.test(t);
+  for (const l of lines.filter((x) => x.y < headerTop - 1)) {
+    l.items.forEach((it, i) => {
+      const t = it.text.toLowerCase();
+      const next = l.items[i + 1];
+      if (!next || isLabel(next.text)) return;
+      if (/^name:?$/.test(t)) {
+        const rest = [];
+        for (const x of l.items.slice(i + 1)) {
+          if (isLabel(x.text)) break;
+          rest.push(x.text);
+        }
+        result.name = rest.join(' ').trim();
+      } else if (/^(woche\s*)?von:?$/.test(t)) result.from = parseDateText(next.text) || result.from;
+      else if (/^bis:?$/.test(t)) result.to = parseDateText(next.text) || result.to;
+    });
+  }
   // Spalten beginnen dort, wo ihre Überschrift steht (alle Überschriften, auch unbekannte wie „Stunden“)
   const cols = headerLine.items.map((it) => ({ x: it.x, kind: columnKind(it.text) })).sort((a, b) => a.x - b.x);
   const kindAt = (x) => {
@@ -824,22 +877,38 @@ function pdfItemsToParsed(items) {
   for (let i = rows.length - 2; i >= 0; i--) {
     const a = rows[i];
     const b = rows[i + 1];
-    if (a.day || a.start || a.end || a.pause || !(a.site || a.work) || !(b.start || b.end) || b.y - a.y >= 6) continue;
+    if (a.start || a.end || a.pause || !(a.site || a.work) || !(b.start || b.end) || b.y - a.y >= 6) continue;
     for (const k of ['site', 'work']) if (a[k]) b[k] = b[k] ? `${a[k]} ${b[k]}` : a[k];
     b.all = [...a.all, ...b.all];
-    rows.splice(i, 1);
+    // Wochentag in derselben Zeile (kleiner gesetzt, z. B. „Donnerstag“): bleibt als eigene Zeile stehen
+    if (a.day) {
+      a.site = a.work = '';
+      a.all = [];
+    } else rows.splice(i, 1);
   }
   // Tage: Beschriftungen in der Spalte „Tag“; stehen sie mittig im Block, liegen die Grenzen dazwischen
   const labels = rows.filter((r) => r.day && weekdayIndex(r.day) >= 0).map((r) => ({ y: r.y, day: weekdayIndex(r.day) }));
   if (!labels.length) throw new Error('Keine Wochentage gefunden');
-  const firstContent = rows.find((r) => r.start || r.end || r.site || r.work);
-  const centered = firstContent && firstContent.y < labels[0].y - 3;
+  // Am genauesten: je Tag eine Fläche in der Spalte „Tag“ (PDF der App), lückenlos untereinander
+  const dayCol = cols.find((c) => c.kind === 'day');
+  const cells = labels.map(
+    (l) =>
+      (items.rects || [])
+        .filter((r) => dayCol && r.x <= dayCol.x + 1 && r.x + r.w > dayCol.x + 1 && r.top <= l.y - 1 && r.top + r.h >= l.y)
+        .sort((a, b) => a.h - b.h)[0]
+  );
+  const tiled = cells.every((c, i) => c && (i === 0 || Math.abs(cells[i - 1].top + cells[i - 1].h - c.top) < 1.5));
+  // Sonst aus der Lage der Beschriftungen: steht die erste Zeile mit Uhrzeiten über dem ersten Tag, stehen sie mittig
+  const firstTimed = rows.find((r) => r.start || r.end);
+  const centered = firstTimed && firstTimed.y < labels[0].y - 3;
   const bounds = labels.map((l, i) => {
     const next = labels[i + 1];
+    const prev = labels[i - 1];
+    if (tiled) return { day: l.day, top: cells[i].top, bottom: next ? cells[i + 1].top : cells[i].top + cells[i].h + 1 };
     if (centered) {
-      const prev = labels[i - 1];
+      // Grenzen in der Mitte zwischen zwei Beschriftungen, ohne Lücke zum Vortag
       const half = next ? (next.y - l.y) / 2 : prev ? (l.y - prev.y) / 2 : Infinity;
-      return { day: l.day, top: l.y - half, bottom: next ? (l.y + next.y) / 2 : l.y + half };
+      return { day: l.day, top: prev ? (prev.y + l.y) / 2 : l.y - half, bottom: next ? (l.y + next.y) / 2 : l.y + half };
     }
     return { day: l.day, top: l.y - 3, bottom: next ? next.y - 3 : Infinity };
   });
@@ -875,28 +944,31 @@ function pdfItemsToParsed(items) {
 const dateFromFileName = (name) => parseDateText(name);
 
 /** Wochenzettel beginnen montags. Ist „Woche von“ bei einer ganzen Woche (bis = von + 6 Tage) kein Montag, ist meist das
- *  Jahr („13.04.2025“ statt 2026) oder der Monat („05.01.24“ statt 05.02.24) vertippt: dann das Jahr aus dem Dateinamen,
- *  sonst unter Nachbarjahr und Nachbarmonat der Montag, der am wenigsten vom Zettel abweicht */
+ *  Jahr („13.04.2025“ statt 2026) oder der Monat („05.01.24“ statt 05.02.24) vertippt. Ergebnis: bis zu zwei Montage zur Wahl,
+ *  der wahrscheinlichste zuerst – das Datum aus dem Dateinamen, wenn es ein Montag ist, sonst unter Jahr aus dem Dateinamen,
+ *  Nachbarjahr und Nachbarmonat die, die am wenigsten vom Zettel abweichen (beide anbieten: über einen 29. Februar
+ *  hinweg ist auch der Nachbarmonat ein Montag). Leer: nichts zu korrigieren */
 function fixWeekYear(parsed, fileName) {
   const from = parsed.from;
-  if (!from || from.getDay() === 1 || !parsed.to || Math.round((parsed.to - from) / 864e5) !== 6) return from;
+  if (!from || from.getDay() === 1 || !parsed.to || Math.round((parsed.to - from) / 864e5) !== 6) return [];
   const y = from.getFullYear();
   const m = from.getMonth();
   const day = from.getDate();
   const named = dateFromFileName(fileName);
-  if (named) {
-    const d = new Date(named.getFullYear(), m, day);
-    if (d.getDay() === 1) return d;
-  }
+  const first = named && named.getDay() === 1 ? [named] : [];
   const options = [
+    ...(named ? [new Date(named.getFullYear(), m, day)] : []),
     new Date(y + 1, m, day),
     new Date(y - 1, m, day),
     new Date(y, m + 1, day),
     new Date(y, m - 1, day),
     new Date(new Date().getFullYear(), m, day),
-  ].filter((d) => d.getDay() === 1 && d.getDate() === day);
-  if (!options.length) return from;
-  return options.sort((a, b) => Math.abs(a - from) - Math.abs(b - from))[0];
+  ]
+    .filter((d) => d.getDay() === 1 && d.getDate() === day)
+    .sort((a, b) => Math.abs(a - from) - Math.abs(b - from));
+  const out = [];
+  for (const d of [...first, ...options]) if (out.length < 2 && !out.some((x) => +x === +d)) out.push(d);
+  return out;
 }
 
 /**
@@ -908,8 +980,8 @@ function parsedToSheets(parsed, fileName, chosen) {
   const from = chosen || parsed.from;
   const anchor = from || dateFromFileName(fileName);
   if (!anchor) throw new Error('Kein Datum („Woche von“) gefunden');
-  // Datum geändert (Vorschlag bestätigt): in der Rückmeldung nennen
-  const yearFixed = from && from !== parsed.from ? fmtShort(parsed.from) : '';
+  // Datum geändert (Vorschlag bestätigt, nicht nur die Woche des Zettels): in der Rückmeldung nennen
+  const yearFixed = from && parsed.from && isoDate(mondayOf(from)) !== isoDate(mondayOf(parsed.from)) ? fmtShort(parsed.from) : '';
   // Eigener Name aus den Einstellungen hat Vorrang (z. B. beim Einlesen des Zettels eines Kollegen)
   const s = newSheet(anchor, settings.name.trim() || parsed.name || '');
   s.importedName = parsed.name || '';
@@ -958,17 +1030,17 @@ function parsedToSheets(parsed, fileName, chosen) {
 }
 
 /** Eine Datei (ArrayBuffer) einlesen → Stundenzettel (bei Wochen über ein Monatsende einer je Monat).
- *  Ist „Woche von“ kein Montag, entscheidet askDate(stated, proposed) → gewähltes Datum oder null (nicht einlesen);
- *  ohne askDate gilt der Vorschlag */
+ *  Ist „Woche von“ kein Montag, entscheidet askDate(stated, options) → gewähltes Datum oder null (nicht einlesen);
+ *  ohne askDate gilt der erste Vorschlag */
 async function importTimesheetFile(name, buf, askDate = null) {
   const lower = name.toLowerCase();
   const head = new Uint8Array(buf.slice(0, 4));
   const isPdf = lower.endsWith('.pdf') || (head[0] === 0x25 && head[1] === 0x50);
   const finish = async (parsed) => {
-    const proposed = fixWeekYear(parsed, name);
-    let chosen = proposed;
-    if (askDate && parsed.from && proposed && proposed !== parsed.from) {
-      chosen = await askDate(parsed.from, proposed);
+    const options = fixWeekYear(parsed, name);
+    let chosen = options[0] || null;
+    if (askDate && options.length) {
+      chosen = await askDate(parsed.from, options);
       if (!chosen) throw new Error('skip');
     }
     return parsedToSheets(parsed, name, chosen);

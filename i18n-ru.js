@@ -211,7 +211,7 @@ if (LANG === 'ru') {
       'keine Zeiten im Arbeitsschein': 'в наряде нет времени',
       'Betreff kopiert – in Mail bei „Betreff“ einsetzen': 'Тема скопирована – вставьте в письмо в поле «Тема»',
       // ── Einlesen, Konflikte ──
-      'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Team-Eintrag gehört zu einem anderen Konto – dort anmelden': 'Запись команды принадлежит другому аккаунту – войдите в него', 'Mindestens 8 Zeichen.': 'Минимум 8 символов.', 'Passwort: mindestens 8 Zeichen': 'Пароль: минимум 8 символов', 'Sicherung läuft gerade – gleich noch einmal versuchen': 'Идёт резервное копирование – попробуйте чуть позже', 'Die neue Sicherung hat nicht geklappt. Bitte gleich „Jetzt sichern“ tippen.': 'Новая резервная копия не создана. Нажмите «Сохранить сейчас».', 'Schlüssel fehlt – abmelden und neu anmelden': 'Нет ключа – выйдите и войдите снова', 'Schlüssel fehlt – unter Einstellungen → Konto abmelden und neu anmelden.': 'Нет ключа – в настройках → аккаунт выйдите и войдите снова.', 'Speichern fehlgeschlagen – Speicher voll?': 'Не удалось сохранить – память заполнена?', 'Datum prüfen': 'Проверьте дату', 'Wahrscheinlich gemeint': 'Скорее всего', 'Weniger wahrscheinlich': 'Менее вероятно', 'nicht eingelesen': 'не загружено', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
+      'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Team-Eintrag gehört zu einem anderen Konto – dort anmelden': 'Запись команды принадлежит другому аккаунту – войдите в него', 'Mindestens 8 Zeichen.': 'Минимум 8 символов.', 'Passwort: mindestens 8 Zeichen': 'Пароль: минимум 8 символов', 'Sicherung läuft gerade – gleich noch einmal versuchen': 'Идёт резервное копирование – попробуйте чуть позже', 'Die neue Sicherung hat nicht geklappt. Bitte gleich „Jetzt sichern“ tippen.': 'Новая резервная копия не создана. Нажмите «Сохранить сейчас».', 'Schlüssel fehlt – abmelden und neu anmelden': 'Нет ключа – выйдите и войдите снова', 'Schlüssel fehlt – unter Einstellungen → Konto abmelden und neu anmelden.': 'Нет ключа – в настройках → аккаунт выйдите и войдите снова.', 'Speichern fehlgeschlagen – Speicher voll?': 'Не удалось сохранить – память заполнена?', 'Datum prüfen': 'Проверьте дату', 'Wahrscheinlich gemeint': 'Скорее всего', 'Weniger wahrscheinlich': 'Менее вероятно', 'Auch möglich': 'Тоже возможно', 'nicht eingelesen': 'не загружено', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
       'Einlesen nicht möglich': 'Загрузка невозможна', 'Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.': 'Можно загружать и табели Numbers или PDF, а также наряды.',
       'Keine Numbers-Datei': 'Не файл Numbers', 'Keine PDF-Datei': 'Не файл PDF', 'Keine ZIP-Datei': 'Не файл ZIP', 'Keine Seite gefunden': 'Страница не найдена',
       'Keine Tabelle gefunden': 'Таблица не найдена', 'Keine Wochentage gefunden': 'Дни недели не найдены', 'Kein Datum („Woche von“) gefunden': 'Дата («Неделя с») не найдена',
@@ -387,6 +387,17 @@ if (LANG === 'ru') {
         if (!a.split(', ').every(known)) return m;
         return `${a.split(', ').map((x) => (/^Zeile \d+$/.test(x) ? `строка ${x.slice(6)}` : tr(x))).join(', ')}: ${tr(b)}`;
       }],
+    ],
+  });
+  // ── Einlesen: Zähler aus Sicherungen (v100) ──
+  i18nAdd({
+    parts: { 'Datei beschädigt': 'файл повреждён' },
+    rparts: [
+      [/(\d+) Lohnabrechnung(?:en)? neu/g, (m, n) => `${n} ${pl(n, 'новый расчётный лист', 'новых расчётных листа', 'новых расчётных листов')}`],
+      [/(\d+) Arbeitsscheine? neu/g, (m, n) => `${n} ${pl(n, 'новый наряд', 'новых наряда', 'новых нарядов')}`],
+      [/(\d+) Berichtsheft-Seiten? neu/g, (m, n) => `${n} ${pl(n, 'новая страница дневника', 'новые страницы дневника', 'новых страниц дневника')}`],
+      [/(\d+) Lohnabrechnung(?:en)?\b/g, (m, n) => `${n} ${pl(n, 'расчётный лист', 'расчётных листа', 'расчётных листов')}`],
+      [/(\d+) Berichtsheft-Seiten?\b/g, (m, n) => `${n} ${pl(n, 'страница дневника', 'страницы дневника', 'страниц дневника')}`],
     ],
   });
 }

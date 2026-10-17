@@ -4140,7 +4140,7 @@ const weekKey = (s) => `${s.weekStart}|${s.year}|${s.month}`;
 const fmtStamp = (ms) => (ms ? `${fmtShort(new Date(ms))}, ${fmtTime(new Date(ms).getHours() * 60 + new Date(ms).getMinutes())}` : 'unbekannt');
 
 /**
- * Sicherung (JSON) übernehmen. Neue Zettel kommen dazu; gibt es die Woche (oder die ID) schon, wird verglichen:
+ * Sicherung (JSON) übernehmen. Neue Zettel kommen dazu; gibt es die Woche schon, wird verglichen:
  * gleich → nichts, verschieden → Rückfrage (conflicts, wird in importBackup entschieden).
  */
 function mergeBackup(data) {
@@ -4169,8 +4169,10 @@ function mergeBackup(data) {
       s.name = myName;
       renamed++;
     }
-    const current = sheets.find((x) => x.id === s.id) || sheets.find((x) => weekKey(x) === weekKey(s));
+    // Abgleich nur über die Woche: „Woche ändern“ behält die ID, ID und Woche können also auseinanderlaufen
+    const current = sheets.find((x) => weekKey(x) === weekKey(s));
     if (!current) {
+      if (sheets.some((x) => x.id === s.id)) s.id = uid(); // ID gehört hier schon einem Zettel einer anderen Woche
       sheets.push(s);
       added++;
     } else if (sheetDiff(current, s).length) conflicts.push({ existing: current, incoming: s, stamp: s.updatedAt, stampLabel: 'geändert', backup: true });
@@ -4195,21 +4197,21 @@ function mergeBackup(data) {
     saveTrips();
   }
   // Lohnabrechnungen: fehlende Monate übernehmen, vorhandene bleiben
+  let payslipsAdded = 0;
   if (data.payslips && typeof data.payslips === 'object') {
-    let n = 0;
     for (const [k, p] of Object.entries(data.payslips)) {
       if (!payslips[k] && p && p.year && p.month && p.hours) {
         payslips[k] = p.pay ? repairPayslip(p) : p;
-        n++;
+        payslipsAdded++;
       }
     }
-    if (n) savePayslips();
+    if (payslipsAdded) savePayslips();
   }
   // Arbeitsscheine: fehlende übernehmen
-  if (Array.isArray(data.reports)) addReports(data.reports.filter((r) => r && r.id && r.date && !reports().some((x) => x.id === r.id)));
+  const reportsAdded = Array.isArray(data.reports) ? addReports(data.reports.filter((r) => r && r.id && r.date && !reports().some((x) => x.id === r.id))) : 0;
   // Berichtsheft: fehlende Hefte und Seiten übernehmen
-  if (data.berichtsheft) bhMerge(data.berichtsheft);
-  return { added, same, conflicts, signature, renamed, tripsAdded, tripsSame, settingsRestored };
+  const bhAdded = data.berichtsheft ? bhMerge(data.berichtsheft) : 0;
+  return { added, same, conflicts, signature, renamed, tripsAdded, tripsSame, settingsRestored, payslipsAdded, reportsAdded, bhAdded };
 }
 
 /** Eine oder mehrere Dateien einlesen: Sicherung (.json), Stundenzettel als Numbers-Datei oder PDF */
@@ -4241,6 +4243,8 @@ async function importBackup(input) {
   let total = 0;
   let tripCount = 0;
   let reportCount = 0;
+  let payslipCount = 0;
+  let bhCount = 0;
   let failed = 0; // Dateien, die nicht gelesen werden konnten (accountRestore lädt dann nichts hoch)
   // Herkunft der in diesem Durchgang neu eingelesenen Zettel/Abrechnungen (Rückfrage zeigt dann „aus Datei …“)
   const origin = new Map();
@@ -4252,7 +4256,7 @@ async function importBackup(input) {
       if (!known.has(x)) {
         known.add(x);
         origin.set(x, file.name);
-        added.set(x, json ? { file: file.name, stamp: x.updatedAt, stampLabel: 'geändert' } : { file: file.name, stamp: file.lastModified, stampLabel: 'Datei vom' });
+        added.set(x, json ? { file: file.name, stamp: x.updatedAt, stampLabel: 'geändert', backup: true } : { file: file.name, stamp: file.lastModified, stampLabel: 'Datei vom' });
       }
   };
   toast(files.length > 1 ? `${files.length} Dateien werden eingelesen …` : 'Wird eingelesen …', 10000);
@@ -4281,6 +4285,12 @@ async function importBackup(input) {
           if (tripConf) tp.push(`${tripConf} mit Unterschieden`);
           parts.push(tp.join(', '));
         }
+        if (r.payslipsAdded) parts.push(`${r.payslipsAdded} Lohnabrechnung${r.payslipsAdded === 1 ? '' : 'en'} neu`);
+        if (r.reportsAdded) parts.push(`${r.reportsAdded} Arbeitsschein${r.reportsAdded === 1 ? '' : 'e'} neu`);
+        if (r.bhAdded) parts.push(`${r.bhAdded} Berichtsheft-Seite${r.bhAdded === 1 ? '' : 'n'} neu`);
+        payslipCount += r.payslipsAdded;
+        reportCount += r.reportsAdded;
+        bhCount += r.bhAdded;
         if (r.settingsRestored) parts.push('Einstellungen übernommen');
         if (r.signature) parts.push('Unterschrift übernommen');
         if (r.renamed) parts.push(`Name bei ${r.renamed} auf „${escapeHtml(settings.name.trim())}“ geändert`);
@@ -4296,7 +4306,7 @@ async function importBackup(input) {
         continue;
       }
       // Woche über ein Monatsende: ein Zettel je Monat
-      for (const s of await importTimesheetFile(file.name, buf, (stated, proposed) => askImportDate(file.name, stated, proposed))) {
+      for (const s of await importTimesheetFile(file.name, buf, (stated, options) => askImportDate(file.name, stated, options))) {
         const existing = existingSheet(sheetFirstDate(s));
         const other = s.importedName && s.importedName.trim() !== s.name;
         const yearFixed = s.yearFixed;
@@ -4336,10 +4346,7 @@ async function importBackup(input) {
   // Gab es sie vorher nicht in der App, sondern nur in mehreren Dateien: eine Fassung wählen (ohne „für alle“, das ginge nicht).
   // Sonst Vergleich mit der App (einzeln oder für alle gleich); verglichen wird immer mit dem aktuellen Stand,
   // eine schon abgelehnte Fassung wird nicht noch einmal gefragt.
-  const version = (c, x) =>
-    c.trip
-      ? JSON.stringify([tripRows(x).map(tripDayText), x.place || '', x.signDate || ''])
-      : sheetActiveDays(c.existing).map((i) => dayText(x.days[i] || { rows: [] })).join('\n');
+  const version = (c, x) => JSON.stringify([...versionTexts(c, x)]);
   const items = [];
   for (const c of conflicts) {
     const from = added.get(c.existing);
@@ -4349,15 +4356,15 @@ async function importBackup(input) {
     }
     let item = items.find((x) => x.choose && x.existing === c.existing);
     if (!item) {
-      item = { choose: true, trip: c.trip, existing: c.existing, backup: c.backup, versions: [] };
-      const first = c.trip ? { ...c.existing } : { ...c.existing, days: c.existing.days };
-      item.versions.push({ data: first, files: [from.file, ...(sameFiles.get(c.existing) || [])], stamp: from.stamp, stampLabel: from.stampLabel });
+      item = { choose: true, trip: c.trip, existing: c.existing, versions: [] };
+      // Jede Fassung merkt sich, ob sie aus einer Sicherung stammt (dann ganz übernehmen, sonst nur Tage und Name)
+      item.versions.push({ data: { ...c.existing }, files: [from.file, ...(sameFiles.get(c.existing) || [])], stamp: from.stamp, stampLabel: from.stampLabel, backup: !!from.backup });
       items.push(item);
     }
     const v = version(c, c.incoming);
     const same = item.versions.find((x) => version(c, x.data) === v);
     if (same) same.files.push(c.file);
-    else item.versions.push({ data: c.incoming, files: [c.file], stamp: c.stamp, stampLabel: c.stampLabel });
+    else item.versions.push({ data: c.incoming, files: [c.file], stamp: c.stamp, stampLabel: c.stampLabel, backup: !!c.backup });
   }
   let all = null;
   const rejected = new Map(); // Zettel/Abrechnung → Texte der abgelehnten Fassungen
@@ -4367,7 +4374,7 @@ async function importBackup(input) {
     if (c.choose) {
       const pick = await askVersions(c);
       const v = c.versions[pick];
-      if (pick > 0) c.trip ? replaceTrip({ existing: c.existing, incoming: v.data }) : replaceSheet({ existing: c.existing, incoming: v.data, backup: c.backup });
+      if (pick > 0) c.trip ? replaceTrip({ existing: c.existing, incoming: v.data }) : replaceSheet({ existing: c.existing, incoming: v.data, backup: v.backup });
       lines.push(`${title}: Fassung aus ${v.files.map(escapeHtml).join(', ')} übernommen`);
       continue;
     }
@@ -4399,11 +4406,31 @@ async function importBackup(input) {
   }
   if (conflicts.some((c) => !c.trip)) saveSheets();
   if (conflicts.some((c) => c.trip)) saveTrips();
-  if (currentView === 'settings' || currentView === 'settingsSub') renderSettings();
-  if (currentView === 'list') renderList();
-  const done = [total ? `${total} Stundenzettel` : '', tripCount ? `${tripCount} Reisekostenabrechnung${tripCount === 1 ? '' : 'en'}` : '', reportCount ? `${reportCount} Arbeitsschein${reportCount === 1 ? '' : 'e'}` : ''].filter(Boolean);
-  infoDialog(done.length ? `${done.join(' und ')} eingelesen` : 'Nichts eingelesen', `<ul class="problem-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`);
+  importRerender();
+  const done = [
+    total ? `${total} Stundenzettel` : '',
+    tripCount ? `${tripCount} Reisekostenabrechnung${tripCount === 1 ? '' : 'en'}` : '',
+    reportCount ? `${reportCount} Arbeitsschein${reportCount === 1 ? '' : 'e'}` : '',
+    payslipCount ? `${payslipCount} Lohnabrechnung${payslipCount === 1 ? '' : 'en'}` : '',
+    bhCount ? `${bhCount} Berichtsheft-Seite${bhCount === 1 ? '' : 'n'}` : '',
+  ].filter(Boolean);
+  const title = done.length ? `${done.slice(0, -1).join(', ')}${done.length > 1 ? ' und ' : ''}${done.at(-1)} eingelesen` : 'Nichts eingelesen';
+  // Sprache aus der Sicherung übernommen: gilt erst nach dem Neuladen (i18n.js liest sie beim Start)
+  const reload = () => (teamUploading ? setTimeout(reload, 500) : location.reload());
+  infoDialog(title, `<ul class="problem-list">${lines.map((l) => `<li>${l}</li>`).join('')}</ul>`, (settings.lang === 'ru' ? 'ru' : 'de') !== LANG ? reload : null);
   return !failed;
+}
+
+/** Nach dem Einlesen (geht von jeder Seite aus): übernommene Einstellungen anwenden, die offene Seite neu zeichnen */
+function importRerender() {
+  applyTheme();
+  applyWarnSigns();
+  const y = window.scrollY;
+  // Reisekosten: route() verwürfe eine noch leere Abrechnung (dropEmptyTrip), deshalb nur neu zeichnen
+  const tm = currentView === 'trip' && location.hash.match(/^#\/reise\/(.+)$/);
+  if (tm) renderTrip(decodeURIComponent(tm[1]));
+  else route();
+  window.scrollTo(0, y);
 }
 
 /** Neue Fassung übernehmen; der Zettel behält seine ID (Verknüpfung zu Reisekosten), aus Dateien auch den Status */
@@ -4416,6 +4443,8 @@ function replaceSheet(c) {
     existing.name = incoming.name;
   }
   existing.updatedAt = Date.now();
+  // Zettel gerade im Editor offen: der eingelesene Stand gilt als gespeichert (sonst schriebe savedSheets den alten)
+  if (editorSaved && editorSaved.id === existing.id) editorSaved = editorSnapshot(existing);
 }
 
 /** Neue Fassung einer Abrechnung übernehmen (ID bleibt) */
@@ -4446,9 +4475,9 @@ function scrollBar(modal) {
 }
 
 /** Rückfrage bei einem doppelten Zettel (oder einer Abrechnung) mit Unterschieden; Ergebnis: 'keep' | 'replace' | 'keepAll' | 'replaceAll' */
-/** „Woche von“ ist kein Montag (Jahr oder Monat vertippt): Vorschlag bestätigen, wie im Zettel lassen oder nicht einlesen.
- *  Ergebnis: Datum für „Woche von“ oder null */
-function askImportDate(fileName, stated, proposed) {
+/** „Woche von“ ist kein Montag (Jahr oder Monat vertippt): einen der Vorschläge (options, 1–2) wählen, wie im Zettel lassen
+ *  oder nicht einlesen. Ergebnis: Datum für „Woche von“ oder null */
+function askImportDate(fileName, stated, options) {
   return new Promise((resolve) => {
     const range = (d) => `${fmtShort(d)} – ${fmtShort(addDays(d, 6))}`;
     const asIs = mondayOf(stated);
@@ -4459,7 +4488,9 @@ function askImportDate(fileName, stated, proposed) {
         <p>Im Zettel steht ${range(stated)}. Der ${fmtShort(stated)} ist aber ein ${WEEKDAYS[(stated.getDay() + 6) % 7]}.</p>
       </div></div>
       <div class="alert-buttons stacked">
-        <button data-c="proposed" class="strong"><span class="ad-hint">Wahrscheinlich gemeint</span>${range(proposed)}</button>
+        ${options
+          .map((d, k) => `<button data-c="${k}"${k ? '' : ' class="strong"'}><span class="ad-hint">${k ? 'Auch möglich' : 'Wahrscheinlich gemeint'}</span>${range(d)}</button>`)
+          .join('')}
         <button data-c="asis"><span class="ad-hint">Weniger wahrscheinlich</span>${range(asIs)}</button>
         <button data-c="skip">Nicht einlesen</button>
       </div>`,
@@ -4474,7 +4505,7 @@ function askImportDate(fileName, stated, proposed) {
     };
     modal.addEventListener('click', (e) => {
       const b = e.target.closest('[data-c]');
-      if (b) finish(b.dataset.c === 'proposed' ? proposed : b.dataset.c === 'asis' ? asIs : null);
+      if (b) finish(b.dataset.c === 'asis' ? asIs : b.dataset.c === 'skip' ? null : options[+b.dataset.c]);
     });
     layer.querySelector('.backdrop').addEventListener('click', () => finish(null));
   });
@@ -4589,7 +4620,8 @@ function askVersions(c) {
       <div class="alert-buttons stacked">
         ${c.versions.map((v, k) => `<button data-v="${k}">Fassung ${k + 1} übernehmen</button>`).join('')}
       </div>`,
-      'alert wide'
+      'alert wide',
+      false
     );
     scrollBar(modal);
     let done = false;
@@ -4603,15 +4635,22 @@ function askVersions(c) {
   });
 }
 
-function infoDialog(title, message) {
+/** onClose: läuft nach OK bzw. Antippen daneben */
+function infoDialog(title, message, onClose = null) {
   const modal = openModal(
     `<div class="alert-body"><b>${title}</b><div class="alert-msg">${message}</div></div>
     <div class="alert-buttons single"><button data-c="ok" class="strong">OK</button></div>`,
-    'alert'
+    'alert',
+    !onClose
   );
+  const close = () => {
+    closeModal();
+    if (onClose) onClose();
+  };
   modal.addEventListener('click', (e) => {
-    if (e.target.closest('[data-c]')) closeModal();
+    if (e.target.closest('[data-c]')) close();
   });
+  if (onClose) layer.querySelector('.backdrop').addEventListener('click', close);
 }
 
 // ───────────────────────── Modale Fenster ─────────────────────────
@@ -4619,13 +4658,14 @@ function infoDialog(title, message) {
 const layer = document.getElementById('modal-layer');
 let modalGen = 0;
 
-function openModal(html, className = '') {
+/** outsideCloses = false: Antippen neben das Fenster schließt es nicht (Rückfragen, die eine Antwort brauchen) */
+function openModal(html, className = '', outsideCloses = true) {
   const gen = ++modalGen;
   layer.innerHTML = `<div class="backdrop"></div><div class="modal ${className}" role="dialog" aria-modal="true">${html}</div>`;
   layer.classList.add('open');
   document.activeElement && document.activeElement.blur && document.activeElement.blur();
   requestAnimationFrame(() => requestAnimationFrame(() => gen === modalGen && layer.classList.add('show')));
-  layer.querySelector('.backdrop').addEventListener('click', () => closeModal());
+  if (outsideCloses) layer.querySelector('.backdrop').addEventListener('click', () => closeModal());
   return layer.querySelector('.modal');
 }
 
