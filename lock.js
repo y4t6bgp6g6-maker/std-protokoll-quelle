@@ -82,7 +82,7 @@ function showLock() {
   document.body.insertAdjacentHTML(
     'beforeend',
     `<div id="lock" role="dialog" aria-modal="true"><div class="lock-bg"></div>
-      <img src="icons/icon-512.png?v=3" alt="" class="lock-icon">
+      <img src="icons/icon-512.png?v=4" alt="" class="lock-icon">
       <b class="lock-title">Std-Protokoll ist gesperrt</b>
       <span class="lock-sub">Mit Face ID entsperren</span>
       <button class="lock-btn" data-lock="open"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2M9 9.5v1M15 9.5v1M12 9.5v3.5h-1M9.5 15.5c1.4 1.2 3.6 1.2 5 0"/></svg>Entsperren</button>
