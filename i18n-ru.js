@@ -127,7 +127,7 @@ if (LANG === 'ru') {
       'Deine Zettel werden für das Team gelöscht.': 'Ваши табели будут удалены для команды.', 'Team-Code ungültig': 'Неверный код команды',
       'Falscher Team-Code': 'Неверный код команды', Teammeeting: 'Собрание', Nachricht: 'Сообщение', Nachrichten: 'Сообщения',
       'Nachricht ans Team': 'Сообщение команде', 'Nachricht löschen?': 'Удалить сообщение?', 'Noch keine Nachrichten': 'Сообщений пока нет',
-      'Die letzten 300 Nachrichten bleiben.': 'Сохраняются последние 300 сообщений.', 'Zu viele Nachrichten in diesem Monat': 'Слишком много сообщений в этом месяце',
+      'Die letzten 300 Nachrichten bleiben.': 'Сохраняются последние 300 сообщений.', 'Zu viele Nachrichten heute': 'Слишком много сообщений сегодня', Vormonat: 'Прошлый месяц', 'Laufender Monat': 'Текущий месяц',
       'Noch keine Zettel von Kollegen': 'Табелей коллег пока нет', 'Zettel der Kollegen sehen': 'Смотреть табели коллег', Du: 'Вы',
       'Deine Zettel dieses und des letzten Monats sind dann für das Team sichtbar.': 'Тогда ваши табели этого и прошлого месяца будут видны команде.',
       'Einträge im Team': 'Записи в команде', 'Im Stundenzettel als': 'В табеле как', Person: 'Человек', Personen: 'Человек',

@@ -1,9 +1,9 @@
-// Std-Protokoll – Team: Kollegen sehen gegenseitig ihre Stundenzettel des laufenden Monats (nur lesen).
-// Speicher: Cloudflare-Worker mit D1-Datenbank in der EU (cloudflare/team-worker.js). Wer den Team-Code kennt,
-// lädt seine Zettel des laufenden Monats automatisch hoch und sieht die der anderen. Beim Monatswechsel
-// löscht der Worker die alten Einträge.
+// Std-Protokoll – Team: Kollegen sehen gegenseitig ihre Stundenzettel des laufenden Monats und des Vormonats
+// (Einträge lassen sich in den eigenen Zettel übernehmen). Speicher: Cloudflare-Worker mit D1-Datenbank in der EU
+// (cloudflare/team-worker.js). Wer mit Team-Code und Konto beigetreten ist, lädt seine Zettel automatisch hoch und
+// sieht die der anderen; Älteres als der Vormonat löscht der Worker.
 //
-// Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, seen, cache: { month, members, posts, at } }
+// Eigener Speicher (nicht in der Sicherung): { code, member, token, sent, seen, cache: { month, members, prevMonth, prevMembers, posts, at } }
 // seen: Zeitpunkt der zuletzt gesehenen Teammeeting-Nachricht (Zahl am Teammeeting-Knopf)
 
 const TEAM_URL = 'https://std-protokoll-team.std-protokoll.workers.dev';
@@ -119,16 +119,18 @@ let aiSitesAsked = '';
 function aiSitesRequest(names) {
   const list = [...new Set(names.map(aiNorm))].filter(Boolean).sort();
   const key = list.join('\n');
-  if (list.length < 2 || aiStore.sites?.key === key || aiSitesAsked === key || !aiReady()) return;
+  if (list.length < 2 || (aiStore.sitesList || []).some((x) => x.key === key) || aiStore.sites?.key === key || aiSitesAsked === key || !aiReady()) return;
   aiSitesAsked = key;
   teamAi('sites', { names: list })
     .then(({ groups }) => {
       const changed = JSON.stringify(aiStore.sites?.groups || []) !== JSON.stringify(groups || []);
       aiStore.sites = { key, groups: groups || [] };
+      // die letzten vier Antworten (z. B. laufender Monat und Vormonat)
+      aiStore.sitesList = [aiStore.sites, ...(aiStore.sitesList || []).filter((x) => x.key !== key)].slice(0, 4);
       saveAi();
       if (!changed) return;
       teamSitesKey = null;
-      teamRefreshView();
+      teamRefreshSoon();
     })
     .catch(() => {
       // beim nächsten Mal wieder fragen (z. B. schlechter Empfang)
@@ -249,7 +251,14 @@ function teamTranslateAll() {
   const texts = [];
   for (const m of teamMembersAll()) for (const s of m.sheets || []) for (const d of s.days || []) for (const r of d.rows || []) if (r.work) texts.push(r.work);
   for (const p of teamPosts()) texts.push(p.text);
-  aiTranslate(texts, LANG).then((fresh) => fresh && teamRefreshView());
+  aiTranslate(texts, LANG).then((fresh) => fresh && teamRefreshSoon());
+}
+/** Zuletzt gewischt (Zettelreihen auf der Team-Seite) */
+let teamTouchAt = 0;
+/** Neu zeichnen, aber nicht mitten im Wischen (sonst bricht es ab und die Reihen springen) */
+function teamRefreshSoon() {
+  if (Date.now() - teamTouchAt < 1500) setTimeout(teamRefreshSoon, 800);
+  else teamRefreshView();
 }
 
 // ───────── Eigene Zettel hochladen ─────────
@@ -270,10 +279,18 @@ if (window.stdAppVersion)
 function teamPayload() {
   const now = new Date();
   const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  // nur, was die Kollegen sehen: ohne Zeilen-IDs, leere Zeilen und „So lassen“ (spart drei Viertel der Daten)
+  const day = (d) => ({
+    pause: d.pause ?? null,
+    ...(d.status ? { status: d.status } : {}),
+    ...(d.credit != null ? { credit: d.credit } : {}),
+    ...(d.manual ? { manual: true } : {}),
+    rows: (d.rows || []).filter((r) => !rowIsEmpty(r)).map((r) => ({ start: r.start, end: r.end, site: r.site || '', work: r.work || '' })),
+  });
   const pick = (d) =>
     savedSheets()
       .filter((s) => s.year === d.getFullYear() && s.month === d.getMonth() + 1)
-      .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days }));
+      .map((s) => ({ weekStart: s.weekStart, year: s.year, month: s.month, days: s.days.map(day) }));
   return {
     member: team.member,
     token: team.token,
@@ -362,8 +379,14 @@ async function joinTeam(code) {
     if (btn) btn.disabled = false;
     return;
   }
-  team = { code, member: out.member, token, sent: '' };
+  let seen = 0;
+  try {
+    seen = Number(localStorage.getItem(TEAM_SEEN_KEY)) || 0;
+  } catch {}
+  team = { code, member: out.member, token, sent: '', seen };
   saveTeam();
+  // Angemeldet, aber ohne Namen und ohne Sicherung (die ihn zurückbrächte): die Kollegen sähen „?“
+  if (!settings.name.trim() && !(out.backups || []).length) toast('Bitte zuerst deinen Namen eintragen');
   haptic();
   renderTeamBody();
   teamLoad();
@@ -376,11 +399,23 @@ async function joinTeam(code) {
   }
 }
 
+const TEAM_SEEN_KEY = 'stdprotokoll.teamseen.v1';
 function leaveTeamLocal(message) {
   adminForget();
+  // zuletzt gesehene Nachricht behalten (nach erneutem Beitreten sonst bis zu 300 „neue“)
+  try {
+    if (team && team.seen) localStorage.setItem(TEAM_SEEN_KEY, String(team.seen));
+  } catch {}
   team = null;
   saveTeam();
   teamData = null;
+  teamPrevOpen = false;
+  teamPinOpen = false;
+  // Übersetzungen und Baustellen-Gruppen enthalten Texte der Kollegen: nicht auf dem iPhone lassen
+  aiStore.tr = { de: {}, ru: {} };
+  aiStore.sites = null;
+  aiStore.sitesList = [];
+  saveAi();
   if (currentView === 'team') renderTeam();
   else if (currentView === 'teamSheet') location.replace('#/team');
   if (message) toast(message);
@@ -408,6 +443,8 @@ function leaveTeam() {
 /** Zuletzt geladene Einträge der Kollegen (null = noch nichts geladen) */
 let teamData = null;
 let teamLoading = false;
+/** Während eines Ladens erneut angefragt (z. B. nach dem Senden einer Nachricht): danach noch einmal laden */
+let teamLoadAgain = false;
 /** Teammeeting offen (statt der Zettel), Scrollstand, waagerechter Stand der Zettelreihen (null = laufende Woche zeigen) */
 let teamPinOpen = false;
 /** Team-Seite zeigt den Vormonat statt des laufenden Monats */
@@ -466,13 +503,18 @@ function teamClean(members) {
 
 async function teamLoad() {
   // Lesen nur mit Konto (Server prüft); ohne bestätigtes Konto nicht fragen, sonst zählen Fehlversuche bis zur Sperre
-  if (!team || !TEAM_URL || teamLoading || !accountOk()) return;
+  if (!team || !TEAM_URL || !accountOk()) return;
+  if (teamLoading) {
+    teamLoadAgain = true;
+    return;
+  }
   teamLoading = true;
   const before = teamDrawnKey();
   try {
     const data = await teamRequest('GET', '/team');
     // Während des Ladens das Team verlassen: Ergebnis verwerfen
     if (!team) return;
+    const old = team.cache;
     team.cache = {
       month: data.month,
       members: teamClean(data.members),
@@ -492,7 +534,12 @@ async function teamLoad() {
       aiStore.trV = data.trV;
       saveAi();
     }
-    saveTeam();
+    // Speichern (bis zu 200 KB) nur, wenn sich etwas geändert hat oder der Stand älter als 5 min ist (Teammeeting lädt alle 10 s)
+    const same = old && JSON.stringify([old.month, old.members, old.prevMembers, old.posts]) === JSON.stringify([team.cache.month, team.cache.members, team.cache.prevMembers, team.cache.posts]);
+    if (!same || !old.saved || Date.now() - old.saved > 300000) {
+      team.cache.saved = Date.now();
+      saveTeam();
+    } else team.cache.saved = old.saved;
     teamData = team.cache;
     // Einträge der Kollegen in der eingestellten Sprache (russisch bzw. deutsch geschriebene)
     teamTranslateAll();
@@ -502,12 +549,15 @@ async function teamLoad() {
       leaveTeamLocal('Team-Code ungültig');
       return;
     }
-    // Passwort anderswo geändert oder Konto gelöscht: neu anmelden (Team-Seite zeigt „Erst anmelden“)
+    // Passwort anderswo geändert oder Konto gelöscht: neu anmelden (Team-Seite zeigt „Erst anmelden“, auch im Teammeeting
+    // und in der Zettel-Ansicht eines Kollegen)
     if (account && ['auth', 'unknown', 'konto'].includes(e.message)) {
       account.ok = false;
       account.error = accountError(e);
       saveAccount();
       accountRerender();
+      if (currentView === 'team') renderTeamBody();
+      else if (currentView === 'teamSheet') location.replace('#/team');
     }
     teamData = { ...(team.cache || { members: [] }), offline: true };
   } finally {
@@ -515,6 +565,10 @@ async function teamLoad() {
   }
   // Nichts Neues: nicht neu zeichnen (sonst bricht z. B. ein laufendes Wischen ab)
   if (teamDrawnKey() !== before) teamRefreshView();
+  if (teamLoadAgain) {
+    teamLoadAgain = false;
+    await teamLoad();
+  }
 }
 
 /** Was die Team-Seiten zeigen (ohne Ladezeitpunkt), dazu die laufende Woche */
@@ -565,7 +619,7 @@ const teamDayOff = (d) => d.status && !holidayWork(d);
 /** Kreis mit dem Anfangsbuchstaben; Farbe nach der Stelle in der Liste, damit sich keine zwei gleichen */
 function teamAvatar(m, size = 34) {
   if (m.me) return `<span class="tm-av tm-av-me" style="--s:${size}px">D</span>`;
-  const k = Math.max(0, teamMembers().findIndex((x) => x.member === m.member));
+  const k = Math.max(0, teamMembersAll().findIndex((x) => x.member === m.member));
   return `<span class="tm-av" style="--av:${TEAM_COLORS[k % TEAM_COLORS.length]};--s:${size}px">${escapeHtml(([...(m.name || '?')][0] || '?').toUpperCase())}</span>`;
 }
 
@@ -649,7 +703,7 @@ function teamGroupSites(people) {
   // zwischen allen Schreibweisen der beiden Gruppen, nicht nur den beiden aus der Antwort
   const numsFit = (x, y) => !parts[x].nums || !parts[y].nums || parts[x].nums === parts[y].nums;
   const index = new Map(names.map((n, i) => [aiNorm(n), i]));
-  for (const g of aiStore.sites?.groups || []) {
+  for (const g of (aiStore.sitesList?.length ? aiStore.sitesList : [aiStore.sites]).flatMap((x) => x?.groups || [])) {
     const ii = g.map((n) => index.get(aiNorm(n))).filter((i) => i != null);
     for (const i of ii.slice(1)) {
       const a = of[i], b = of[ii[0]];
@@ -675,7 +729,7 @@ function teamMainSite(d, crew) {
     if (!name) continue;
     const id = teamSiteId(name);
     const e = sites.get(id) || { id, name, m: 0 };
-    e.m += r.start != null && r.end != null ? Math.max(0, r.end - r.start) : 0;
+    e.m += rowMinutes(r) || 0; // auch über Mitternacht (wie im Zettel)
     sites.set(id, e);
   }
   if (!sites.size) return null;
@@ -692,8 +746,11 @@ function teamWeeks(people, prev = false) {
   const first = base;
   const last = new Date(base.getFullYear(), base.getMonth() + 1, 0);
   const weeks = [];
-  for (let d = mondayOf(first); d <= last; d = addDays(d, 7))
-    weeks.push({ mon: d, iso: isoDate(d), a: d < first ? first : d, b: addDays(d, 6) > last ? last : addDays(d, 6), now: !prev && sameDay(d, mondayOf(now)) });
+  for (let d = mondayOf(first); d <= last; d = addDays(d, 7)) {
+    const w = { mon: d, iso: isoDate(d), a: d < first ? first : d, b: addDays(d, 6) > last ? last : addDays(d, 6), now: !prev && sameDay(d, mondayOf(now)) };
+    // Blätter zeigen Mo–Fr: eine Woche, in der vom Monat nur Sa/So liegt, bliebe leer (außer der laufenden)
+    if (w.now || [0, 1, 2, 3, 4].some((i) => addDays(d, i) >= first && addDays(d, i) <= last)) weeks.push(w);
+  }
   if (prev) return weeks;
   let end = weeks.findIndex((w) => w.now);
   weeks.forEach((w, k) => people.some((p) => (p.sheets || []).some((s) => s.weekStart === w.iso)) && (end = Math.max(end, k)));
@@ -798,7 +855,7 @@ function teamSheetsHTML(members, prev = false) {
           return `<span class="tm-z-slot" style="--tilt:${[-0.3, 0.2, -0.1, 0.35, -0.2, 0.15][(k + p.name.length) % 6]}deg">${teamPaperHTML(p, s, w, shown.get(`${p.member}|${w.iso}`), marker)}</span>`;
         })
         .join('');
-      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b translate="no">${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
+      return `<div class="card tm-pcard${p.me ? ' me' : ''}"><div class="tm-pcard-h">${teamAvatar(p, 30)}<b${p.me ? '' : ' translate="no"'}>${escapeHtml(p.name || '?')}</b><span>${total ? fmtH(total) : ''}</span></div>
         <div class="tm-z-scroll"><div class="tm-z-row" data-now="${nowCol}" style="--n:${weeks.length}">${slots}</div></div></div>`;
     })
     .join('');
@@ -876,7 +933,7 @@ async function teamSendPost() {
     await teamLoad();
   } catch (e) {
     if (e.status === 403 && e.message === 'token' && team) leaveTeamLocal('Auf einem anderen iPhone angemeldet');
-    else toast(e.status === 429 ? 'Zu viele Nachrichten in diesem Monat' : 'Keine Verbindung');
+    else toast(e.status === 429 ? 'Zu viele Nachrichten heute' : e.message === 'konto' ? 'Erst anmelden' : 'Keine Verbindung');
   } finally {
     teamPosting = false;
     const b2 = app.querySelector('[data-team="post"]');
@@ -906,7 +963,7 @@ function renderTeam() {
   renderTeamBody();
   if (team) {
     teamUpload();
-    teamLoad();
+    if (!team.cache || !team.cache.at || Date.now() - team.cache.at > 15000) teamLoad();
     accountLink();
   }
 }
@@ -1008,6 +1065,8 @@ function teamFindMember(id) {
 
 /** Ein Zettel (eine Woche) eines Kollegen oder der eigene, nur lesen: eine Karte, je Tag links Tag und Datum, rechts alle Einträge, Pause und Stunden */
 function renderTeamSheet(id, weekStart) {
+  // Konto abgelaufen (Passwort anderswo geändert …): wie die Team-Seite nichts zeigen
+  if (team && !accountOk()) return location.replace('#/team');
   const m = teamFindMember(id);
   if (m === undefined) return;
   // Woche über ein Monatsende: der Teil des angezeigten Monats (Blatt auf der Team-Seite), sonst der andere
@@ -1040,7 +1099,7 @@ function renderTeamSheet(id, weekStart) {
     })
     .join('');
   app.innerHTML = `${teamNav(`${fmtShort(sheetFirstDate(s))} – ${fmtShort(sheetLastDate(s))}`)}
-    <div class="tm-w-who">${teamAvatar(m, 36)}<div><b translate="no">${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
+    <div class="tm-w-who">${teamAvatar(m, 36)}<div><b${m.me ? '' : ' translate="no"'}>${escapeHtml(m.name || '?')}</b><span class="muted">KW ${isoWeek(parseDate(s.weekStart))}</span></div><b class="tm-w-total">${fmtH(sheetTotal(s))}</b></div>
     <div class="card tm-w">${blocks}</div>`;
 }
 
@@ -1266,6 +1325,7 @@ document.addEventListener(
   'touchstart',
   (e) => {
     const el = e.target instanceof Element && e.target.closest('.tm-z-scroll');
+    if (el) teamTouchAt = Date.now();
     if (!el || el === teamLead) return;
     if (teamLead) teamLead.classList.remove('lead');
     teamLead = el;
@@ -1278,6 +1338,7 @@ document.addEventListener(
   (e) => {
     const el = e.target;
     if (!(el instanceof Element) || !el.classList.contains('tm-z-scroll')) return;
+    teamTouchAt = Date.now();
     if ((teamLead && teamLead.isConnected && el !== teamLead) || (teamX != null && Math.abs(el.scrollLeft - teamX) < 1)) return;
     teamX = el.scrollLeft;
     teamXWeek = isoDate(mondayOf(new Date()));
@@ -1298,7 +1359,8 @@ document.addEventListener('input', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !team) return;
   teamQueueUpload(500);
-  if (currentView === 'team') teamLoad();
+  if (currentView === 'team' || currentView === 'teamSheet') teamLoad();
+  else if (currentView === 'editor') teamLoadForEditor();
 });
 window.addEventListener('online', () => teamQueueUpload(500));
 // Teammeeting offen und App im Vordergrund: alle 10 Sekunden nach neuen Nachrichten sehen (fast wie ein Chat)

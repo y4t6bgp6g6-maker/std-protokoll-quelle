@@ -159,7 +159,8 @@ function adminTeamHTML(tm, accounts) {
   const sheets = people.reduce((n, p) => n + (p.sheets || 0), 0);
   const newest = Math.max(adminVer(teamAppVersion), ...people.map((p) => adminVer(p.version)));
   const [y, m] = String(tm.month).split('-').map(Number);
-  const cleanup = y && m ? fmtDayMonth(new Date(y, m, 1)) : '';
+  // Zettel dieses Monats bleiben im nächsten als Vormonat sichtbar und verschwinden erst am Ersten danach
+  const cleanup = y && m ? fmtDayMonth(new Date(y, m + 1, 1)) : '';
   const sub = (a) =>
     a
       ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>`

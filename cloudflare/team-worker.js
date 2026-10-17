@@ -1,14 +1,14 @@
 // Std-Protokoll – Team-Speicher (Cloudflare Worker mit D1-Datenbank in der EU)
 //
-// Jedes iPhone legt hier die Stundenzettel des laufenden Monats ab (ein Eintrag je Gerät, wird bei jeder
-// Änderung überschrieben). Lesen nur mit Team-Code und Konto. Einträge aus älteren Monaten (außer dem Vormonat)
-// löscht der Worker bei jeder Anfrage.
+// Jedes iPhone legt hier die Stundenzettel des laufenden Monats und des Vormonats ab (ein Eintrag je Konto, wird bei
+// jeder Änderung überschrieben). Lesen nur mit Team-Code und Konto. Beim Monatswechsel wandert der Monat in history
+// (Vormonat), Älteres löscht der Worker.
 //
 // Einrichtung im Cloudflare-Dashboard:
 //   - D1-Datenbank (Jurisdiction „EU“) als Binding mit dem Namen DB
 //   - Workers AI als Binding mit dem Namen AI (Rechtschreibung, gleiche Baustellen)
 //   - Secret TEAM_CODE: der Team-Code, den die Kollegen eingeben (bis er auf der Server-Seite geändert wird, siehe PUT /code)
-// Die Tabelle legt der Worker selbst an.
+// Die Tabellen legt der Worker selbst an.
 //
 // Anfragen (Code im Header X-Team-Code):
 //   GET    /ping   → { ok }   nur zum Messen der Antwortzeit
@@ -18,7 +18,7 @@
 //   PUT    /me     ← { member, token, name, month, sheets, version, prev: { month, sheets } }   eigener Eintrag (version: App-Version für die Admin-Seite)
 //                    nur, wenn ein Konto den Eintrag kennt (sonst 403 'konto')
 //   DELETE /me     ← { member, token }                         Team verlassen (Zettel beider Monate weg; Nachrichten bleiben, siehe POSTS_KEEP)
-//   POST   /post   ← { member, token, text }                   Nachricht an die Pinnwand (nur mit eigenem Eintrag)
+//   POST   /post   ← { member, token, text }                   Nachricht ins Teammeeting (nur mit eigenem Eintrag und Konto)
 //   DELETE /post   ← { member, token, id }                     eigene Nachricht löschen
 //   POST   /ai     ← { member, token, task: 'spell', items }   → { v, out: [[Eintrag, Ergebnis, geprüft]] }
 //                    Rechtschreibung je Eintrag (Arbeit, Baustelle): erst die KI, danach das Wörterbuch (Tabelle dict:
@@ -74,7 +74,8 @@
 const ORIGINS = ['https://y4t6bgp6g6-maker.github.io'];
 const MAX_BODY = 1_000_000;
 const MAX_TEXT = 500;
-const MAX_POSTS = 300; // je Person und Monat
+const MAX_POSTS = 100; // je Person und Tag (Bremse; POSTS_KEEP begrenzt die Gesamtzahl)
+const CODE_FAILS = 20; // falsche Team-Codes je Adresse, danach AUTH_WAIT Minuten Pause
 const POSTS_KEEP = 300; // Teammeeting: so viele Nachrichten bleiben; jede neue verdrängt dann die älteste
 const MAX_ERRORS = 30; // Fehlerberichte je Gerät und Tag
 const ERROR_DAYS = 180;
@@ -258,7 +259,11 @@ function prevMonthOf(month) {
 }
 const HISTORY_TABLE = 'CREATE TABLE IF NOT EXISTS history (member TEXT NOT NULL, month TEXT NOT NULL, name TEXT, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (member, month))';
 /** Zettel des Vormonats speichern (nur, wenn neuer als der gespeicherte Stand) */
-const HISTORY_SET = 'ON CONFLICT(member, month) DO UPDATE SET name = excluded.name, data = excluded.data, updated = excluded.updated WHERE excluded.updated > history.updated';
+const HISTORY_SET =
+  'ON CONFLICT(member, month) DO UPDATE SET name = excluded.name, data = excluded.data, updated = excluded.updated ' +
+  'WHERE excluded.updated > history.updated AND (excluded.data IS NOT history.data OR excluded.name IS NOT history.name)';
+/** Monatswechsel schon erledigt (je Worker-Instanz und Monat) */
+let rolledMonth = '';
 
 /** Laufender Monat in deutscher Zeit, z. B. „2026-10“ */
 function currentMonth() {
@@ -655,6 +660,16 @@ async function memberOwned(db, member, token) {
   return !acc || !acc.token || acc.token === token;
 }
 
+/** Eigener Eintrag im laufenden Monat (Token passt) mit Konto: { token, name } oder { error: 'join' | 'token' | 'konto' } */
+async function teamMember(db, body) {
+  const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
+  if (!me) return { error: 'join' };
+  if (me.token !== (await sha256(body.token))) return { error: 'token' };
+  // Konto auf der Server-Seite gelöscht: nicht mehr schreiben (Lesen geht ohne Konto ohnehin nicht)
+  if (!(await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first())) return { error: 'konto' };
+  return me;
+}
+
 /** Schein an ein Konto geben (ersetzt seine frühere Fassung) */
 const deliver = (db, id, user, text, now) =>
   db
@@ -753,20 +768,36 @@ export default {
       return reportsRequest(env.DB, req, env, h);
     }
 
-    // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei)
+    // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei). Nach CODE_FAILS falschen Codes von
+    // derselben Adresse AUTH_WAIT Minuten Pause – auch für den richtigen (sonst ließe sich weiter durchprobieren)
+    const db = env.DB;
     const teamCode = req.headers.get('X-Team-Code');
+    const codeKey = `code|${clientIp(req)}`;
+    const now0 = Date.now();
+    let codeFails = null;
+    try {
+      codeFails = await db.prepare('SELECT fails, failed FROM auth_fails WHERE key = ?').bind(codeKey).first();
+    } catch (e) {
+      if (!/no such table/i.test(String(e && e.message))) throw e;
+    }
+    if (codeFails && codeFails.fails >= CODE_FAILS && now0 - codeFails.failed < AUTH_WAIT * 60000) return json({ error: 'wait' }, 429, h);
     if (!sameCode(teamCode, env.ADMIN_CODE) && !sameCode(teamCode, await currentTeamCode(env))) {
+      await db.batch([
+        db.prepare(AUTH_FAILS_TABLE),
+        db.prepare('INSERT INTO auth_fails (key, fails, failed) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET fails = CASE WHEN ? - failed > ? THEN 1 ELSE fails + 1 END, failed = ?')
+          .bind(codeKey, now0, now0, AUTH_WAIT * 60000, now0),
+      ]);
       // kurze Pause erschwert das Durchprobieren von Codes
       await new Promise((r) => setTimeout(r, 400));
       return json({ error: 'code' }, 401, h);
     }
+    if (codeFails) await db.prepare('DELETE FROM auth_fails WHERE key = ?').bind(codeKey).run();
 
-    const db = env.DB;
     const month = currentMonth();
     const prevMonth = prevMonthOf(month);
-    // in einem Rutsch (eine Verbindung zur Datenbank statt mehrerer nacheinander). Beim Monatswechsel wandern die
-    // Zettel in history (Vormonat bleibt sichtbar), Älteres wird gelöscht; Nachrichten bleiben (begrenzt auf POSTS_KEEP)
-    await db.batch([
+    // Einmal je Worker-Instanz und Monat, in einem Rutsch: Tabellen anlegen; beim Monatswechsel wandern die Zettel in
+    // history (Vormonat bleibt sichtbar), Älteres wird gelöscht; Nachrichten bleiben (begrenzt auf POSTS_KEEP)
+    if (rolledMonth !== month) await db.batch([
       db.prepare('CREATE TABLE IF NOT EXISTS members (member TEXT PRIMARY KEY, token TEXT NOT NULL, name TEXT, month TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)'),
       db.prepare('CREATE TABLE IF NOT EXISTS posts (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, month TEXT NOT NULL, text TEXT NOT NULL, created INTEGER NOT NULL)'),
       db.prepare(HISTORY_TABLE),
@@ -775,11 +806,15 @@ export default {
       db.prepare('DELETE FROM members WHERE month < ?').bind(month),
       db.prepare('DELETE FROM history WHERE month < ?').bind(prevMonth),
     ]);
+    rolledMonth = month;
 
     const path = new URL(req.url).pathname;
     try {
-      // Antwortzeit für die Server-Seite: so viel Arbeit wie jede Team-Anfrage, ohne Inhalt
-      if (path === '/ping' && req.method === 'GET') return json({ ok: true }, 200, h);
+      // Antwortzeit für die Server-Seite: Team-Code und ein Weg zur Datenbank, ohne Inhalt
+      if (path === '/ping' && req.method === 'GET') {
+        await db.prepare('SELECT 1').first();
+        return json({ ok: true }, 200, h);
+      }
 
       if ((path === '/account' && req.method === 'POST') || (path === '/backup' && req.method === 'PUT')) {
         await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
@@ -802,10 +837,9 @@ export default {
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
         const body = await readBody(req);
         if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
-        // Nur wer im laufenden Monat einen Eintrag hat (Token geprüft), darf schreiben
-        const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
-        if (!me) return json({ error: 'join' }, 403, h);
-        if (me.token !== (await sha256(body.token))) return json({ error: 'token' }, 403, h);
+        // Nur wer im laufenden Monat einen Eintrag hat (Token geprüft) und ein Konto, darf schreiben
+        const me = await teamMember(db, body);
+        if (me.error) return json({ error: me.error }, 403, h);
 
         if (req.method === 'DELETE') {
           await db.prepare('DELETE FROM posts WHERE id = ? AND member = ?').bind(Number(body.id) || 0, body.member).run();
@@ -813,7 +847,7 @@ export default {
         }
         const text = String(body.text ?? '').trim().slice(0, MAX_TEXT);
         if (!text) return json({ error: 'text' }, 400, h);
-        const { n } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE member = ? AND month = ?').bind(body.member, month).first();
+        const { n } = await db.prepare('SELECT COUNT(*) AS n FROM posts WHERE member = ? AND created > ?').bind(body.member, Date.now() - 86400000).first();
         if (n >= MAX_POSTS) return json({ error: 'limit' }, 429, h);
         await db.batch([
           db.prepare('INSERT INTO posts (member, name, month, text, created) VALUES (?, ?, ?, ?, ?)').bind(body.member, me.name, month, text, Date.now()),
@@ -826,9 +860,8 @@ export default {
       if (path === '/ai' && req.method === 'POST') {
         const body = await readBody(req);
         if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
-        const me = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
-        if (!me) return json({ error: 'join' }, 403, h);
-        if (me.token !== (await sha256(body.token))) return json({ error: 'token' }, 403, h);
+        const me = await teamMember(db, body);
+        if (me.error) return json({ error: me.error }, 403, h);
         if (!env.AI) return json({ error: 'ai' }, 503, h);
         await db.exec('CREATE TABLE IF NOT EXISTS ai_cache (key TEXT PRIMARY KEY, result TEXT NOT NULL, created INTEGER NOT NULL)');
         await db.exec('CREATE TABLE IF NOT EXISTS ai_use (member TEXT NOT NULL, day TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (member, day))');
@@ -1116,7 +1149,9 @@ export default {
           .bind(body.member, token, name, month, data, Date.now(), version)
           .run();
         // nachträglich geänderte Zettel des Vormonats
-        if (body.prev && body.prev.month === prevMonth && teamSheetsOk(body.prev.sheets) && JSON.stringify(body.prev.sheets).length <= TEAM_SHEETS_MAX)
+        // (leerer Vormonat nur, wenn es dort schon etwas gab: sonst stünde jeder Neue mit leerer Karte im Vormonat)
+        const prevOk = body.prev && body.prev.month === prevMonth && teamSheetsOk(body.prev.sheets) && JSON.stringify(body.prev.sheets).length <= TEAM_SHEETS_MAX;
+        if (prevOk && (body.prev.sheets.length || (await db.prepare('SELECT 1 AS x FROM history WHERE member = ? AND month = ?').bind(body.member, prevMonth).first())))
           await db
             .prepare(`INSERT INTO history (member, month, name, data, updated) VALUES (?, ?, ?, ?, ?) ${HISTORY_SET}`)
             .bind(body.member, prevMonth, name, JSON.stringify(body.prev.sheets), Date.now())
