@@ -1,7 +1,7 @@
 // Netto-Schätzung für einen Monat: Lohnsteuer nach dem Einkommensteuertarif 2024, 2025 bzw. 2026
 // (Programmablaufplan, vereinfacht) und Sozialabgaben Arbeitnehmeranteil. Ergebnis ist eine Schätzung, keine
-// Lohnabrechnung. Geprüft an echten Abrechnungen 2025 und 2026 (Steuerklasse I, kinderlos, ohne Kirchensteuer):
-// Lohnsteuer und Sozialabgaben stimmen auf den Cent; 2024 an den Prüffällen des BMF.
+// Lohnabrechnung. Geprüft an echten Abrechnungen 2025 und 2026 (Lohnsteuer und Sozialabgaben auf den Cent) und an
+// den Prüffällen des BMF.
 
 const LOHN_2024 = {
   bbgKv: 5175,
@@ -19,7 +19,7 @@ const LOHN_2024 = {
   werbungskosten: 1230,
   sonderausgaben: 36,
   entlastung: 4260,
-  entlastungWeitere: 240,
+  kfb: 9312, // Kinderfreibetrag + Freibetrag für Betreuung je Zähler 1,0 (nur für Soli und Kirchensteuer)
   soliFreigrenze: 18130,
   kirche: 9,
   w1: 13279,
@@ -32,6 +32,7 @@ const LOHN_2024 = {
 const LOHN_2024_NEU = {
   ...LOHN_2024,
   w1: 13432,
+  kfb: 9540,
   tarif: [11784, 17005, 66760, 277825, 954.8, 991.21, 181.19, 10636.31, 18971.06],
 };
 
@@ -51,7 +52,7 @@ const LOHN_2025 = {
   werbungskosten: 1230,
   sonderausgaben: 36,
   entlastung: 4260,
-  entlastungWeitere: 240,
+  kfb: 9600,
   soliFreigrenze: 19950,
   kirche: 9,
   w1: 13785,
@@ -75,8 +76,8 @@ const LOHN_2026 = {
   bavSvFrei: 338, // 4 % der BBG RV je Monat (sozialversicherungsfrei)
   werbungskosten: 1230,
   sonderausgaben: 36,
-  entlastung: 4260, // Steuerklasse II, erstes Kind
-  entlastungWeitere: 240,
+  entlastung: 4260, // Steuerklasse II (weitere Kinder nur als Freibetrag auf Antrag – nicht im Lohnsteuerabzug)
+  kfb: 9756,
   soliFreigrenze: 20350,
   kirche: 9, // Niedersachsen (%)
   // Steuerklasse V/VI
@@ -162,29 +163,31 @@ function nettoMonat(brutto, opts) {
   );
   let frei = vsp;
   if (klasse !== 6) frei += c.werbungskosten + c.sonderausgaben;
-  if (klasse === 2) frei += c.entlastung + c.entlastungWeitere * Math.max(0, kinder - 1);
+  if (klasse === 2) frei += c.entlastung;
   const zve = Math.max(0, Math.floor(jahr - frei));
-  // Jahressteuer und Jahres-Soli nach einem Tarif
+  // Jahressteuer nach einem Tarif; Soli und Kirchensteuer nach der Steuer ohne Kinderfreibeträge (Bemessungsgrundlage,
+  // § 51a EStG): Zähler 0,5 je Kind, in Klasse III 1,0 (Klasse IV: 1,0 mit halbem Betrag), Klasse V/VI keine
   const steuer = (t) => {
-    let st;
-    if (klasse === 3) st = 2 * tarifJahr(Math.floor(zve / 2), t);
-    else if (klasse === 5 || klasse === 6) st = tarif56(zve, t);
-    else st = tarifJahr(zve, t);
+    const tax = (z) => (klasse === 3 ? 2 * tarifJahr(Math.floor(z / 2), t) : klasse === 5 || klasse === 6 ? tarif56(z, t) : tarifJahr(z, t));
+    const kfb = klasse === 5 || klasse === 6 ? 0 : kinder * t.kfb * (klasse === 3 ? 1 : 0.5);
+    const st = tax(zve);
+    const bmg = kfb ? tax(Math.max(0, Math.floor(zve - kfb))) : st;
     const freigrenze = t.soliFreigrenze * (klasse === 3 ? 2 : 1);
-    const soli = st > freigrenze ? Math.min(st * 0.055, (st - freigrenze) * 0.119) : 0;
-    return { st, soli: Math.floor(soli * 100) / 100 };
+    const soli = bmg > freigrenze ? Math.min(bmg * 0.055, (bmg - freigrenze) * 0.119) : 0;
+    return { st, bmg, soli: Math.floor(soli * 100) / 100 };
   };
-  let { st, soli: soliJahr } = steuer(c);
+  let { st, bmg, soli: soliJahr } = steuer(c);
   if (opts.year === 2024 && opts.month === 12) {
     // Dezember 2024: Jahressteuer nach neuem Tarif, abzüglich der elf Monate, die nach altem Tarif zu viel gezahlt wurden
     const neu = steuer(LOHN_2024_NEU);
     const nach = (n, a) => Math.max(0, n - 11 * (a - n));
     st = nach(neu.st, st);
+    bmg = nach(neu.bmg, bmg);
     soliJahr = nach(neu.soli, soliJahr);
   }
   const lohnsteuer = Math.floor((st / 12) * 100) / 100;
   const soli = Math.floor((soliJahr / 12) * 100) / 100;
-  const kirchensteuer = opts.kirche ? Math.floor(((st * c.kirche) / 100 / 12) * 100) / 100 : 0;
+  const kirchensteuer = opts.kirche ? Math.floor(((bmg * c.kirche) / 100 / 12) * 100) / 100 : 0;
 
   const netto = r2(brutto - lohnsteuer - soli - kirchensteuer - kv - rv - av - pv - bav);
   return { brutto: r2(brutto), lohnsteuer, soli, kirchensteuer, kv, rv, av, pv, bav, netto };

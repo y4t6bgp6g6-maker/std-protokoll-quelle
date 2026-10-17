@@ -41,6 +41,7 @@ if (LANG === 'ru') {
       'Für diese Woche gibt es schon einen Zettel': 'На эту неделю табель уже есть', 'Gibt es schon – wird geöffnet': 'Уже есть – открывается',
       'Woche wählen': 'Выбрать неделю', 'Ausgegraute Tage gehören zum anderen Monat': 'Серые дни относятся к другому месяцу',
       'Tippe unten auf „+“ und wähle eine Woche.': 'Нажмите внизу «+» и выберите неделю.',
+      'Netto-Verdienst': 'Нетто-заработок', gesamt: 'всего', gearbeitet: 'отработано', geschätzt: 'оценка', verschiedene: 'разных', h: 'ч',
       'Trag zuerst unter „Optionen“ deinen Namen ein.': 'Сначала укажите имя в «Настройках».',
       mehr: 'больше',
       'Bitte zuerst deinen Namen eintragen': 'Сначала укажите своё имя',
@@ -261,6 +262,10 @@ if (LANG === 'ru') {
 
     patterns: [
       [/^Woche Nr\. (\d+)$/, 'Неделя № $1'],
+      [/^(\d+) Krankmeldung(?:en)?$/, (m, n) => `${n} ${pl(n, 'больничный', 'больничных', 'больничных')}`],
+      [/^(\d{4}) \(wie Jahr\)$/, '$1 (как год)'],
+      [/^(⚠️ )?Steuertarif (\d{4}) unbekannt$/, '$1Налоговая шкала $2 неизвестна'],
+      [/^Lohnabrechnung (\S+) (\d{4}) löschen\?$/, (m, mo, y) => `Удалить расчётный лист за ${tr(mo).toLowerCase()} ${y}?`],
       [/^(\S+): (.+) nicht als Feiertag eingetragen$/, (m, d, h) => `${tr(d)}: ${tr(h)} не внесён как праздник`],
       [/^(Mo|Di|Mi|Do|Fr|Sa|So)(?: – (Mo|Di|Mi|Do|Fr|Sa|So))? (vorheriger|nächster) Monat$/, (m, a, b, w) => {
         const d = { Mo: 'Пн', Di: 'Вт', Mi: 'Ср', Do: 'Чт', Fr: 'Пт', Sa: 'Сб', So: 'Вс' };

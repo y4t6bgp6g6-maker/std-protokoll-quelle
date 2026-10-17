@@ -91,9 +91,10 @@ async function recognizePayslip(file, pass, onProgress = () => {}) {
 const payslipNum = (s) => parseFloat(String(s).replace(/\s+/g, '').replace(/\./g, '').replace(',', '.'));
 const psR2 = (v) => Math.round(v * 100 + (v >= 0 ? 1e-6 : -1e-6)) / 100;
 const psNear = (a, b, tol = 0.011) => a != null && b != null && Math.abs(a - b) < tol;
-/** Euro-Beträge einer Zeile („2.345,60“, auch „500 ,00-“) */
+/** Euro-Beträge einer Zeile („2.345,60“, ohne Tausenderpunkt „2345,60“, auch „500 ,00-“); nie nur das Ende einer
+ *  längeren Zahl („3,360,00“ ist kein Betrag 360,00) */
 function moneyIn(line) {
-  return [...String(line || '').matchAll(/(\d{1,3}(?:\.\d{3})*\s?,\s?\d{2})(?!\d)/g)].map((m) => payslipNum(m[1]));
+  return [...String(line || '').matchAll(/(?<![\d.,])((?:\d{1,3}(?:\.\d{3})+|\d{1,6})\s?,\s?\d{2})(?!\d)/g)].map((m) => payslipNum(m[1]));
 }
 const lastMoney = (line) => moneyIn(line).at(-1) ?? null;
 /** Betrag aus der Zeile mit dem Stichwort oder – steht die Zahl darunter – aus den folgenden Zeilen */
@@ -141,20 +142,27 @@ function payslipMonth(lines) {
   hits.sort((x, y) => !!y.year - !!x.year || y.title - x.title || x.d - y.d || x.li - y.li);
   const byName = hits[0] ? { month: hits[0].month, year: hits[0].year } : null;
   let byDate = null;
+  let print = null; // Druckdatum (Monat, Jahr)
   for (const line of head) {
     const dm = line.match(/(?<!\d)([0-3]\d)\s?[.,]\s?([01]\d)\s?[.,]\s?(20\d\d)(?!\d)/);
     if (dm && Number(dm[2]) >= 1 && Number(dm[2]) <= 12) {
-      const d = new Date(Number(dm[3]), Number(dm[2]) - 2, 1);
+      print = { m: Number(dm[2]), y: Number(dm[3]) };
+      const d = new Date(print.y, print.m - 2, 1);
       byDate = { month: d.getMonth() + 1, year: d.getFullYear() };
       break;
     }
   }
   const now = new Date();
-  const ok = (r) => r && r.year && r.year >= 2015 && r.year * 12 + r.month <= now.getFullYear() * 12 + now.getMonth() + 1;
+  const ym = (r) => r.year * 12 + r.month;
+  // Abrechnungsmonat liegt nie nach dem Druck und höchstens gut ein Jahr davor (Nachberechnungen) – sonst ist das Jahr
+  // verlesen
+  const fits = (r) => !print || (ym(r) <= print.y * 12 + print.m && ym(r) >= print.y * 12 + print.m - 14);
+  const ok = (r) => r && r.year && r.year >= 2015 && ym(r) <= now.getFullYear() * 12 + now.getMonth() + 1 && fits(r);
   if (byName && byDate && byName.month === byDate.month) return { month: byName.month, year: ok(byName) ? byName.year : byDate.year };
   if (ok(byName)) return byName;
-  if (byName && byDate) {
-    const year = byName.month <= byDate.month ? byDate.year : byDate.year - 1;
+  if (byName && print) {
+    // Jahr unlesbar: das letzte, in dem der Monat beim Druck schon begonnen hatte (auch im selben Monat gedruckt)
+    const year = byName.month <= print.m ? print.y : print.y - 1;
     if (ok({ month: byName.month, year })) return { month: byName.month, year };
   }
   if (!byName && ok(byDate)) return byDate;
@@ -168,7 +176,9 @@ const PS_CODES = { 101: 'arbeit', 118: 'ueber', 140: 'urlaub', 145: 'krank', 146
 function payslipLineKind(line) {
   const code = line.match(/^\W{0,4}(\d{3})\b/);
   const label = line.toLowerCase();
-  if (/b\s?av|betr\.?\s?av|altersv/.test(label)) return null;
+  if (/b\s?av|betr\.?\s?av|altersv|umwandl|solidar/.test(label)) return null;
+  // Einmalzahlungen (Urlaubs-, Weihnachtsgeld, Zuschuss zum Krankengeld): Betrag ohne Stunden
+  if (/urlaubsg|weihn|einmal|krankengeld|zuschuss/.test(label)) return 'zulage';
   if (/[üu]bers?t|berstd/.test(label)) return 'ueber';
   if (/urlaub/.test(label)) return 'urlaub';
   // Entgeltfortzahlung = Lohnfortzahlung im Krankheitsfall
@@ -187,7 +197,7 @@ function payslipLineKind(line) {
  * Nachberechnung: + Gutschrift, − Abzug), auszahlung, kvZusatz (Zusatzbeitrag der Krankenkasse, %).
  * fixed: Werte, die nicht direkt gelesen, sondern aus den übrigen berechnet wurden. Fehlendes bleibt null.
  *
- * Die Texterkennung verliest einzelne Zahlen (Stundenlohn „18,40“ als „18740“ oder „28:40“, fehlende Kommas usw.).
+ * Die Texterkennung verliest einzelne Zahlen (Stundenlohn „15,20“ als „15720“ oder „25:20“, fehlende Kommas usw.).
  * Die Abrechnung enthält aber viele Gegenproben, die hier genutzt werden:
  * - Stunden × Stundenlohn (× 1,25 bei Überstunden) = Betrag der Lohnart – der Stundenlohn ist der, mit dem die
  *   meisten Zeilen aufgehen; fehlt in einer Zeile Stunden oder Betrag, folgt es aus dem anderen
@@ -244,6 +254,8 @@ function parsePayslipText(text, opts = {}) {
       if ((zulage == null || code) && !/\d,\d{2}\s?-\s*$/.test(line) && lastMoney(line) != null) zulage = lastMoney(line);
       continue;
     }
+    // Betrag mit Minus hinten ist ein Abzug (z. B. unbezahlter Urlaub), keine Stunden dieser Art
+    if (/\d,\d{2}\s?-\s*$/.test(line)) continue;
     // Zahlen hinter „Std“ (bzw. hinter der Bezeichnung): Menge, Faktor, Prozentsatz, Betrag
     const unit = line.match(/\bS[tli1]d\b\.?/);
     const after = unit ? line.slice(unit.index + unit[0].length) : line.replace(/^\W{0,4}(?:\d\s)?\d{3}\s/, '').replace(/^[^\d]*/, '');
@@ -274,7 +286,7 @@ function parsePayslipText(text, opts = {}) {
       if (m) cand.add(Number(`${m[1]}.${m[2]}`));
     }
   }
-  // Faktor-Spalte mit höchstens einer verlesenen Ziffer („18740“, „178,40“, „28:40“ für 18,40)
+  // Faktor-Spalte mit höchstens einer verlesenen Ziffer („15720“, „157,20“, „25:20“ für 15,20)
   const likeRate = (t, rate) => editDistance(t.replace(/\D/g, ''), String(Math.round(rate * 100))) <= 1;
   let best = null;
   for (const rate of cand) {
@@ -353,8 +365,12 @@ function parsePayslipText(text, opts = {}) {
   }
   if (brutto != null) {
     if (zulage == null && sumLines > 0) {
-      zulage = psR2(brutto - sumLines);
-      if (zulage > 0) fixed.add('zulage');
+      const rest = psR2(brutto - sumLines);
+      // Lohnarten zusammen mehr als das Brutto: eine Zeile ist falsch gelesen – keine negative „Zulage“ daraus machen
+      if (rest >= 0) {
+        zulage = rest;
+        if (rest > 0) fixed.add('zulage');
+      } else fixed.add('brutto');
     }
     if (zulage != null && !psNear(sumLines + zulage, brutto)) {
       // Summe passt nicht: eine Lohnart fehlt oder ist falsch gelesen
@@ -380,7 +396,8 @@ function parsePayslipText(text, opts = {}) {
   const calc = brutto != null && opts.calc ? opts.calc(brutto, r.kvZusatz) : null;
   // Steuern, Sozialabgaben und Netto gemeinsam wählen: Brutto − Steuern − SV = Netto muss aufgehen; jeder Wert zählt,
   // je öfter er im Text steht, unter seinem Etikett gelesen wurde oder zur Rechnung der App passt
-  const stRead = [moneyAfter(lines, /Steuer\s?r.{0,2}ch?t/i), moneyAfter(lines, /Lohn.{0,2}teuer/i, 1)].filter((v) => v > 0);
+  // 0 ist ein gültiger Wert (kleiner Lohn, Azubi, Steuerklasse III)
+  const stRead = [moneyAfter(lines, /Steuer\s?r.{0,2}ch?t/i), moneyAfter(lines, /Lohn.{0,2}teuer/i, 1)].filter((v) => v != null && v >= 0);
   // Steuer-Zeile „L 3.000,00 300,00 … 300,00“: Zahlen hinter dem Steuer-Brutto
   const stLine = svD && lines.find((l) => l.replace(/\D/g, '').split(svD).length === 2 && !/Brutto/i.test(l));
   if (stLine) {
@@ -394,7 +411,7 @@ function parsePayslipText(text, opts = {}) {
   const auszRead = moneyAfter(lines, /Auszahlungs/i);
   const nettoFrom = [nettoRead, auszRead != null ? psR2(auszRead + r.abschlag + r.bav) : null].filter((v) => v > 0);
   if (brutto != null) {
-    const stC = [...new Set([...stRead, calc && calc.lohnsteuer].filter((v) => v > 0 && v < brutto * 0.45))];
+    const stC = [...new Set([...stRead, calc && calc.lohnsteuer].filter((v) => v != null && v >= 0 && v < brutto * 0.45))];
     const svC = new Set(svRead.filter((v) => v > 0));
     if (calc) svC.add(calc.sv);
     for (const st of stC) for (const n of nettoFrom) svC.add(psR2(brutto - st - n));
@@ -421,7 +438,7 @@ function parsePayslipText(text, opts = {}) {
   if (r.brutto != null && r.steuer != null && r.sv != null) {
     r.netto = psR2(r.brutto - r.steuer - r.sv);
     r.auszahlung = psR2(r.netto - r.abschlag - r.bav);
-    // Weitere Netto-Be-/Abzüge (z. B. „aus NB 01/2025 10,33“): Unterschied zur gelesenen Auszahlung, wenn er im Text steht
+    // Weitere Netto-Be-/Abzüge (z. B. „aus NB 03/2024 12,34“): Unterschied zur gelesenen Auszahlung, wenn er im Text steht
     const extra = auszRead != null ? psR2(auszRead - r.auszahlung) : 0;
     if (Math.abs(extra) >= 0.01 && seen(Math.abs(extra))) {
       r.nettoSonst = extra;

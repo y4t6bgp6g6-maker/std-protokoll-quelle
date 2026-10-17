@@ -82,7 +82,7 @@ const ovcEuro = (v) => `${Math.round(v).toLocaleString('de-DE')} €`;
 
 /** Kleine Karten: Titel, Zahl (mit kleiner Einheit), Farbe der Zahl, Zeile darunter */
 const OVC_SMALL = {
-  krank: { label: 'Krankheitstage', get: (f) => ({ num: fmtNum(f.krank), cls: 'sick', sub: plural(f.krankSpells, 'Meldung', 'Meldungen') }) },
+  krank: { label: 'Krankheitstage', get: (f) => ({ num: fmtNum(f.krank), cls: 'sick', sub: plural(f.krankSpells, 'Krankmeldung', 'Krankmeldungen') }) },
   ueber: { label: 'Überstunden', get: (f) => ({ num: fmtSigned(f.ot).replace(' h', ''), unit: 'h', cls: balanceClass(f.ot), sub: 'Saldo' }) },
   schnitt: {
     label: 'Ø pro Tag',
@@ -99,7 +99,8 @@ const OVC_SMALL = {
   baustellen: { label: 'Baustellen', get: (f) => ({ num: fmtNum(f.sites.size), sub: 'verschiedene' }) },
 };
 
-const MONTH_LETTER = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+/** Anfangsbuchstabe des Monats in der angezeigten Sprache (die Übersetzung kennt einzelne Buchstaben nicht) */
+const monthLetter = (k) => (typeof tr === 'function' ? tr(MONTHS[k]) : MONTHS[k]).charAt(0);
 
 /** Ring aus Abschnitten [{ v, cls }]; Abschnitte zeichnen sich nacheinander im Uhrzeigersinn */
 function ovcDonut(parts, center, label) {
@@ -130,7 +131,9 @@ function ovcBars(cols, fmt) {
   const dn = Math.max(0, ...cols.map((c) => (c ? Math.max(0, -c.v) : 0)));
   const span = up + dn || 1;
   const top = dn ? (up / span) * 100 : 100;
-  const pct = (v) => (Math.abs(v) / span) * 100;
+  // Höhe einer Säule in ihrem Bereich (über bzw. unter der Nulllinie) – ein Bereich ohne Werte bleibt leer
+  const upH = (v) => (up ? (Math.abs(v) / up) * 100 : 0);
+  const dnH = (v) => (dn ? (Math.abs(v) / dn) * 100 : 0);
   return `<div class="ovc-bars">
     ${cols
       .map((c, k) => {
@@ -138,13 +141,13 @@ function ovcBars(cols, fmt) {
         const plan = c?.plan || 0;
         const val = v || plan ? `<span class="ovc-val">${fmt(v + plan)}</span>` : '';
         const segs = (c?.segs || [{ v, cls: c?.cls }]).filter((x) => x.v);
-        const bars = segs.map((x) => `<i class="ovc-bar ${x.cls || ''}" style="height:${pct(x.v) * (100 / top)}%"></i>`).join('');
+        const bars = (h) => segs.map((x) => `<i class="ovc-bar ${x.cls || ''}" style="height:${h(x.v)}%"></i>`).join('');
         return `<div class="ovc-col" style="--i:${k}"><div class="ovc-plot">
           <div class="ovc-up" style="height:${top}%">
-            ${v >= 0 ? val : ''}${plan ? `<i class="ovc-bar plan" style="height:${pct(plan) * (100 / top)}%"></i>` : ''}${v > 0 ? bars : ''}${!v && !plan ? '<i class="ovc-bar ovc-none"></i>' : ''}
+            ${v >= 0 ? val : ''}${plan ? `<i class="ovc-bar plan" style="height:${upH(plan)}%"></i>` : ''}${v > 0 ? bars(upH) : ''}${!v && !plan ? '<i class="ovc-bar ovc-none"></i>' : ''}
           </div>
-          ${dn ? `<div class="ovc-dn" style="height:${100 - top}%">${v < 0 ? bars.replace(/height:([\d.]+)%/, (m, h) => `height:${(h * top) / (100 - top)}%`) + val : ''}</div>` : ''}
-          </div><span class="ovc-m">${MONTH_LETTER[k]}</span>
+          ${dn ? `<div class="ovc-dn" style="height:${100 - top}%">${v < 0 ? bars(dnH) + val : ''}</div>` : ''}
+          </div><span class="ovc-m" translate="no">${monthLetter(k)}</span>
         </div>`;
       })
       .join('')}
