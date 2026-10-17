@@ -426,12 +426,18 @@ function monthHoursSplit(year, month) {
   const missing = monthGaps(year, month);
   const day = settings.hoursPerDay;
   for (const d = new Date(year, month - 1, 1); d.getMonth() === month - 1; d.setDate(d.getDate() + 1)) {
-    if (d.getDay() === 0 || d.getDay() === 6) continue;
     const entry = byDate.get(isoDate(d));
+    const wd = (d.getDay() + 6) % 7;
+    // von Hand gesetzt (3 s drücken): zählt, was eingetragen ist – auch an Sa/So und an Feiertagen
+    if (entry && entry.manual) {
+      if (['urlaub', 'krank', 'feiertag'].includes(entry.status)) h[entry.status] += dayCredit(entry, wd) / 60;
+      continue;
+    }
+    if (wd >= 5) continue;
     if (holidayName(d)) h.feiertag += day;
     else if (!entry) continue;
-    else if (entry.status === 'urlaub') h.urlaub += dayCredit(entry, (d.getDay() + 6) % 7) / 60;
-    else if (entry.status === 'krank') h.krank += dayCredit(entry, (d.getDay() + 6) % 7) / 60;
+    else if (entry.status === 'urlaub') h.urlaub += dayCredit(entry, wd) / 60;
+    else if (entry.status === 'krank') h.krank += dayCredit(entry, wd) / 60;
   }
   const ot = ((overtimeAccount().get(year) || new Map()).get(month) || 0) / 60;
   h.ueber = Math.max(0, ot);
@@ -2589,16 +2595,25 @@ const dayCollapsed = (s, i) => {
   return i >= 5 && !d.status && !d.pause && d.rows.every(rowIsEmpty) && !expandedDays.has(`${s.id}:${i}`);
 };
 
+/** Tagesart-Kapsel: Knopf mit Auswahl (Mo–Fr ohne Feiertag) oder nur Anzeige; 3 s drücken geht immer (data-hold).
+ *  tag = Etikett der kompakten Tagesart-Zeile (mit Symbol und Stunden) */
+function statusChipHTML(s, i, tag) {
+  const day = s.days[i];
+  const cls = `chip-btn status-btn ${tag ? 'set status-tag' : day.status ? 'set status-' + day.status : ''}`;
+  const text = tag
+    ? `${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(dayCredit(day, i))}`
+    : day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit';
+  return i < 5 && day.status !== 'feiertag' && !holidayName(sheetDate(s, i))
+    ? `<button class="${cls}" data-act="status" data-hold="status">${text} ▾</button>`
+    : `<span class="${cls}" data-hold="status">${text}</span>`;
+}
+
 function dayHTML(s, i) {
   const day = s.days[i];
   const date = sheetDate(s, i);
   const head = `<div class="day-head">
       <div class="day-when"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${reportChipHTML(s, i)}${teamDayChipHTML(s, i)}</div>
-      <div class="day-actions">
-        ${i >= 5 || holidayName(date)
-          ? `<span class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-hold="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'}</span>`
-          : `<button class="chip-btn status-btn ${day.status ? 'set status-' + day.status : ''}" data-act="status" data-hold="status">${day.status ? DAY_STATUS_SHORT[day.status] : 'Arbeit'} ▾</button>`}
-      </div>
+      <div class="day-actions">${statusChipHTML(s, i, false)}</div>
     </div>`;
   if (dayCollapsed(s, i)) {
     return `<section class="day collapsed wd-${i}" data-day="${i}">
@@ -2626,9 +2641,7 @@ function dayHTML(s, i) {
     return `<section class="day status-day status-${day.status} wd-${i}${working ? ' has-work' : ''}" data-day="${i}">
       <div class="day-head status-head">
         <div class="status-when"><div class="status-day-line"><b>${WEEKDAYS[i]}</b> <span class="muted">${fmtDayMonth(date)}</span>${statusWarnHTML(s, i)}${teamDayChipHTML(s, i)}</div>${holiday ? `<div class="status-sub">${escapeHtml(holiday)}</div>` : ''}</div>
-        ${i < 5 && day.status !== 'feiertag' && !holidayName(date)
-          ? `<button class="chip-btn status-btn set status-tag" data-act="status" data-hold="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(dayCredit(day, i))} ▾</button>`
-          : `<span class="chip-btn status-btn set status-tag" data-hold="status">${ICON[day.status]} ${DAY_STATUS_SHORT[day.status]} · ${fmtH(dayCredit(day, i))}</span>`}
+        ${statusChipHTML(s, i, true)}
       </div>
       ${extra}
     </section>`;
@@ -2710,7 +2723,6 @@ document.addEventListener('pointerdown', (e) => {
     timer: setTimeout(() => {
       statusPress = null;
       statusPressDone = true;
-      setTimeout(() => (statusPressDone = false), 800);
       haptic();
       chooseStatusHold(el);
     }, STATUS_HOLD),
@@ -2719,7 +2731,13 @@ document.addEventListener('pointerdown', (e) => {
 document.addEventListener('pointermove', (e) => {
   if (statusPress && Math.hypot(e.clientX - statusPress.x, e.clientY - statusPress.y) > 10) statusPressEnd();
 });
-['pointerup', 'pointercancel'].forEach((t) => document.addEventListener(t, statusPressEnd));
+['pointerup', 'pointercancel'].forEach((t) =>
+  document.addEventListener(t, () => {
+    statusPressEnd();
+    // der click zum Loslassen kommt erst danach – egal wie lange gedrückt wurde
+    if (statusPressDone) setTimeout(() => (statusPressDone = false), 400);
+  })
+);
 window.addEventListener('scroll', statusPressEnd, { passive: true });
 // Nach dem langen Drücken nicht noch die normale Auswahl öffnen
 document.addEventListener('click', (e) => {
@@ -6207,29 +6225,39 @@ document.addEventListener('contextmenu', (e) => {
 // Lange auf eine Tageskarte drücken (nicht auf eine Zeile – die zieht man einzeln), dann auf einen anderen Tag der Woche
 // ziehen: beide tauschen Zeilen, Pause und Tagesart. Feiertage bleiben an ihrem Datum; Urlaub, Krank … nicht auf Sa/So.
 // Wie jede Änderung: danach haben beide Tage „Speichern“.
+// Elemente mit eigenem langem Drücken (data-hold, z. B. die Tagesart-Kapsel) starten das Ziehen nicht.
 
 let dayPress = null; // { dayEl, timer, x, y }
 let dayDrag = null; // { from, ghost, target, scroll }
 
-/** Was am Tag mitwandert (Feiertag gehört zum Datum) */
-const dayMoveStatus = (d) => (d.status && d.status !== 'feiertag' ? d.status : undefined);
+/** Was am Tag mitwandert (ein automatischer Feiertag gehört zum Datum, ein von Hand gesetzter wandert mit) */
+const dayMoveStatus = (d) => (d.status && (d.status !== 'feiertag' || d.manual) ? d.status : undefined);
 const dayHasContent = (d) => !!dayMoveStatus(d) || d.pause != null || d.rows.some((r) => !rowIsEmpty(r));
-/** Ziel erlaubt? Anderer Tag dieses Monats; keine Tagesart (außer Feiertag) auf Sa/So */
+/** Ziel erlaubt? Anderer Tag dieses Monats; keine Tagesart (außer Feiertag) auf Sa/So – von Hand gesetzte dürfen dorthin */
 function daySwapOk(s, a, b) {
   if (a === b || !sheetIsActive(s, b)) return false;
-  return !((b >= 5 && dayMoveStatus(s.days[a])) || (a >= 5 && dayMoveStatus(s.days[b])));
+  const toWeekend = (d) => dayMoveStatus(d) && !d.manual;
+  return !((b >= 5 && toWeekend(s.days[a])) || (a >= 5 && toWeekend(s.days[b])));
 }
 function swapDays(s, a, b) {
   const A = s.days[a];
   const B = s.days[b];
-  const take = (d) => ({ rows: d.rows, pause: d.pause, status: dayMoveStatus(d) });
+  // Stunden und „von Hand“ wandern mit der Tagesart; „von Hand“ ohne Tagesart (kein Auto-Feiertag) bleibt am Datum
+  const take = (d) => {
+    const status = dayMoveStatus(d);
+    return { rows: d.rows, pause: d.pause, status, credit: status ? d.credit : undefined, manual: !!status && d.manual };
+  };
   const put = (d, x) => {
     d.rows = x.rows.length ? x.rows : [emptyRow()];
     d.pause = x.pause;
-    if (d.status !== 'feiertag') {
-      if (x.status) d.status = x.status;
-      else delete d.status;
-    }
+    if (d.status === 'feiertag' && !d.manual) return;
+    const dateManual = d.manual && !d.status;
+    if (x.status) d.status = x.status;
+    else delete d.status;
+    if (x.credit != null) d.credit = x.credit;
+    else delete d.credit;
+    if (x.manual || dateManual) d.manual = true;
+    else delete d.manual;
   };
   const ta = take(A);
   put(A, take(B));
@@ -6300,7 +6328,7 @@ document.addEventListener(
   'touchstart',
   (e) => {
     const dayEl = e.target.closest('#days .day');
-    if (!dayEl || e.touches.length > 1 || e.target.closest('.row, input, textarea, button, a, select')) return;
+    if (!dayEl || e.touches.length > 1 || e.target.closest('.row, input, textarea, button, a, select, [data-hold]')) return;
     const t = e.touches[0];
     dayPress = { dayEl, x: t.clientX, y: t.clientY, timer: setTimeout(startDayDrag, 450) };
   },

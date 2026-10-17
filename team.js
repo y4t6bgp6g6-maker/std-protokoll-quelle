@@ -424,6 +424,7 @@ function teamClean(members) {
         days: s.days.map((d) => ({
           status: Object.hasOwn(DAY_STATUS_SHORT, d && d.status) ? d.status : undefined,
           credit: num(d && d.credit),
+          manual: d && d.manual === true ? true : undefined,
           pause: num(d && d.pause),
           rows: (Array.isArray(d && d.rows) ? d.rows : []).map((r) => ({
             start: num(r && r.start),
@@ -971,7 +972,7 @@ function renderTeamSheet(id, weekStart) {
   const time = (v) => (v == null ? '–' : fmtTime(v));
   // Sa/So nur mit Einträgen (ein automatisch eingetragener Feiertag am Wochenende zählt nicht)
   const blocks = sheetActiveDays(s)
-    .filter((i) => i < 5 || teamDayRows(s.days[i]).length > 0)
+    .filter((i) => i < 5 || teamDayRows(s.days[i]).length > 0 || s.days[i].manual)
     .map((i) => {
       const d = s.days[i];
       const rows = teamDayRows(d);
@@ -1018,7 +1019,7 @@ function teamDayOf(m, iso) {
   return null;
 }
 /** Hat jemand zu dem Tag etwas geschrieben? Arbeit oder eine Tagesart wie Urlaub; ein von selbst eingetragener Feiertag zählt nicht */
-const teamDayWritten = (d) => !!d && (teamDayRows(d).length > 0 || (!!d.status && d.status !== 'feiertag'));
+const teamDayWritten = (d) => !!d && (teamDayRows(d).length > 0 || (!!d.status && (d.status !== 'feiertag' || !!d.manual)));
 /** Kollegen mit einem Eintrag an diesem Tag */
 const teamOnDay = (iso) => (team ? teamMembersAll().filter((m) => teamDayWritten(teamDayOf(m, iso)?.d)) : []);
 
