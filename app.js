@@ -158,7 +158,14 @@ const sheetIsActive = (s, i) => {
   const d = sheetDate(s, i);
   return d.getFullYear() === s.year && d.getMonth() + 1 === s.month;
 };
-const sheetActiveDays = (s) => [0, 1, 2, 3, 4, 5, 6].filter((i) => sheetIsActive(s, i));
+/** Tage des Zettels im eigenen Monat – hängt nur von Woche und Monat ab, daher gemerkt (nicht verändern!) */
+const activeDaysCache = new Map();
+const sheetActiveDays = (s) => {
+  const k = `${s.weekStart}|${s.year}|${s.month}`;
+  let v = activeDaysCache.get(k);
+  if (!v) activeDaysCache.set(k, (v = Object.freeze([0, 1, 2, 3, 4, 5, 6].filter((i) => sheetIsActive(s, i)))));
+  return v;
+};
 const sheetFirstDate = (s) => sheetDate(s, sheetActiveDays(s)[0] ?? 0);
 const sheetLastDate = (s) => sheetDate(s, sheetActiveDays(s).at(-1) ?? 6);
 const sheetTitle = (s) => `Stundenzettel ${fmtShort(sheetFirstDate(s))} - ${fmtShort(sheetLastDate(s))}`;
@@ -961,7 +968,8 @@ function markHolidays(s, weekendOnly) {
 /** Hinweise vor dem Senden: unvollständige Zeilen, Überschneidungen, fehlende Angaben, leere Werktage */
 function sheetProblems(s) {
   const problems = [];
-  if (pdfCharHint(s.name)) problems.push(`Name: ${pdfCharHint(s.name)}`);
+  if (!String(s.name || '').trim()) problems.push('Name fehlt (in den Einstellungen)');
+  else if (pdfCharHint(s.name)) problems.push(`Name: ${pdfCharHint(s.name)}`);
   s.days.forEach((d, i) => {
     const sw = statusWarning(s, i);
     if (sw) problems.push(`${WEEKDAYS[i]}: ${sw}`);
@@ -1845,6 +1853,7 @@ function route() {
     return;
   }
   const prevView = currentView;
+  pdfPagesView = null; // Vorschau der neuen Seite beginnt beim ersten Blatt
   routedHash = location.hash;
   routedLen = history.length;
   if (backTarget) {
@@ -2126,7 +2135,7 @@ function gapRowHTML(gap) {
   const oldest = gap.at(-1);
   const partial = (n) => sheetActiveDays(n).length < 7;
   const kw = (n) => isoWeek(parseDate(n.weekStart));
-  return `<button class="list-gap" data-act="gap" data-date="${isoDate(sheetFirstDate(oldest))}" data-count="${gap.length}">
+  return `<button class="list-gap" data-act="gap" data-date="${isoDate(sheetFirstDate(oldest))}">
     <span class="list-kw">KW ${gap.length === 1 ? kw(newest) : `${kw(oldest)}–${kw(newest)}`}</span>
     <span class="list-main"><span class="list-title">${fmtDayMonth(sheetFirstDate(oldest))} – ${fmtDayMonth(sheetLastDate(newest))} ${
       gap.length === 1 ? `fehlt${partial(newest) ? ' (Teilwoche)' : ''}` : 'fehlen'
@@ -2250,7 +2259,11 @@ function searchSheet(s, query) {
 
 function refreshListBody() {
   const body = document.getElementById('list-body');
-  if (body) body.innerHTML = listBodyHTML();
+  if (!body) return;
+  const key = JSON.stringify(parseQuery(searchQuery || ''));
+  if (body.dataset.q === key) return;
+  body.dataset.q = key;
+  body.innerHTML = listBodyHTML();
 }
 
 /** Höhe der festen Kopfzeile, damit Sprungziele nicht darunter verschwinden */
@@ -2404,7 +2417,7 @@ function overtimeYearHTML(year, months) {
         // Gesamtstunden gleich, aber anders verbucht: Überstunden (wegen des Zuschlags) orange, andere Arten grün
         const off = (k) => Math.abs(c.hourDiff[k]) >= 0.01;
         const euro = withPay && Math.abs(d.e) >= 0.5 ? ` · <span>${d.e < 0 ? 'zu wenig' : 'zu viel'}</span> ${fmtMoney(Math.abs(d.e))} Netto` : '';
-        if (Math.abs(d.h) >= 0.01) line = `<div class="ov-verdict ${d.h < 0 || d.e < 0 ? 'neg' : 'ok'}">${diffText(d)}</div>`;
+        if (Math.abs(d.h) >= 0.01) line = `<div class="ov-verdict ${d.h < 0 || (withPay && d.e <= -0.5) ? 'neg' : 'ok'}">${diffText(d)}</div>`;
         else if (off('ueber')) line = `<div class="ov-verdict neg"><span>Überstunden falsch verbucht</span>${euro}</div>`;
         else if (HOUR_KINDS.some(([k]) => off(k)) || !ok(d))
           line = `<div class="ov-verdict ${d.e < 0 && euro ? 'neg' : 'ok'}"><span>Gesamtstunden stimmen</span>${euro}</div>`;
@@ -3051,6 +3064,7 @@ let pdfPagesView = null;
 function updatePdfThumb(now = false) {
   clearTimeout(pdfThumbTimer);
   const run = () => {
+    pdfThumbTimer = 0;
     const img = document.getElementById('pdf-thumb');
     if (!img) return;
     if (pdfPagesView !== currentView) (pdfPage = 0), (pdfPagesView = currentView);
@@ -3109,7 +3123,7 @@ const pdfThumbHTML = (what, wide = false) => `<div class="pv-box">
  * komplett über eigene Touch-Steuerung per transform – kein Scrollen des Browsers dazwischen, daher kein Zittern.
  */
 function openPdfPreview() {
-  updatePdfThumb(true);
+  if (currentView !== 'editor' || pdfThumbTimer || !pdfUrl) updatePdfThumb(true);
   const wide = currentView === 'trip'; // Reisekosten: A4 quer
   const modal = openModal(
     `<div class="pv-head"><span></span><b>Vorschau</b><button class="modal-btn strong" data-m="ok">Fertig</button></div>
@@ -3170,6 +3184,12 @@ function openPdfPreview() {
   requestAnimationFrame(layout);
   const onResize = () => (box.isConnected ? layout() : window.removeEventListener('resize', onResize));
   window.addEventListener('resize', onResize);
+  // Fenster zu: Listener gleich abmelden
+  new MutationObserver((_, obs) => {
+    if (box.isConnected) return;
+    window.removeEventListener('resize', onResize);
+    obs.disconnect();
+  }).observe(layer, { childList: true });
 
   /** Weich zu einem Zustand gleiten (nach dem Loslassen, Doppeltipp) */
   let anim = 0;
@@ -3357,7 +3377,7 @@ function downloadFile(file) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 async function sharePdf(s, isSend) {
