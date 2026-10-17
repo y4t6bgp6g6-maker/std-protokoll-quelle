@@ -3382,7 +3382,7 @@ async function sharePdf(s, isSend) {
     downloadFile(file);
   }
   if (isSend && !s.sentAt) {
-    confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann wird er in der Liste mit einem Haken markiert.', 'Ja, gesendet', () => {
+    confirmDialog('Wurde der Stundenzettel gesendet?', 'Dann ist die KW in der Liste nicht mehr orange.', 'Ja, gesendet', () => {
       s.sentAt = Date.now();
       saveSheets(s);
     });

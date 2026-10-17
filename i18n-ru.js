@@ -60,7 +60,7 @@ if (LANG === 'ru') {
       'Als PDF senden': 'Отправить PDF', 'Als gesendet markieren': 'Отметить как отправленный', 'Als gesendet markiert': 'Отмечен как отправленный',
       'Als offen markieren': 'Отметить как неотправленный', 'Als offen markiert': 'Отмечен как неотправленный',
       'Wurde der Stundenzettel gesendet?': 'Табель отправлен?', 'Ja, gesendet': 'Да, отправлен',
-      'Dann wird er in der Liste mit einem Haken markiert.': 'Тогда в списке он будет отмечен галочкой.',
+      'Dann ist die KW in der Liste nicht mehr orange.': 'Тогда неделя в списке больше не будет оранжевой.',
       'Speichern und senden': 'Сохранить и отправить', 'Steht auf jedem neuen Stundenzettel': 'Стоит на каждом новом табеле',
       'PDF-Vorschau': 'Предпросмотр PDF', 'Antippen zum Vergrößern': 'Нажмите, чтобы увеличить', 'PDF-Vorschau vergrößern': 'Увеличить предпросмотр PDF',
       'PDF konnte nicht erstellt werden': 'Не удалось создать PDF', 'Nächstes Blatt': 'Следующий лист', 'Vorheriges Blatt': 'Предыдущий лист',
