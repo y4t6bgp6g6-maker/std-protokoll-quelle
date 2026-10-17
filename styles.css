@@ -667,6 +667,7 @@ textarea.txt { font: inherit; font-size: 16px; line-height: 1.3; color: inherit;
 .wp-strip > .wp-grid { flex: none; width: 33.3333%; }
 .wp-preview { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 14px 0 0; text-align: center; }
 .wp-preview .muted { font-size: 13px; }
+.wp-import { display: flex; align-items: center; gap: 6px; margin: 0 auto 6px; font-weight: 500; }
 
 /* Aktionsmenü */
 .modal.actions { padding: 0 8px calc(8px + env(safe-area-inset-bottom)); }

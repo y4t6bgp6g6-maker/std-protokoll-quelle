@@ -4910,11 +4910,13 @@ function timePicker(title, initial, hasValue, onDone, onCancel = null) {
 }
 
 /** Wochenwahl; forTrip: für eine Reisekostenabrechnung (ganze Woche, ohne Hinweise zu Stundenzetteln) */
-function weekPicker(initial, excludeId, onPick, forTrip = false) {
+function weekPicker(initial, excludeId, onPick, forTrip = false, withImport = false) {
   let selected = startOfDay(initial);
   let month = new Date(selected.getFullYear(), selected.getMonth(), 1);
   const modal = openModal(`${modalHead('Woche wählen', 'Übernehmen')}<div class="wp"></div>`, 'sheet wp-sheet');
   const wp = modal.querySelector('.wp');
+  if (withImport) wp.insertAdjacentHTML('afterend', `<button class="modal-wide wp-import" data-wp="import">${ICON.doc} Datei einlesen …</button>`);
+  const openedAt = Date.now();
 
   // Wochen, für die es schon einen Zettel bzw. eine Abrechnung gibt: Montag → 'sent' oder 'open' (offen hat Vorrang)
   const known = new Map();
@@ -5069,7 +5071,13 @@ function weekPicker(initial, excludeId, onPick, forTrip = false) {
       selected = parseDate(t.dataset.date);
     }
     else if (t.dataset.m === 'cancel') return closeModal();
-    else if (t.dataset.m === 'ok') {
+    else if (t.dataset.wp === 'import') {
+      // Kurz nach dem Öffnen nicht (zweites Antippen des „+“ liegt an derselben Stelle)
+      if (Date.now() - openedAt < 600) return;
+      // Dateiauswahl direkt im Antippen öffnen (sonst blockiert Safari sie)
+      pickImportFile();
+      return closeModal();
+    } else if (t.dataset.m === 'ok') {
       closeModal();
       onPick(selected);
       return;
@@ -5659,9 +5667,10 @@ document.addEventListener('click', (e) => {
       break;
     }
     case 'new':
+      // Wochenauswahl mit „Datei einlesen …“
       weekPicker(new Date(), null, (anchor) => {
         location.hash = `#/zettel/${encodeURIComponent(openOrCreate(anchor))}`;
-      });
+      }, false, true);
       break;
     case 'gap': {
       // Fehlende Woche: einlesen oder neu erstellen (dann immer erst die Wochenauswahl, bei der ersten fehlenden Woche)

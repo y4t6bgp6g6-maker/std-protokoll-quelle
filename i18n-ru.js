@@ -232,7 +232,7 @@ if (LANG === 'ru') {
       'Betreff kopiert – in Mail bei „Betreff“ einsetzen': 'Тема скопирована – вставьте в письмо в поле «Тема»',
 
       // ── Einlesen, Konflikte ──
-      'Stundenzettel einlesen …': 'Загрузить табели …', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
+      'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
       'Einlesen nicht möglich': 'Загрузка невозможна', 'Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.': 'Можно загружать и табели Numbers или PDF, а также наряды.',
       'Keine Numbers-Datei': 'Не файл Numbers', 'Keine PDF-Datei': 'Не файл PDF', 'Keine ZIP-Datei': 'Не файл ZIP', 'Keine Seite gefunden': 'Страница не найдена',
       'Keine Tabelle gefunden': 'Таблица не найдена', 'Keine Wochentage gefunden': 'Дни недели не найдены', 'Kein Datum („Woche von“) gefunden': 'Дата («Неделя с») не найдена',
