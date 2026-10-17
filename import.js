@@ -904,11 +904,11 @@ function fixWeekYear(parsed, fileName) {
  * entsteht wie in der App je Monat ein Zettel mit den Tagen dieses Monats – für jeden Monat mit Einträgen; steht
  * gar nichts im Zettel, ein leerer für den Monat von „Woche von“.
  */
-function parsedToSheets(parsed, fileName) {
-  const from = fixWeekYear(parsed, fileName);
+function parsedToSheets(parsed, fileName, chosen) {
+  const from = chosen || parsed.from;
   const anchor = from || dateFromFileName(fileName);
   if (!anchor) throw new Error('Kein Datum („Woche von“) gefunden');
-  // Datum korrigiert: in der Rückmeldung nennen
+  // Datum geändert (Vorschlag bestätigt): in der Rückmeldung nennen
   const yearFixed = from && from !== parsed.from ? fmtShort(parsed.from) : '';
   // Eigener Name aus den Einstellungen hat Vorrang (z. B. beim Einlesen des Zettels eines Kollegen)
   const s = newSheet(anchor, settings.name.trim() || parsed.name || '');
@@ -957,22 +957,37 @@ function parsedToSheets(parsed, fileName) {
   return result;
 }
 
-/** Eine Datei (ArrayBuffer) einlesen → Stundenzettel (bei Wochen über ein Monatsende einer je Monat) */
-async function importTimesheetFile(name, buf) {
+/** Eine Datei (ArrayBuffer) einlesen → Stundenzettel (bei Wochen über ein Monatsende einer je Monat).
+ *  Ist „Woche von“ kein Montag, entscheidet askDate(stated, proposed) → gewähltes Datum oder null (nicht einlesen);
+ *  ohne askDate gilt der Vorschlag */
+async function importTimesheetFile(name, buf, askDate = null) {
   const lower = name.toLowerCase();
   const head = new Uint8Array(buf.slice(0, 4));
   const isPdf = lower.endsWith('.pdf') || (head[0] === 0x25 && head[1] === 0x50);
-  if (isPdf) return parsedToSheets(pdfItemsToParsed(await readPdfItems(buf)), name);
+  const finish = async (parsed) => {
+    const proposed = fixWeekYear(parsed, name);
+    let chosen = proposed;
+    if (askDate && parsed.from && proposed && proposed !== parsed.from) {
+      chosen = await askDate(parsed.from, proposed);
+      if (!chosen) throw new Error('skip');
+    }
+    return parsedToSheets(parsed, name, chosen);
+  };
+  if (isPdf) return finish(pdfItemsToParsed(await readPdfItems(buf)));
   // Numbers-Dateien sind ZIP-Archive (beginnen mit „PK“)
   if (!(head[0] === 0x50 && head[1] === 0x4b)) throw new Error('nur Numbers-, PDF- oder Sicherungsdateien');
   const tables = await readNumbersTables(buf);
   let lastError = null;
   for (const t of tables) {
+    let parsed;
     try {
-      return parsedToSheets(gridToParsed(t.grid), name);
+      parsed = gridToParsed(t.grid);
+      parsedToSheets(parsed, name); // Probe: passt diese Tabelle?
     } catch (e) {
       lastError = e;
+      continue;
     }
+    return finish(parsed);
   }
   throw lastError || new Error('Keine Tabelle gefunden');
 }

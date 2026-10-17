@@ -4495,7 +4495,7 @@ async function importBackup(input) {
         continue;
       }
       // Woche über ein Monatsende: ein Zettel je Monat
-      for (const s of await importTimesheetFile(file.name, buf)) {
+      for (const s of await importTimesheetFile(file.name, buf, (stated, proposed) => askImportDate(file.name, stated, proposed))) {
         const existing = existingSheet(sheetFirstDate(s));
         const other = s.importedName && s.importedName.trim() !== s.name;
         const yearFixed = s.yearFixed;
@@ -4523,7 +4523,8 @@ async function importBackup(input) {
         );
       }
     } catch (e) {
-      lines.push(`${label}: konnte nicht gelesen werden${e && e.message && e.message !== 'format' ? ` (${escapeHtml(e.message)})` : ''}`);
+      if (e && e.message === 'skip') lines.push(`${label}: nicht eingelesen`);
+      else lines.push(`${label}: konnte nicht gelesen werden${e && e.message && e.message !== 'format' ? ` (${escapeHtml(e.message)})` : ''}`);
     } finally {
       markNew(file, json);
     }
@@ -4643,6 +4644,40 @@ function scrollBar(modal) {
 }
 
 /** Rückfrage bei einem doppelten Zettel (oder einer Abrechnung) mit Unterschieden; Ergebnis: 'keep' | 'replace' | 'keepAll' | 'replaceAll' */
+/** „Woche von“ ist kein Montag (Jahr oder Monat vertippt): Vorschlag bestätigen, wie im Zettel lassen oder nicht einlesen.
+ *  Ergebnis: Datum für „Woche von“ oder null */
+function askImportDate(fileName, stated, proposed) {
+  return new Promise((resolve) => {
+    const range = (d) => `${fmtShort(d)} – ${fmtShort(addDays(d, 6))}`;
+    const asIs = mondayOf(stated);
+    document.getElementById('toast').classList.remove('show'); // „Wird eingelesen …“ ausblenden, solange gefragt wird
+    const modal = openModal(
+      `<div class="alert-body"><b>Datum prüfen</b><div class="alert-msg">
+        <p><b>${escapeHtml(fileName)}</b></p>
+        <p>Im Zettel steht ${range(stated)}. Der ${fmtShort(stated)} ist aber ein ${WEEKDAYS[(stated.getDay() + 6) % 7]}.</p>
+      </div></div>
+      <div class="alert-buttons stacked">
+        <button data-c="proposed" class="strong"><span class="ad-hint">Wahrscheinlich gemeint</span>${range(proposed)}</button>
+        <button data-c="asis"><span class="ad-hint">Weniger wahrscheinlich</span>${range(asIs)}</button>
+        <button data-c="skip">Nicht einlesen</button>
+      </div>`,
+      'alert'
+    );
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      closeModal();
+      setTimeout(() => resolve(v), 280);
+    };
+    modal.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-c]');
+      if (b) finish(b.dataset.c === 'proposed' ? proposed : b.dataset.c === 'asis' ? asIs : null);
+    });
+    layer.querySelector('.backdrop').addEventListener('click', () => finish(null));
+  });
+}
+
 function askConflict(c, remaining) {
   return new Promise((resolve) => {
     const { existing: mine, incoming: theirs } = c;

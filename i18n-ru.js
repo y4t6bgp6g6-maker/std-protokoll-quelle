@@ -232,7 +232,7 @@ if (LANG === 'ru') {
       'Betreff kopiert – in Mail bei „Betreff“ einsetzen': 'Тема скопирована – вставьте в письмо в поле «Тема»',
 
       // ── Einlesen, Konflikte ──
-      'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
+      'Stundenzettel einlesen …': 'Загрузить табели …', 'Datei einlesen …': 'Загрузить файл …', 'Datum prüfen': 'Проверьте дату', 'Wahrscheinlich gemeint': 'Скорее всего', 'Weniger wahrscheinlich': 'Менее вероятно', 'nicht eingelesen': 'не загружено', 'Dateien werden eingelesen …': 'Файлы загружаются …', 'Nichts eingelesen': 'Ничего не загружено',
       'Einlesen nicht möglich': 'Загрузка невозможна', 'Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.': 'Можно загружать и табели Numbers или PDF, а также наряды.',
       'Keine Numbers-Datei': 'Не файл Numbers', 'Keine PDF-Datei': 'Не файл PDF', 'Keine ZIP-Datei': 'Не файл ZIP', 'Keine Seite gefunden': 'Страница не найдена',
       'Keine Tabelle gefunden': 'Таблица не найдена', 'Keine Wochentage gefunden': 'Дни недели не найдены', 'Kein Datum („Woche von“) gefunden': 'Дата («Неделя с») не найдена',
@@ -305,6 +305,7 @@ if (LANG === 'ru') {
       [/^Monatsbericht (\S+)$/, (m, mo) => `Месячный отчёт: ${months[mo] || mo}`],
       [/^Monatsbericht · (.+)$/, 'Месячный отчёт · $1'],
       [/^Alle als Ausbilder abzeichnen \((\d+)\)$/, 'Подписать всё как наставник ($1)'],
+      [/^Im Zettel steht (.+)\. Der (\S+) ist aber ein (\S+)\.$/, (m, r, d, w) => `В табеле указано ${r}. Но ${d} — это не понедельник.`],
       [/^(\d+) Einträge übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'запись', 'записи', 'записей')}`],
       [/^(\d+) (Tag|Tage) übernommen$/, (m, n) => `Перенесено: ${n} ${pl(n, 'день', 'дня', 'дней')}`],
       [/^vor (\d+) Min\.$/, '$1 мин. назад'],
