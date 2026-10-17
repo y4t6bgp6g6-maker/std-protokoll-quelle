@@ -1,5 +1,5 @@
 // Std-Protokoll – Konto: Benutzername + Passwort. Für das Team Pflicht, sonst freiwillig.
-// Mit Konto sind alle Sicherungen verschlüsselt (Datei, Google Drive, Team-Server). Aus dem Passwort entstehen auf dem
+// Mit Konto sind alle Sicherungen verschlüsselt (Datei, Team-Server). Aus dem Passwort entstehen auf dem
 // iPhone zwei Schlüssel: auth (der Server speichert davon nur einen Prüfwert) und der Sicherungs-Schlüssel (bleibt auf
 // dem iPhone, liegt wie bisher in stdprotokoll.crypt.v1). Beide hängen nur von Benutzername und Passwort ab – nach einem
 // Datenverlust reicht erneutes Anmelden, um die Sicherungen vom Team-Server wieder zu öffnen.

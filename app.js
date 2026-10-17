@@ -191,7 +191,6 @@ const DEFAULT_SETTINGS = {
   vacationDays: 30, // Urlaubsanspruch im Jahr (Karte „Urlaub“ in der Übersicht)
   ovCards: null, // Inhalt der Karten in der Übersicht (karten.js), null = Vorgabe
   theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
-  autoBackup: true, // Sicherung automatisch über die Abholadresse (Google-Skript) in Google Drive
   encryptBackup: false, // Sicherungen mit Passwort verschlüsseln (Schlüssel nur auf diesem iPhone, nie in der Sicherung)
 };
 
@@ -222,6 +221,15 @@ delete settings.prorateTarget;
 delete settings.credit;
 delete settings.overtime;
 settings.minuteStep = 30; // Zeitauswahl immer in 30-Minuten-Schritten
+// Seit v93 keine Sicherung mehr in Google Drive (so gewünscht): Schalter und gemerkter Stand weg
+if ('autoBackup' in settings) {
+  delete settings.autoBackup;
+  queueMicrotask(() => saveSettings());
+}
+try {
+  localStorage.removeItem('stdprotokoll.drive.v1');
+  localStorage.removeItem('stdprotokoll.guide-key');
+} catch {}
 // Seit v91: Ort und Unterschrift stehen in jeder Reisekostenabrechnung selbst, nicht mehr in den Einstellungen
 // (so gewünscht; die nächste Sicherung enthält sie nicht mehr)
 if ('place' in settings || 'signature' in settings) {
@@ -1410,60 +1418,6 @@ function askPassword(title, message, confirm = false) {
   });
 }
 
-// ───────────────────────── Sicherung in Google Drive ─────────────────────────
-// Über dieselbe Abholadresse wie die Arbeitsscheine: das Google-Skript (doPost) legt die Datei im Ordner
-// „Std-Protokoll-Sicherungen“ ab und behält die letzten 30. Automatisch höchstens einmal am Tag und nur nach Änderungen.
-
-const DRIVE_KEY = 'stdprotokoll.drive.v1';
-const driveState = readJson(DRIVE_KEY, { at: 0, hash: '', error: '' });
-let driveBusy = false;
-
-/** Kurzer Fingerabdruck der Daten (ohne Zeitstempel der Sicherung), um unveränderte Stände nicht erneut zu senden */
-function textHash(s) {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  return (h >>> 0).toString(36) + s.length.toString(36);
-}
-
-async function driveBackup(manual = false) {
-  const url = (settings.reportUrl || '').trim();
-  if (!url || driveBusy || (!manual && settings.autoBackup === false)) return;
-  const plain = backupJson();
-  const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, '') + (backupEncrypted() ? '#enc' : ''));
-  if (!manual && (hash === driveState.hash || Date.now() - driveState.at < 20 * 3600e3)) return;
-  driveBusy = true;
-  if (manual) toast('Sichern …');
-  try {
-    const data = await sealBackup(plain);
-    // text/plain: ohne Vorabanfrage (CORS); das Skript liest den Inhalt selbst
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action: 'backup', name: `Std-Protokoll-Sicherung ${isoDate(new Date())}.json`, data }) });
-    let out;
-    try {
-      out = await res.json();
-    } catch {
-      throw new Error('Google-Skript noch nicht aktualisiert');
-    }
-    if (out.error) throw new Error(out.error === 'key' ? 'Schlüssel in der Abholadresse falsch' : out.error);
-    Object.assign(driveState, { at: Date.now(), hash, error: '' });
-    if (manual) toast('In Google Drive gesichert');
-  } catch (e) {
-    driveState.error = (e && e.message) || 'Keine Verbindung';
-    if (manual) infoDialog('Sichern fehlgeschlagen', escapeHtml(driveState.error));
-  } finally {
-    driveBusy = false;
-    try {
-      localStorage.setItem(DRIVE_KEY, JSON.stringify(driveState));
-    } catch {}
-  }
-  const el = document.getElementById('backup-status');
-  if (el) el.textContent = driveStatusText();
-}
-const driveStatusText = () => {
-  const at = driveState.at ? new Date(driveState.at) : null;
-  const when = at ? `Gesichert ${fmtDayMonth(at)} ${fmtTime(at.getHours() * 60 + at.getMinutes())}` : 'Noch nicht gesichert';
-  return driveState.error ? `${when} · Fehler: ${driveState.error}` : when;
-};
-
 // Rechtsformen und Allerweltswörter zählen beim Wiedererkennen eines Kunden nicht
 const LEGAL_FORMS = new Set(['gmbh', 'mbh', 'se', 'ag', 'kg', 'ohg', 'ug', 'co', 'co.', '&', '+', 'e.k.', 'e.v.', 'gbr', '(haftungsbeschränkt)']);
 const GENERIC_WORDS = new Set(['bäckerei', 'fleischerei', 'metzgerei', 'restaurant', 'hotel', 'café', 'cafe', 'eiscafé', 'kaffee', 'gaststätte', 'pizzeria', 'imbiss', 'markt', 'supermarkt', 'praxis', 'firma', 'autohaus', 'industries', 'gruppe']);
@@ -1788,7 +1742,7 @@ const TABS = [
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'trips', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team', 'teamSheet']],
-  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report', 'guide']],
+  ['#/einstellungen', 'Optionen', 'tabGear', ['settings', 'settingsSub', 'reports', 'report']],
 ];
 /** Unsichtbarer iOS-Schalter über jeder Taste: Der Finger legt ihn um, dabei gibt das iPhone einen Vibrations-Tick
  *  (Safari kennt navigator.vibrate nicht; ein Schalter tickt ab iOS 18). Der Klick geht weiter an die Taste. */
@@ -1961,11 +1915,6 @@ function route() {
     renderTeamSheet(decodeURIComponent(pm[1]), pm[2]);
     syncNav();
     window.scrollTo(0, 0);
-  } else if (hash === '#/anleitung') {
-    currentView = 'guide';
-    renderGuide();
-    syncNav();
-    window.scrollTo(0, 0);
   } else if (hash === '#/arbeitsscheine') {
     currentView = 'reports';
     renderReportList();
@@ -2011,7 +1960,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, guide: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -2105,7 +2054,7 @@ const BACK_TARGETS = [
   [/^#\/(lohn|jahr)\//, '#/uebersicht'],
   [/^#\/arbeitsschein\//, '#/arbeitsscheine'],
   [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
-  [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'],
+  [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'], // #/anleitung gab es bis v92
   [/^#\/heft\/[^/]+\/.+$/, () => location.hash.replace(/^(#\/heft\/[^/]+)\/.*$/, '$1')],
   [/^#\/team\/[^/]+\/.+$/, '#/team'],
   [/^#\/fehler$/, '#/team'],
@@ -4061,7 +4010,7 @@ function settingsSummary() {
     lohn: settings.wage ? `${settings.wage} € · Kl. ${roman}` : `Klasse ${roman}`,
     vorschlaege: settings.typoHints !== false ? 'Korrektur an' : 'Korrektur aus',
     scheine: url ? `${n}${reportStore.at ? ` · ${sameDay(new Date(reportStore.at), new Date()) ? 'heute' : fmtDayMonth(new Date(reportStore.at))} abgeholt` : ''}` : 'nicht eingerichtet',
-    sicherung: [url && settings.autoBackup !== false ? 'Drive' : 'von Hand', backupEncrypted() ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
+    sicherung: ['von Hand', backupEncrypted() ? 'verschlüsselt' : ''].filter(Boolean).join(' · '),
     konto: account ? account.user : 'Nicht angemeldet',
   };
 }
@@ -4138,7 +4087,6 @@ function renderSettingsPage(sub) {
       <label class="field"><span>Abholadresse</span><input data-s="reportUrl" placeholder="Link einfügen" value="${escapeHtml(settings.reportUrl || '')}" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done"></label>
       <button class="list-btn" data-act="reports-fetch">Jetzt abholen</button>
       <button class="list-btn" data-act="reports-open">Alle Arbeitsscheine</button>
-      <button class="list-btn" data-act="guide-open">Anleitung: Einrichten</button>
     </div>
     <p class="footnote" id="report-status">${reportStatusText()}</p>
 
@@ -4149,15 +4097,7 @@ function renderSettingsPage(sub) {
       <button class="list-btn" data-act="backup-export">Sicherung speichern …</button>
       <label class="list-btn">Sicherung einlesen …<input type="file" multiple accept="${IMPORT_ACCEPT}" data-act-change="backup-import" hidden></label>
     </div>
-    ${
-      (settings.reportUrl || '').trim()
-        ? `<div class="card form drive-card">
-      <label class="field"><span>Automatisch in Google Drive</span><input type="checkbox" class="toggle" data-s="autoBackup" ${settings.autoBackup !== false ? 'checked' : ''}></label>
-      <button class="list-btn" data-act="backup-drive">Jetzt in Google Drive sichern</button>
-    </div>
-    <p class="footnote" id="backup-status">${driveStatusText()}</p>`
-        : '<p class="footnote">Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.</p>'
-    }
+    ${account ? '' : '<p class="footnote">Deine Daten sind nur auf diesem iPhone – sichere sie ab und zu.</p>'}
     <p class="footnote">Einlesen geht auch mit Numbers- oder PDF-Zetteln und Arbeitsscheinen.</p>
     <p class="footnote center muted">${sheets.length} Stundenzettel gespeichert</p>`,
   }[sub];
@@ -5753,14 +5693,6 @@ document.addEventListener('click', (e) => {
     case 'reports-open':
       location.hash = '#/arbeitsscheine';
       break;
-    case 'guide-open':
-      location.hash = '#/anleitung';
-      break;
-    case 'guide-copy-code':
-    case 'guide-copy-url':
-    case 'guide-apply':
-      guideAction(act);
-      break;
     case 'report-sheet': {
       const rep = reports().find((r) => r.id === el.dataset.id);
       location.hash = `#/zettel/${encodeURIComponent(openOrCreate(parseDate(rep.date)))}`;
@@ -5849,9 +5781,6 @@ document.addEventListener('click', (e) => {
       window.scrollTo(0, y);
       break;
     }
-    case 'backup-drive':
-      driveBackup(true);
-      break;
     case 'backup-export':
       exportBackup();
       break;
@@ -6639,13 +6568,11 @@ glassBar();
 setTimeout(() => document.querySelector('#tabbar .tab-caps').offsetWidth && lensSource(), 800);
 
 fetchReports();
-driveBackup();
 accountBackup();
 accountLink();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   fetchReports();
-  driveBackup();
 });
 // iOS bitten, die Daten nie von selbst zu löschen (z. B. bei knappem Speicher)
 navigator.storage?.persist?.().catch(() => {});

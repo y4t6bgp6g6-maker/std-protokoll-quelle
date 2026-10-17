@@ -1581,32 +1581,8 @@ html[lang="ru"] .tm-z-top b { font-size: 11px; letter-spacing: 0; }
 :root[data-theme='dark'] .nav .daybar { background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.01) 40%, rgba(255, 255, 255, 0.02)),
   color-mix(in srgb, var(--text) 9%, color-mix(in srgb, var(--card) 68%, transparent)); }
 
-/* Anleitung: nummerierte Schritte, nachgezeichnete Knöpfe der Google-Skript-Seite */
-.guide-lead { margin: 0 4px 8px; color: var(--muted); font-size: 15px; line-height: 1.4; }
-ol.guide { list-style: none; margin: 0; padding: 4px 0; }
-.guide-step { display: flex; gap: 12px; padding: 10px 16px; font-size: 15px; line-height: 1.5; }
-.guide-step + .guide-step { border-top: 0.5px solid var(--sep); }
-.guide-n { flex: none; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%; display: grid; place-items: center;
-  background: var(--accent-fill); color: var(--on-accent); font-size: 13px; font-weight: 700; }
-.guide-note { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; line-height: 1.35; }
-.guide-copy { display: flex; width: fit-content; align-items: center; gap: 6px; margin: 8px 0 2px; padding: 7px 14px; border-radius: 18px;
-  background: var(--accent-fill); color: var(--on-accent); font-weight: 600; font-size: 15px; }
-.guide-copy svg { width: 18px; height: 18px; fill: currentColor; }
-.guide-copy:active { transform: scale(0.96); }
-.field.guide-url input { width: 100%; text-align: left; }
-/* Knöpfe wie bei Google (hell, auch im dunklen Design, damit sie wie auf der Google-Seite aussehen) */
-.g-btn { display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; margin: 1px 0; padding: 2px 10px 2px 7px; height: 26px;
-  border-radius: 13px; border: 1px solid #dadce0; background: #fff; color: #3c4043; font: 500 13px/1 Roboto, -apple-system, sans-serif; white-space: nowrap; }
-.g-btn svg { width: 17px; height: 17px; fill: #444746; flex: none; }
-.g-btn.icon { padding: 2px 4px; width: 28px; justify-content: center; border-radius: 50%; }
-.g-btn.trail { flex-direction: row-reverse; padding: 2px 5px 2px 10px; }
-.g-btn.blue { background: #0b57d0; border-color: #0b57d0; color: #fff; padding-left: 12px; flex-direction: row-reverse; }
-.g-btn.blue svg { fill: #fff; }
-.g-btn:not(.blue) svg + span { margin-left: 0; }
-.guide-tip { margin: 4px 0 6px; padding: 12px 16px; font-size: 15px; line-height: 1.45; box-shadow: var(--shadow), inset 3px 0 0 var(--accent-fill); }
 .pw-input { display: block; width: 100%; margin-top: 10px; padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--sep);
   background: var(--card); color: var(--text); font: inherit; font-size: 16px; -webkit-user-select: text; user-select: text; }
-.footnote.warn { color: var(--warning); }
 
 /* Face-ID-Sperre: Inhalt verborgen, bis entsperrt */
 html.locked #app, html.locked #tabbar, html.locked .edge-fade, html.locked #modal-layer { visibility: hidden; }
