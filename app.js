@@ -257,15 +257,27 @@ if (sheets.map(fixWeekend).some(Boolean)) queueMicrotask(() => saveSheets());
 /** Urlaubs- und Krankheitstage je Jahr (nach Datum des Tages) */
 function absenceStats() {
   const years = new Map();
+  const today = startOfDay(new Date());
   for (const s of sheets) {
     s.days.forEach((d, i) => {
-      if ((d.status !== 'urlaub' && d.status !== 'krank') || !sheetIsActive(s, i)) return;
+      const kind = absenceKind(s, i);
+      // genommen: nur bis heute (geplanter Urlaub zählt erst an seinem Tag)
+      if (!kind || sheetDate(s, i) > today) return;
       const y = sheetDate(s, i).getFullYear();
       if (!years.has(y)) years.set(y, { urlaub: 0, krank: 0 });
-      years.get(y)[d.status]++;
+      years.get(y)[kind]++;
     });
   }
   return years;
+}
+/**
+ * Urlaubs- bzw. Krankheitstag für alle Zählungen (Karten, Jahresseite, Lohnvergleich): von Hand gesetzt (3 s drücken)
+ * zählt immer, sonst nur Mo–Fr ohne gesetzlichen Feiertag (ein Feiertag verbraucht keinen Urlaubstag). Sonst null.
+ */
+function absenceKind(s, i) {
+  const d = s.days[i];
+  if ((d.status !== 'urlaub' && d.status !== 'krank') || !sheetIsActive(s, i)) return null;
+  return d.manual || (i < 5 && !holidayName(sheetDate(s, i))) ? d.status : null;
 }
 
 /**
@@ -312,8 +324,14 @@ const yearBalance = (months) => [...months.values()].reduce((a, b) => a + b, 0);
 
 /** Zahl aus einem Eingabefeld („12,50“), leer = 0 */
 const parseNum = (v) => {
-  const n = parseFloat(String(v ?? '').replace(',', '.'));
-  return Number.isFinite(n) ? n : 0;
+  let t = String(v ?? '').replace(/\s/g, '').replace(/[−–—]/g, '-');
+  // Minus hinten wie auf der Abrechnung („12,34-“)
+  const neg = /^-/.test(t) || /\d-$/.test(t);
+  t = t.replace(/-/g, '');
+  // Mit Komma sind Punkte Tausendertrennung („1.234,56“)
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(t);
+  return Number.isFinite(n) ? (neg ? -n : n) : 0;
 };
 const hasWage = () => parseNum(settings.wage) > 0;
 /** Faktor für Überstunden: 1 + Zuschlag aus den Einstellungen (leer = 0 %) */
@@ -377,12 +395,14 @@ function savePayslips() {
   }
 }
 const payKey = (year, month) => `${year}-${pad(month)}`;
-// Früher eingelesene Abrechnungen: falsch gelesene Summen nachträglich aus den übrigen Werten ergänzen
+// Früher eingelesene Abrechnungen: falsch gelesene Summen einmal nachträglich aus den übrigen Werten ergänzen (danach
+// nie wieder – ein von Hand geleertes Feld bliebe sonst nicht leer)
 {
   const before = JSON.stringify(payslips);
   Object.values(payslips).forEach((p) => {
     if (!p || !p.pay) return;
-    repairPayslip(p);
+    if (!p.repaired) repairPayslip(p);
+    p.repaired = true;
     // vor v109 eingelesen: Überstunden-Faktor aus den Einstellungen (für die Prüfung „Stunden × Stundenlohn“)
     if (p.otFactor == null) p.otFactor = otFactor();
   });
@@ -398,17 +418,36 @@ const HOUR_KINDS = [
 /** Auf Cent runden (kaufmännisch, ohne Gleitkomma-Fehler) – wie beim Einlesen */
 const cents = psR2;
 /** Angaben für die Netto-Rechnung eines Monats (Steuertarif des Jahres, Zusatzbeitrag wie auf der Abrechnung) */
+/** PV-Zuschlag für Kinderlose: erst nach dem Monat, in dem man 23 wird (§ 55 SGB XI) – Geburtsdatum aus dem
+ *  Berichtsheft; ohne Geburtsdatum immer */
+function pvKinderlosZuschlag(year, month) {
+  const g = typeof bh !== 'undefined' && bh.profile?.geboren;
+  if (!g) return true;
+  const b = parseDate(g);
+  // 23. Lebensjahr vollendet am Tag vor dem 23. Geburtstag
+  const done = addDays(new Date(b.getFullYear() + 23, b.getMonth(), b.getDate()), -1);
+  const now = new Date();
+  const ym = (year || now.getFullYear()) * 12 + (year ? month : now.getMonth() + 1);
+  return ym > done.getFullYear() * 12 + done.getMonth() + 1;
+}
+/** Zusatzbeitrag aus den Einstellungen; leer = undefined (dann der Durchschnitt des Jahres) */
+const kvExtraSetting = () => (String(settings.kvExtra ?? '').trim() === '' ? undefined : parseNum(settings.kvExtra));
 const lohnOpts = (bav, year, month, zusatz, tarif) => ({
   // Steuer- und beitragsfreie Bezüge (z. B. Inflationsprämie) wie auf der Abrechnung des Monats
   stFrei: (year && payslips[payKey(year, month)]?.stFrei) || 0,
   svFrei: (year && payslips[payKey(year, month)]?.svFrei) || 0,
+  // Weihnachts-/Urlaubsgeld (sonstiger Bezug) wie auf der Abrechnung des Monats
+  stSonst: (year && payslips[payKey(year, month)]?.stSonst) || 0,
+  pvZuschlag: pvKinderlosZuschlag(year, month),
   klasse: parseNum(settings.taxClass) || 1,
   kirche: !!settings.church,
   kinder: parseNum(settings.children),
-  zusatz: zusatz ?? (year ? monthValue(year, month, 'kvZusatz', parseNum(settings.kvExtra)) : parseNum(settings.kvExtra)),
+  // leer = durchschnittlicher Zusatzbeitrag des Jahres (lohn.js)
+  zusatz: zusatz ?? (year ? monthValue(year, month, 'kvZusatz', kvExtraSetting()) : kvExtraSetting()),
   bav,
-  // Steuertarif: von Hand auf der Abrechnung gewählt (z. B. Nachberechnung fürs Vorjahr), sonst das Jahr
-  year: tarif || year,
+  // Steuertarif: von Hand auf der Abrechnung gewählt (z. B. Nachberechnung fürs Vorjahr); Sozialabgaben nach dem Jahr
+  year,
+  tarif: tarif || undefined,
   month,
 });
 /** Von Hand gewählter Steuertarif der Abrechnung eines Monats, sonst null */
@@ -416,8 +455,7 @@ const slipTarif = (year, month) => payslips[payKey(year, month)]?.tarif || null;
 /** Steuertarif eines Jahres fehlt in der App: Hinweistext, sonst null */
 function tarifWarning(year) {
   if (!year || lohnJahrBekannt(year)) return null;
-  const known = Object.keys(LOHN_JAHRE).map(Number);
-  const used = year < known[0] ? known[0] : known.at(-1);
+  const used = year < LOHN_ERSTES ? LOHN_ERSTES : LOHN_LETZTES;
   return {
     title: `Steuertarif ${year} unbekannt`,
     text: `Die App kennt die Steuer- und Beitragswerte für ${year} ${year > used ? 'noch nicht' : 'nicht'} und rechnet mit denen von ${used}. Die Werte der Abrechnung selbst sind davon nicht betroffen, aber Lohnsteuer und Netto im Vergleich können abweichen.`,
@@ -440,6 +478,7 @@ const gapWarningHTML = (p) => {
  * Feiertage nach Kalender (Mo–Fr), Urlaub und Krankheit aus den Zetteln, Überstunden wie in der Übersicht,
  * Arbeitsstunden = Soll − Feiertage − Urlaub − Krankheit − Werktage ohne Eintrag (Minusstunden ziehen ab):
  * es zählt nur, was eingetragen ist. missing: Werktage ohne Eintrag (wie „Monat unvollständig“).
+ * planMinus: Minuten, die künftige Tage mit Tagesart unter dem Soll bleiben (geplant „Frei“) – für die Hochrechnung.
  */
 function monthHoursSplit(year, month) {
   const byDate = new Map();
@@ -447,12 +486,19 @@ function monthHoursSplit(year, month) {
   const h = { arbeit: 0, ueber: 0, urlaub: 0, krank: 0, feiertag: 0 };
   const missing = monthGaps(year, month);
   const day = settings.hoursPerDay;
+  const today = startOfDay(new Date());
+  let weekendCredit = 0; // von Hand gesetzte Tagesart an Sa/So: steht im Überstunden-Konto schon als Plus
+  let planMinus = 0;
   for (const d = new Date(year, month - 1, 1); d.getMonth() === month - 1; d.setDate(d.getDate() + 1)) {
     const entry = byDate.get(isoDate(d));
     const wd = (d.getDay() + 6) % 7;
+    if (entry?.status && d >= today && wd < 5 && !holidayName(d)) planMinus += Math.max(0, day * 60 - dayCredit(entry, wd));
     // von Hand gesetzt (3 s drücken): zählt, was eingetragen ist – auch an Sa/So und an Feiertagen
     if (entry && entry.manual) {
-      if (['urlaub', 'krank', 'feiertag'].includes(entry.status)) h[entry.status] += dayCredit(entry, wd) / 60;
+      if (['urlaub', 'krank', 'feiertag'].includes(entry.status)) {
+        h[entry.status] += dayCredit(entry, wd) / 60;
+        if (wd >= 5 && d <= today) weekendCredit += dayCredit(entry, wd) / 60;
+      }
       continue;
     }
     if (wd >= 5) continue;
@@ -461,10 +507,11 @@ function monthHoursSplit(year, month) {
     else if (entry.status === 'urlaub') h.urlaub += dayCredit(entry, wd) / 60;
     else if (entry.status === 'krank') h.krank += dayCredit(entry, wd) / 60;
   }
-  const ot = ((overtimeAccount().get(year) || new Map()).get(month) || 0) / 60;
+  // Tagesart von Hand an Sa/So zählt nur einmal: als ihre Art, nicht zusätzlich als Überstunden
+  const ot = ((overtimeAccount().get(year) || new Map()).get(month) || 0) / 60 - weekendCredit;
   h.ueber = Math.max(0, ot);
   h.arbeit = monthSollMinutes(year, month) / 60 - h.feiertag - h.urlaub - h.krank - missing.length * day + Math.min(0, ot);
-  return { hours: h, missing };
+  return { hours: h, missing, planMinus };
 }
 
 /** Lohn mit den Stunden der Abrechnung, nach der Rechnung der App (jede Lohnart auf Cent gerundet) */
@@ -634,11 +681,12 @@ function renderPayslip(key) {
 function renderMonthNoSlip(year, month) {
   const now = new Date();
   const current = year === now.getFullYear() && month === now.getMonth() + 1;
-  const { hours, missing } = monthHoursSplit(year, month);
+  const { hours, missing, planMinus } = monthHoursSplit(year, month);
   // Wie in der Übersicht: der laufende Monat gilt nie als unvollständig, unvollständige Monate rechnen keinen Lohn
   const gap = !current && missing.length > 0;
   const otMin = (overtimeAccount().get(year) || new Map()).get(month) || 0;
-  const a = gap ? null : monthPay(year, month, otMin, missing.length * settings.hoursPerDay * 60);
+  // Hochrechnung: geplante Tage unter dem Soll (z. B. „Frei“) ziehen ab
+  const a = gap ? null : monthPay(year, month, otMin, missing.length * settings.hoursPerDay * 60 + planMinus);
   const sum = HOUR_KINDS.reduce((t, [k]) => t + (hours[k] || 0), 0);
   const money = (label, v) => psRow(label, v == null ? '–' : fmtMoney(v, true), '–', '');
   app.innerHTML = `
@@ -753,7 +801,7 @@ function renderYear(year) {
     </header>
     <h1 class="large-title">${year}</h1>
     <p class="ps-sub">Jahresübersicht</p>
-    ${warn}${compare}
+    ${warn}${hasWage() ? tarifWarningHTML(year) : ''}${compare}
     <h2 class="section-title">Nach Stundenzetteln</h2>
     <div class="card yr-card">
       ${line('Std. Gesamt', fmtH(yearBalance(worked)))}
@@ -792,7 +840,7 @@ function updatePayslipField(input) {
     const year = path === 'year' ? v : p.year;
     const month = path === 'month' ? v : p.month;
     const undo = () => (input.value = path === 'year' ? p.year : p.month);
-    if (!(year > 2000 && year < 2100)) return undo();
+    if (!(year > 2000 && year < 2100) || !Number.isInteger(year)) return undo();
     const nk = payKey(year, month);
     if (nk === key) return;
     const move = () => {
@@ -887,7 +935,7 @@ async function importPayslip(input) {
     const calc = (brutto, zusatz, r) => {
       const { year, month } = when || r;
       if (!year || !lohnJahrBekannt(year)) return null;
-      const n = nettoMonat(brutto, { ...lohnOpts(r.bav, year, month, zusatz ?? undefined), stFrei: r.stFrei, svFrei: r.svFrei });
+      const n = nettoMonat(brutto, { ...lohnOpts(r.bav, year, month, zusatz ?? undefined), stFrei: r.stFrei, svFrei: r.svFrei, stSonst: r.stSonst });
       // „Steuern“ der Abrechnung sind alle steuerrechtlichen Abzüge
       return { lohnsteuer: cents(n.lohnsteuer + n.soli + n.kirchensteuer), sv: cents(n.kv + n.rv + n.av + n.pv) };
     };
@@ -986,9 +1034,10 @@ async function importPayslip(input) {
   closeModal(true);
   if (choice === 'drop') return;
   p.importedAt = Date.now();
+  p.repaired = true; // fertig gelesen: beim Start nicht mehr ergänzen
   const store = (year, month) => {
     // Von Hand gewählter Monat: mit dem Tarif dieses Jahres noch einmal gegenprüfen
-    if (p.year !== year || p.month !== month) p = Object.assign(parse(text, { year, month }), { importedAt: p.importedAt });
+    if (p.year !== year || p.month !== month) p = Object.assign(parse(text, { year, month }), { importedAt: p.importedAt, repaired: true });
     const key = payKey(year, month);
     const save = () => {
       payslips[key] = p;
@@ -2455,6 +2504,7 @@ function renderStats() {
       <label class="list-btn">Lohnabrechnung einlesen …<input type="file" accept="image/*" data-act-change="payslip-import" hidden></label>
     </div>
     <p class="footnote">Foto der Abrechnung – sie wird mit deinen Zetteln verglichen.</p>
+    ${hasWage() && !lohnJahrBekannt(y) ? `<p class="footnote">Netto geschätzt mit den Steuerwerten von ${y < LOHN_ERSTES ? LOHN_ERSTES : LOHN_LETZTES}.</p>` : ''}
     ${sheets.length ? `<p class="footnote">Überstunden: alles über ${fmtH(Math.round((settings.target * 60) / 5))} pro Werktag. Unvollständige Monate zählen nicht.</p>` : ''}`;
   ovcFit(app);
 }
@@ -4199,7 +4249,7 @@ function renderSettingsPage(sub) {
         .map((k) => `<option value="${k}" ${String(settings.children) === String(k) ? 'selected' : ''}>${k === 5 ? '5 oder mehr' : k}</option>`)
         .join('')}</select></label>
       <label class="field"><span>Zuschlag Überstunden</span><input data-s="otPct" inputmode="decimal" placeholder="0" value="${escapeHtml(settings.otPct ?? '')}" enterkeyhint="done"><span class="unit">%</span></label>
-      <label class="field"><span>Zusatzbeitrag Krankenkasse</span><input data-s="kvExtra" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.kvExtra)}" enterkeyhint="done"><span class="unit">%</span></label>
+      <label class="field"><span>Zusatzbeitrag Krankenkasse</span><input data-s="kvExtra" inputmode="decimal" placeholder="Ø ${fmtDec(lohnJahr(new Date().getFullYear()).zusatzSchnitt * 60)}" value="${escapeHtml(settings.kvExtra)}" enterkeyhint="done"><span class="unit">%</span></label>
       <label class="field"><span>Betriebsrente (dein Beitrag)</span><input data-s="bav" inputmode="decimal" placeholder="0,00" value="${escapeHtml(settings.bav)}" enterkeyhint="done"><span class="unit">€</span></label>
     </div>
     <p class="footnote">Für das geschätzte Netto in der Übersicht.</p>
@@ -4464,7 +4514,7 @@ function mergeBackup(data) {
   if (data.payslips && typeof data.payslips === 'object') {
     for (const [k, p] of Object.entries(data.payslips)) {
       if (!payslips[k] && p && p.year && p.month && p.hours) {
-        payslips[k] = p.pay ? repairPayslip(p) : p;
+        payslips[k] = p.pay ? Object.assign(repairPayslip(p), { repaired: true }) : p;
         payslipsAdded++;
       }
     }

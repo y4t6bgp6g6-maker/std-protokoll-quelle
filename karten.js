@@ -33,14 +33,20 @@ function ovcFacts(year) {
       const date = sheetDate(s, i);
       if (date.getFullYear() !== year) return;
       const mo = f.m[date.getMonth()];
-      if (d.status === 'urlaub') {
+      const kind = absenceKind(s, i);
+      if (kind === 'urlaub') {
         if (date > today) (f.urlaubPlan++, mo.urlaubPlan++);
         else (f.urlaub++, mo.urlaub++);
-      } else if (d.status === 'krank') {
+      } else if (kind === 'krank') {
+        // Krankheitstage erst an ihrem Tag
+        if (date > today) return;
         f.krank++;
         mo.krank++;
         f.krankDates.push(date);
-      } else if (d.status === 'feiertag' && i < 5 && date <= today) f.feiertag++; // wie Arbeitstage nur bis heute
+      } else if ((d.status === 'feiertag' || ((d.status === 'urlaub' || d.status === 'krank') && !kind)) && i < 5 && date <= today) {
+        // wie Arbeitstage nur bis heute; Urlaub/Krank an einem Feiertag zählt als Feiertag (wie im Lohnvergleich)
+        f.feiertag++;
+      }
       if (!d.status && date <= today && d.rows.some((r) => r.start != null && r.end != null)) {
         f.workDays++;
         f.workedNet += workedNet(d);
@@ -83,8 +89,8 @@ function ovcFacts(year) {
       if (p) f.m[k - 1].net = p.netto;
     }
     if (cur) {
-      const { missing } = monthHoursSplit(year, cur);
-      const p = monthPay(year, cur, months.get(cur) || 0, missing.length * settings.hoursPerDay * 60);
+      const { missing, planMinus } = monthHoursSplit(year, cur);
+      const p = monthPay(year, cur, months.get(cur) || 0, missing.length * settings.hoursPerDay * 60 + planMinus);
       if (p) f.m[cur - 1].netProj = p.netto;
     }
   }
@@ -110,7 +116,8 @@ const OVC_SMALL = {
   },
   urlaub: {
     label: 'Urlaub',
-    get: (f) => ({ num: fmtNum(f.urlaub), cls: 'vac', sub: f.anspruch ? `${fmtNum(Math.max(0, f.rest))} übrig` : 'Tage genommen' }),
+    // wie die große Karte: überzogen = „… zu viel“
+    get: (f) => ({ num: fmtNum(f.urlaub), cls: 'vac', sub: !f.anspruch ? 'Tage genommen' : f.rest < 0 ? `${fmtNum(-f.rest)} zu viel` : `${fmtNum(f.rest)} übrig` }),
   },
   avgStunden: {
     label: 'Ø Stunden',

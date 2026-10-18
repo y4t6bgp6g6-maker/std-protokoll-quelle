@@ -26,6 +26,7 @@ const LOHN_2024 = {
   w2: 33380,
   w3: 222260,
   tarif: [11604, 17005, 66760, 277825, 922.98, 1025.38, 181.19, 10602.13, 18936.88],
+  zusatzSchnitt: 1.7, // durchschnittlicher Zusatzbeitrag (%), wenn keiner eingetragen ist
 };
 // Grundfreibetrag 2024 rückwirkend erhöht: im Dezember 2024 rechnete die Lohnabrechnung das ganze Jahr mit dem
 // neuen Tarif nach (PAP Dezember 2024, „MLST1224“)
@@ -60,6 +61,7 @@ const LOHN_2025 = {
   w3: 222260,
   // Grundtarif: Grenzen und Formeln (§ 32a EStG)
   tarif: [12096, 17443, 68480, 277825, 932.3, 1015.13, 176.64, 10911.92, 19246.67],
+  zusatzSchnitt: 2.5,
 };
 
 const LOHN_2026 = {
@@ -85,13 +87,19 @@ const LOHN_2026 = {
   w2: 34939,
   w3: 222260,
   tarif: [12348, 17799, 69878, 277825, 914.51, 1034.87, 173.1, 11135.63, 19470.38],
+  zusatzSchnitt: 2.9,
+  // Vorsorgepauschale mit Teilbetrag Arbeitslosenversicherung, soweit KV + PV + AV 1.900 € nicht übersteigen
+  // (§ 39b Abs. 2 Satz 5 Nr. 3 e EStG, ab 2026; Steuerklassen I–V)
+  vspAv: true,
 };
 
 const LOHN_JAHRE = { 2024: LOHN_2024, 2025: LOHN_2025, 2026: LOHN_2026 };
 /** Kennt die App den Steuertarif dieses Jahres? */
 const lohnJahrBekannt = (year) => !!LOHN_JAHRE[year];
-/** Werte des Jahres (vor 2024 wie 2024, nach 2026 wie 2026; ohne Jahr 2026) */
-const lohnJahr = (year) => LOHN_JAHRE[year] || (year && year < 2024 ? LOHN_2024 : LOHN_2026);
+const LOHN_ERSTES = Math.min(...Object.keys(LOHN_JAHRE).map(Number));
+const LOHN_LETZTES = Math.max(...Object.keys(LOHN_JAHRE).map(Number));
+/** Werte des Jahres (davor wie das erste bekannte, danach und ohne Jahr wie das letzte) */
+const lohnJahr = (year) => LOHN_JAHRE[year] || LOHN_JAHRE[year && year < LOHN_ERSTES ? LOHN_ERSTES : LOHN_LETZTES];
 
 /** Einkommensteuer nach Grundtarif (ganze Euro) */
 function tarifJahr(zve, c = LOHN_2026) {
@@ -130,14 +138,22 @@ function tarif56(zzx, c = LOHN_2026) {
  * Netto für einen Monat.
  * brutto: steuer- und beitragspflichtiger Bruttolohn (Grundlohn, Überstunden, Zulagen)
  * opts: { klasse 1–6, kirche, kinder, zusatz (KV-Zusatzbeitrag %), bav (Entgeltumwandlung € je Monat), year, month,
- *         stFrei / svFrei: steuer- bzw. beitragsfreie Teile des Bruttos (z. B. Inflationsausgleichsprämie) }
+ *         stFrei / svFrei: steuer- bzw. beitragsfreie Teile des Bruttos (z. B. Inflationsausgleichsprämie),
+ *         stSonst: sonstiger Bezug im Brutto (Weihnachts-, Urlaubsgeld; Spalte St „S“) – versteuert als Unterschied der
+ *         Jahressteuer mit und ohne ihn statt wie laufender Lohn ×12,
+ *         pvZuschlag: false = kein PV-Zuschlag für Kinderlose (erst nach dem Monat, in dem man 23 wird),
+ *         tarif: Steuertarif eines anderen Jahres (Nachberechnung fürs Vorjahr) – Sozialabgaben bleiben die von year;
+ *         zusatz fehlt: durchschnittlicher Zusatzbeitrag des Jahres }
  * Ergebnis: { brutto, lohnsteuer, soli, kirchensteuer, kv, rv, av, pv, bav, netto }
  */
 function nettoMonat(brutto, opts) {
   const c = lohnJahr(opts.year);
+  // Steuer (Tarif, Vorsorgepauschale, Freibeträge) nach dem gewählten Tarifjahr
+  const ty = opts.tarif || opts.year;
+  const t0 = lohnJahr(ty);
   const klasse = Number(opts.klasse) || 1;
   const kinder = Math.max(0, Math.floor(Number(opts.kinder) || 0));
-  const zusatz = Number(opts.zusatz) || 0;
+  const zusatz = opts.zusatz == null || opts.zusatz === '' ? c.zusatzSchnitt : Number(opts.zusatz) || 0;
   const bav = Math.max(0, Number(opts.bav) || 0);
   const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -147,7 +163,8 @@ function nettoMonat(brutto, opts) {
   const svBrutto = Math.max(0, brutto - Math.min(bav, c.bavSvFrei) - Math.max(0, Number(opts.svFrei) || 0));
 
   // Sozialversicherung, Arbeitnehmeranteil
-  const pvSatz = c.pv + (kinder === 0 ? c.pvKinderlos : -c.pvAbschlag * Math.max(0, Math.min(kinder, 5) - 1));
+  const pvSatzOf = (t) => t.pv + (kinder === 0 ? (opts.pvZuschlag === false ? 0 : t.pvKinderlos) : -t.pvAbschlag * Math.max(0, Math.min(kinder, 5) - 1));
+  const pvSatz = pvSatzOf(c);
   const kvBasis = Math.min(svBrutto, c.bbgKv);
   const rvBasis = Math.min(svBrutto, c.bbgRv);
   const kv = r2((kvBasis * (c.kv + zusatz / 2)) / 100);
@@ -155,21 +172,25 @@ function nettoMonat(brutto, opts) {
   const rv = r2((rvBasis * c.rv) / 100);
   const av = r2((rvBasis * c.av) / 100);
 
-  // Lohnsteuer über den Jahresbetrag
-  const jahr = steuerBrutto * 12;
-  const vspRv = (Math.min(jahr, c.bbgRv * 12) * c.rv) / 100;
-  // Mindestvorsorgepauschale (bis 2025): 12 % des Lohns, höchstens 1.900 € (Steuerklasse III 3.000 €)
-  const vspMin = !c.mindestVsp ? 0 : Math.min(Math.floor(jahr * 12) / 100, klasse === 3 ? 3000 : 1900);
-  const vsp = Math.ceil(
-    vspRv + Math.max(vspMin, (Math.min(jahr, c.bbgKv * 12) * (c.kvVsp + zusatz / 2 + pvSatz)) / 100)
-  );
-  let frei = vsp;
-  if (klasse !== 6) frei += c.werbungskosten + c.sonderausgaben;
-  if (klasse === 2) frei += c.entlastung;
-  const zve = Math.max(0, Math.floor(jahr - frei));
+  // Lohnsteuer über den Jahresbetrag des laufenden Lohns; ein sonstiger Bezug zählt nur im Monat der Zahlung
+  const sonst = Math.min(Math.max(0, Number(opts.stSonst) || 0), steuerBrutto);
+  const jahrLfd = (steuerBrutto - sonst) * 12;
+  /** Zu versteuerndes Einkommen eines Jahresarbeitslohns (Vorsorgepauschale und Freibeträge abgezogen) */
+  const zveOf = (jahr, t = t0) => {
+    const vspRv = (Math.min(jahr, t.bbgRv * 12) * t.rv) / 100;
+    // Mindestvorsorgepauschale (bis 2025): 12 % des Lohns, höchstens 1.900 € (Steuerklasse III 3.000 €)
+    const vspMin = !t.mindestVsp ? 0 : Math.min(Math.floor(jahr * 12) / 100, klasse === 3 ? 3000 : 1900);
+    const kvpv = (Math.min(jahr, t.bbgKv * 12) * (t.kvVsp + zusatz / 2 + pvSatzOf(t))) / 100;
+    const vspAv = t.vspAv && klasse !== 6 ? Math.max(0, Math.min((Math.min(jahr, t.bbgRv * 12) * t.av) / 100, 1900 - kvpv)) : 0;
+    const vsp = Math.ceil(vspRv + Math.max(vspMin, kvpv) + vspAv);
+    let frei = vsp;
+    if (klasse !== 6) frei += t.werbungskosten + t.sonderausgaben;
+    if (klasse === 2) frei += t.entlastung;
+    return Math.max(0, Math.floor(jahr - frei));
+  };
   // Jahressteuer nach einem Tarif; Soli und Kirchensteuer nach der Steuer ohne Kinderfreibeträge (Bemessungsgrundlage,
   // § 51a EStG): Zähler 0,5 je Kind, in Klasse III 1,0 (Klasse IV: 1,0 mit halbem Betrag), Klasse V/VI keine
-  const steuer = (t) => {
+  const steuer = (t, zve = zveOf(jahrLfd, t)) => {
     const tax = (z) => (klasse === 3 ? 2 * tarifJahr(Math.floor(z / 2), t) : klasse === 5 || klasse === 6 ? tarif56(z, t) : tarifJahr(z, t));
     const kfb = klasse === 5 || klasse === 6 ? 0 : kinder * t.kfb * (klasse === 3 ? 1 : 0.5);
     const st = tax(zve);
@@ -178,8 +199,8 @@ function nettoMonat(brutto, opts) {
     const soli = bmg > freigrenze ? Math.min(bmg * 0.055, (bmg - freigrenze) * 0.119) : 0;
     return { st, bmg, soli: Math.floor(soli * 100) / 100 };
   };
-  let { st, bmg, soli: soliJahr } = steuer(c);
-  if (opts.year === 2024 && opts.month === 12) {
+  let { st, bmg, soli: soliJahr } = steuer(t0);
+  if (ty === 2024 && opts.month === 12) {
     // Dezember 2024: Jahressteuer nach neuem Tarif, abzüglich der elf Monate, die nach altem Tarif zu viel gezahlt wurden
     const neu = steuer(LOHN_2024_NEU);
     const nach = (n, a) => Math.max(0, n - 11 * (a - n));
@@ -187,9 +208,17 @@ function nettoMonat(brutto, opts) {
     bmg = nach(neu.bmg, bmg);
     soliJahr = nach(neu.soli, soliJahr);
   }
-  const lohnsteuer = Math.floor((st / 12) * 100) / 100;
-  const soli = Math.floor((soliJahr / 12) * 100) / 100;
-  const kirchensteuer = opts.kirche ? Math.floor(((bmg * c.kirche) / 100 / 12) * 100) / 100 : 0;
+  let lohnsteuer = Math.floor((st / 12) * 100) / 100;
+  let soli = Math.floor((soliJahr / 12) * 100) / 100;
+  let kirchensteuer = opts.kirche ? Math.floor(((bmg * t0.kirche) / 100 / 12) * 100) / 100 : 0;
+  if (sonst) {
+    // Sonstiger Bezug: Jahressteuer mit ihm minus ohne ihn (je Steuer), ganz in diesem Monat
+    const mit = steuer(t0, zveOf(jahrLfd + sonst));
+    const ohne = steuer(t0);
+    lohnsteuer = Math.round((lohnsteuer + mit.st - ohne.st) * 100) / 100;
+    soli = Math.round((soli + Math.max(0, mit.soli - ohne.soli)) * 100) / 100;
+    if (opts.kirche) kirchensteuer = Math.round((kirchensteuer + Math.floor(((mit.bmg - ohne.bmg) * t0.kirche) / 100 * 100) / 100) * 100) / 100;
+  }
 
   const netto = r2(brutto - lohnsteuer - soli - kirchensteuer - kv - rv - av - pv - bav);
   return { brutto: r2(brutto), lohnsteuer, soli, kirchensteuer, kv, rv, av, pv, bav, netto };

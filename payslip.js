@@ -293,7 +293,8 @@ function psMost(values, seen) {
  * (weitere Netto-Be-/Abzüge: + Gutschrift, − Abzug), auszahlung, kvZusatz (Zusatzbeitrag der Krankenkasse, %).
  * Für die Prüfungen: otFactor, lines (je Lohnart-Zeile kind, hours, f = Faktor, amount), svParts (KV, RV, AV, PV),
  * head (Stunden oben rechts: ueber, bez), ytd (Gesamt-Brutto des Jahres), nb (rechnet frühere Monate nach).
- * stFrei/svFrei: steuer- bzw. beitragsfreie Teile des Bruttos (z. B. Inflationsprämie).
+ * stFrei/svFrei: steuer- bzw. beitragsfreie Teile des Bruttos (z. B. Inflationsprämie), stSonst: sonstige Bezüge
+ * (Spalte St „S“, z. B. Weihnachtsgeld).
  * fixed: Werte, die nicht direkt gelesen, sondern aus den übrigen berechnet wurden. Fehlendes bleibt null.
  *
  * Die Texterkennung verliest einzelne Zahlen (Stundenlohn „15,20“ als „15720“ oder „25:20“, fehlende Kommas usw.).
@@ -349,6 +350,7 @@ function parsePayslipText(text, opts = {}) {
     ytd: null,
     stFrei: 0,
     svFrei: 0,
+    stSonst: 0,
     fixed: [],
   };
   const fixed = new Set();
@@ -552,6 +554,8 @@ function parsePayslipText(text, opts = {}) {
     zulage = psR2(zulage + v);
     if (g.flags && /[FP]/.test(g.flags.st)) r.stFrei = psR2(r.stFrei + v);
     if (g.flags && /[FP]/.test(g.flags.sv)) r.svFrei = psR2(r.svFrei + v);
+    // Sonstiger Bezug (Weihnachts-, Urlaubsgeld): eigene Steuerrechnung in der Nachrechnung
+    if (g.flags && g.flags.st === 'S') r.stSonst = psR2(r.stSonst + v);
   }
   const zulageKnown = [...groups.values()].some((g) => g.kind === 'zulage');
 

@@ -273,6 +273,7 @@ if (LANG === 'ru') {
       [/^(\d+) Krankmeldung(?:en)?$/, (m, n) => `${n} ${pl(n, 'больничный', 'больничных', 'больничных')}`],
       [/^(\d{4}) \(wie Jahr\)$/, '$1 (как год)'],
       [/^(⚠️ )?Steuertarif (\d{4}) unbekannt$/, '$1Налоговая шкала $2 неизвестна'],
+      [/^Netto geschätzt mit den Steuerwerten von (\d{4})\.$/, 'Нетто оценено по налоговым значениям $1 года.'],
       [/^Lohnabrechnung (\S+) (\d{4}) löschen\?$/, (m, mo, y) => `Удалить расчётный лист за ${tr(mo).toLowerCase()} ${y}?`],
       [/^(\S+): (.+) nicht als Feiertag eingetragen$/, (m, d, h) => `${tr(d)}: ${tr(h)} не внесён как праздник`],
       [/^(Mo|Di|Mi|Do|Fr|Sa|So)(?: – (Mo|Di|Mi|Do|Fr|Sa|So))? (vorheriger|nächster) Monat$/, (m, a, b, w) => {
