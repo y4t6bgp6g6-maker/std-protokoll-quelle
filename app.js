@@ -2103,12 +2103,14 @@ function pageAnim(from, to) {
   clearTimeout(pageAnim.timer);
   // Klasse wieder entfernen, sonst laufen neu gezeichnete Teile (z. B. nach einer Änderung) die Animation erneut
   pageAnim.timer = setTimeout(() => app.classList.remove('pg-push', 'pg-pop', 'pg-fade'), 400);
-  if (to === 'stats') {
-    document.querySelectorAll('#app .ovc, #app .ov-month, #app .ov-totallink').forEach((el, i) => {
-      el.style.animationDelay = `${60 + i * 28}ms`;
-      el.classList.add('stagger');
-    });
-  }
+  if (to === 'stats') statsStagger('#app .ovc, #app .ov-month, #app .ov-totallink');
+}
+/** Übersicht: Karten bzw. Monatszeilen bauen sich nacheinander auf */
+function statsStagger(selector) {
+  document.querySelectorAll(selector).forEach((el, i) => {
+    el.style.animationDelay = `${60 + i * 28}ms`;
+    el.classList.add('stagger');
+  });
 }
 
 /** Zahlen (Stunden) zählen nach einer Änderung sichtbar zum neuen Wert: vorher Texte merken, danach animieren */
@@ -5889,6 +5891,8 @@ document.addEventListener('click', (e) => {
             renderStats();
             window.scrollTo(0, top);
             ovcAnimate(document.querySelectorAll('#app [data-ovc]'), snap);
+            // Monatsliste baut sich wie beim Öffnen der Seite neu auf (die Karten zählen stattdessen um)
+            statsStagger('#app .ov-month, #app .ov-totallink');
           },
         }))
       );

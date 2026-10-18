@@ -1900,6 +1900,10 @@ a.s-row:active { background: var(--fill); }
 .ovc-bar.sick { background: var(--sick); }
 .ovc-bar.plan { background: none; border: 1.5px dashed var(--vac); }
 .ovc-bar.ovc-none { height: 4px; border-radius: 2px; background: var(--fill); }
+/* Unvollständiger Monat: Säule grau; Hochrechnung des laufenden Monats (Netto) grün schraffiert */
+.ovc-gap .ovc-bar:not(.plan) { background: var(--fill); }
+.ovc-gap .ovc-val { opacity: 0.45; }
+.ovc-bar.ok.proj { background: repeating-linear-gradient(135deg, var(--success) 0 3px, transparent 3px 7px); }
 .ovc-val { margin-bottom: 2px; font-size: 10.5px; font-weight: 600; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ovc-dn .ovc-val { margin: 2px 0 0; }
 .ovc-m { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); }

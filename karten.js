@@ -3,7 +3,14 @@
 // settings.vacationDays. Wird vor app.js geladen und nutzt dessen Funktionen erst beim Zeichnen.
 
 const OVC_DEFAULT = { big: 'urlaub', small: ['krank', 'ueber', 'schnitt'] };
-const ovcChoice = () => ({ ...OVC_DEFAULT, ...settings.ovCards, small: [...(settings.ovCards?.small || OVC_DEFAULT.small)] });
+/** Gewählte Karten; nicht mehr vorhandene kleine Karten (Stunden, Arbeitstage … bis v114) → die erste freie Vorgabe */
+const ovcChoice = () => {
+  const c = { ...OVC_DEFAULT, ...settings.ovCards, small: [...(settings.ovCards?.small || OVC_DEFAULT.small)] };
+  c.small.forEach((k, i) => {
+    if (!OVC_SMALL[k]) c.small[i] = Object.keys(OVC_SMALL).find((x) => !c.small.includes(x)) || OVC_DEFAULT.small[i];
+  });
+  return c;
+};
 
 /** Alles, was die Karten für ein Jahr brauchen – einmal pro Zeichnen berechnet */
 function ovcFacts(year) {
@@ -18,7 +25,6 @@ function ovcFacts(year) {
     feiertag: 0,
     workDays: 0,
     workedNet: 0,
-    sites: new Set(),
     m: [...Array(12)].map(() => ({ worked: 0, ot: 0, urlaub: 0, urlaubPlan: 0, krank: 0, net: null })),
   };
   for (const s of sheets) {
@@ -35,7 +41,6 @@ function ovcFacts(year) {
         mo.krank++;
         f.krankDates.push(date);
       } else if (d.status === 'feiertag' && i < 5 && date <= today) f.feiertag++; // wie Arbeitstage nur bis heute
-      if (canWork(d)) for (const r of d.rows) if (r.site) f.sites.add(r.site.trim().toLowerCase());
       if (!d.status && date <= today && d.rows.some((r) => r.start != null && r.end != null)) {
         f.workDays++;
         f.workedNet += workedNet(d);
@@ -52,25 +57,38 @@ function ovcFacts(year) {
   const acc = overtimeAccounts();
   const worked = acc.worked.get(year) || new Map();
   const months = acc.ot.get(year) || new Map();
-  const counted = countedOvertime(year, months);
   worked.forEach((v, k) => (f.m[k - 1].worked = v));
-  counted.forEach((v, k) => Object.assign(f.m[k - 1], { ot: v, counted: true }));
-  f.total = yearBalance(worked);
-  f.ot = yearBalance(counted);
-  // Netto nur für vollständige, abgeschlossene Monate (wie in der Jahresübersicht)
-  const lastDone = year < now.getFullYear() ? 12 : year === now.getFullYear() ? now.getMonth() : 0;
-  f.net = null;
-  if (hasWage())
-    for (let k = 1; k <= lastDone; k++) {
-      if (!worked.has(k) || monthGaps(year, k).length) continue;
+  months.forEach((v, k) => (f.m[k - 1].ot = v));
+  // Vollständig (done): abgeschlossener Monat mit Zetteln und ohne Werktag ohne Eintrag. Nur diese zählen in die
+  // Durchschnitte; die übrigen (auch der laufende) haben graue Säulen
+  const cur = year === now.getFullYear() ? now.getMonth() + 1 : 0;
+  for (let k = 1; k <= ovcLastMonth(year); k++) {
+    const m = f.m[k - 1];
+    m.done = k !== cur && worked.has(k) && !monthGaps(year, k).length;
+    m.gap = !m.done;
+  }
+  const done = f.m.filter((m) => m.done);
+  const avg = (list) => (list.length ? list.reduce((a, b) => a + b, 0) / list.length : null);
+  f.avgWorked = avg(done.map((m) => m.worked));
+  f.avgOt = avg(done.map((m) => m.ot));
+  f.avgAbsence = avg(done.map((m) => m.urlaub + m.krank));
+  // Überstunden-Saldo wie die Summe der Monatsliste: vollständige Monate und der laufende
+  f.ot = yearBalance(countedOvertime(year, months));
+  // Netto nur für vollständige Monate (wie in der Jahresübersicht); der laufende Monat bekommt die Hochrechnung wie
+  // die Seite des Monats (restliche Werktage mit Soll) – sie zählt in keine Rechnung
+  if (hasWage()) {
+    for (let k = 1; k <= 12; k++) {
+      if (!f.m[k - 1].done) continue;
       const p = monthPay(year, k, months.get(k) || 0);
-      if (!p) continue;
-      f.m[k - 1].net = p.netto;
-      f.net = (f.net || 0) + p.netto;
+      if (p) f.m[k - 1].net = p.netto;
     }
-  // Gesetzliche Feiertage Mo–Fr im ganzen Jahr
-  f.holidays = 0;
-  for (let x = new Date(year, 0, 1); x.getFullYear() === year; x = addDays(x, 1)) if (x.getDay() % 6 && holidayName(x)) f.holidays++;
+    if (cur) {
+      const { missing } = monthHoursSplit(year, cur);
+      const p = monthPay(year, cur, months.get(cur) || 0, missing.length * settings.hoursPerDay * 60);
+      if (p) f.m[cur - 1].netProj = p.netto;
+    }
+  }
+  f.avgNet = avg(f.m.filter((m) => m.net != null).map((m) => m.net));
   f.anspruch = Math.max(0, Math.round(parseNum(settings.vacationDays)));
   f.rest = f.anspruch - f.urlaub - f.urlaubPlan;
   return f;
@@ -80,23 +98,39 @@ const plural = (n, one, many) => `${fmtNum(n)} ${n === 1 ? one : many}`;
 /** Euro ohne Cent mit Tausenderpunkt */
 const ovcEuro = (v) => `${Math.round(v).toLocaleString('de-DE')} €`;
 
-/** Kleine Karten: Titel, Zahl (mit kleiner Einheit), Farbe der Zahl, Zeile darunter */
+/** Kleine Karten: Titel, Zahl (mit kleiner Einheit), Farbe der Zahl, Zeile darunter; menu: Name im Auswahlmenü.
+ *  Durchschnitte je Monat nur aus vollständigen Monaten (ohne den laufenden) */
 const OVC_SMALL = {
   krank: { label: 'Krankheitstage', get: (f) => ({ num: fmtNum(f.krank), cls: 'sick', sub: plural(f.krankSpells, 'Krankmeldung', 'Krankmeldungen') }) },
   ueber: { label: 'Überstunden', get: (f) => ({ num: fmtSigned(f.ot).replace(' h', ''), unit: 'h', cls: balanceClass(f.ot), sub: 'Saldo' }) },
   schnitt: {
     label: 'Ø pro Tag',
+    menu: 'Ø pro Tag (h)',
     get: (f) => ({ num: fmtDec(f.workDays ? f.workedNet / f.workDays : 0), unit: 'h', sub: 'netto' }),
   },
   urlaub: {
     label: 'Urlaub',
     get: (f) => ({ num: fmtNum(f.urlaub), cls: 'vac', sub: f.anspruch ? `${fmtNum(Math.max(0, f.rest))} übrig` : 'Tage genommen' }),
   },
-  stunden: { label: 'Stunden', get: (f) => ({ num: fmtDec(f.total), unit: 'h', sub: 'gesamt' }) },
-  tage: { label: 'Arbeitstage', get: (f) => ({ num: fmtNum(f.workDays), sub: 'gearbeitet' }) },
-  feiertage: { label: 'Feiertage', get: (f) => ({ num: fmtNum(f.holidays), cls: 'hol', sub: 'Mo–Fr' }) },
-  netto: { label: 'Netto', wage: true, get: (f) => ({ num: f.net == null ? '–' : ovcEuro(f.net), sub: 'geschätzt' }) },
-  baustellen: { label: 'Baustellen', get: (f) => ({ num: fmtNum(f.sites.size), sub: 'verschiedene' }) },
+  avgStunden: {
+    label: 'Ø Stunden',
+    menu: 'Ø Stunden pro Monat',
+    get: (f) => (f.avgWorked == null ? { num: '–', sub: 'pro Monat' } : { num: fmtDec(Math.round(f.avgWorked)), unit: 'h', sub: 'pro Monat' }),
+  },
+  avgUeber: {
+    label: 'Ø Überstunden',
+    menu: 'Ø Überstunden pro Monat',
+    get: (f) =>
+      f.avgOt == null
+        ? { num: '–', sub: 'pro Monat' }
+        : { num: fmtSigned(Math.round(f.avgOt)).replace(' h', ''), unit: 'h', cls: balanceClass(Math.round(f.avgOt)), sub: 'pro Monat' },
+  },
+  avgNetto: {
+    label: 'Ø Netto',
+    menu: 'Ø Netto pro Monat',
+    wage: true,
+    get: (f) => ({ num: f.avgNet == null ? '–' : ovcEuro(f.avgNet), sub: 'pro Monat' }),
+  },
 };
 
 /** Anfangsbuchstabe des Monats in der angezeigten Sprache (die Übersetzung kennt einzelne Buchstaben nicht) */
@@ -142,7 +176,7 @@ function ovcBars(cols, fmt) {
         const val = v || plan ? `<span class="ovc-val">${fmt(v + plan)}</span>` : '';
         const segs = (c?.segs || [{ v, cls: c?.cls }]).filter((x) => x.v);
         const bars = (h) => segs.map((x) => `<i class="ovc-bar ${x.cls || ''}" style="height:${h(x.v)}%"></i>`).join('');
-        return `<div class="ovc-col" style="--i:${k}"><div class="ovc-plot">
+        return `<div class="ovc-col${c?.gap ? ' ovc-gap' : ''}" style="--i:${k}"><div class="ovc-plot">
           <div class="ovc-up" style="height:${top}%">
             ${v >= 0 ? val : ''}${plan ? `<i class="ovc-bar plan" style="height:${upH(plan)}%"></i>` : ''}${v > 0 ? bars(upH) : ''}${!v && !plan ? '<i class="ovc-bar ovc-none"></i>' : ''}
           </div>
@@ -163,8 +197,7 @@ const ovcLastMonth = (year) => {
   return year < now.getFullYear() ? 12 : year > now.getFullYear() ? 0 : now.getMonth() + 1;
 };
 /** Kopf der Säulen-Karten: Titel links, rechts der Durchschnitt je Monat („Ø 166,10 h“; ohne Werte „–“) */
-function ovcAvgHead(title, vals, fmt, cls = () => '') {
-  const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+function ovcAvgHead(title, avg, fmt, cls = () => '') {
   return `<div class="ovc-head"><span class="ovc-title">${title}</span><b class="ovc-count ${avg == null ? '' : cls(avg)}"><span class="ovc-avg">Ø</span> ${avg == null ? '–' : fmt(avg)}</b></div>`;
 }
 const hrsShort = (min) => fmtNum(Math.round(min / 6) / 10);
@@ -201,9 +234,9 @@ const OVC_BIG = {
     label: 'Überstunden pro Monat',
     html: (f) => {
       const last = ovcLastMonth(f.year);
-      return `${ovcAvgHead('Überstunden', f.m.filter((m) => m.counted).map((m) => m.ot), (v) => fmtSigned(Math.round(v)), (v) => balanceClass(Math.round(v)))}
+      return `${ovcAvgHead('Überstunden', f.avgOt, (v) => fmtSigned(Math.round(v)), (v) => balanceClass(Math.round(v)))}
         ${ovcBars(
-          f.m.map((m, k) => (k < last ? { v: m.ot, cls: m.ot < 0 ? 'minus' : 'plus' } : null)),
+          f.m.map((m, k) => (k < last ? { v: m.ot, cls: m.ot < 0 ? 'minus' : 'plus', gap: m.gap } : null)),
           (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + hrsShort(Math.abs(v))
         )}`;
     },
@@ -212,17 +245,15 @@ const OVC_BIG = {
     label: 'Stunden pro Monat',
     html: (f) => {
       const last = ovcLastMonth(f.year);
-      // Durchschnitt ohne den laufenden Monat (der ist erst teilweise gearbeitet)
-      const done = f.year === new Date().getFullYear() ? last - 1 : last;
-      return `${ovcAvgHead('Stunden', f.m.slice(0, done).filter((m) => m.worked > 0).map((m) => m.worked), (v) => fmtH(Math.round(v)))}
-        ${ovcBars(f.m.map((m, k) => (k < last ? { v: m.worked, cls: 'acc' } : null)), (v) => fmtNum(Math.round(v / 60)))}`;
+      return `${ovcAvgHead('Stunden', f.avgWorked, (v) => fmtH(Math.round(v)))}
+        ${ovcBars(f.m.map((m, k) => (k < last ? { v: m.worked, cls: 'acc', gap: m.gap } : null)), (v) => fmtNum(Math.round(v / 60)))}`;
     },
   },
   abwesenheit: {
     label: 'Abwesenheit pro Monat',
-    html: (f) => `${ovcAvgHead('Abwesenheit', f.m.slice(0, ovcLastMonth(f.year)).map((m) => m.urlaub + m.krank), (v) => plural(Math.round(v * 10) / 10, 'Tag', 'Tage'))}
+    html: (f) => `${ovcAvgHead('Abwesenheit', f.avgAbsence, (v) => plural(Math.round(v * 10) / 10, 'Tag', 'Tage'))}
       ${ovcBars(
-        f.m.map((m) => ({ v: m.urlaub + m.krank, plan: m.urlaubPlan, segs: [{ v: m.krank, cls: 'sick' }, { v: m.urlaub, cls: 'vac' }] })),
+        f.m.map((m) => ({ v: m.urlaub + m.krank, plan: m.urlaubPlan, gap: m.gap, segs: [{ v: m.krank, cls: 'sick' }, { v: m.urlaub, cls: 'vac' }] })),
         (v) => fmtNum(v)
       )}
       ${legend([['vac', 'Urlaub'], ['sick', 'Krank'], ['plan', 'Geplant']])}`,
@@ -248,8 +279,12 @@ const OVC_BIG = {
   netto: {
     label: 'Netto pro Monat',
     wage: true,
-    html: (f) => `${ovcAvgHead('Netto', f.m.filter((m) => m.net != null).map((m) => m.net), ovcEuro)}
-      ${ovcBars(f.m.map((m) => (m.net == null ? null : { v: m.net, cls: 'ok' })), (v) => fmtNum(Math.round(v / 100) / 10).replace(/,0$/, '') + 'k')}`,
+    // Laufender Monat: Hochrechnung grün schraffiert (wie auf der Seite des Monats), nicht im Durchschnitt
+    html: (f) => `${ovcAvgHead('Netto', f.avgNet, ovcEuro)}
+      ${ovcBars(
+        f.m.map((m) => (m.net != null ? { v: m.net, cls: 'ok' } : m.netProj != null ? { v: m.netProj, cls: 'ok proj' } : null)),
+        (v) => fmtNum(Math.round(v / 100) / 10).replace(/,0$/, '') + 'k'
+      )}`,
   },
 };
 
@@ -389,7 +424,7 @@ function ovcPick(slot) {
   const current = big ? c.big : c.small[Number(slot.slice(1))];
   const keys = Object.keys(defs).filter((k) => !defs[k].wage || hasWage());
   const actions = keys.map((k) => ({
-    label: `${defs[k].label}${k === current ? ` <span class="ovc-check">${ICON.check}</span>` : ''}`,
+    label: `${defs[k].menu || defs[k].label}${k === current ? ` <span class="ovc-check">${ICON.check}</span>` : ''}`,
     run: () => ovcSet(slot, k),
   }));
   if (current === 'urlaub')

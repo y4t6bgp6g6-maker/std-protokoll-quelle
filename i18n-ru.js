@@ -87,7 +87,7 @@ if (LANG === 'ru') {
       'Urlaubsanspruch:': 'Право на отпуск:', 'Kein Anspruch eingetragen': 'Право на отпуск не указано', 'Urlaub genommen': 'Отпуск использован',
       'Tage Urlaub genommen': 'дней отпуска использовано', 'Tage genommen': 'дней использовано', Genommen: 'Использовано', Geplant: 'Запланировано',
       Übrig: 'Осталось', übrig: 'осталось', Anspruch: 'Право', 'Tage übrig': 'дней осталось', 'Tage zu viel': 'дней сверх нормы',
-      'Ø pro Tag': 'Ø в день', Insgesamt: 'Всего', 'Insgesamt fehlen': 'Всего не хватает', 'mehr bezahlt': 'оплачено больше',
+      'Ø pro Tag': 'Ø в день', 'Ø pro Tag (h)': 'Ø в день (ч)', 'Ø Stunden': 'Ø часов', 'Ø Überstunden': 'Ø переработки', 'Ø Netto': 'Ø нетто', 'pro Monat': 'в месяц', 'Ø Stunden pro Monat': 'Ø часов в месяц', 'Ø Überstunden pro Monat': 'Ø переработки в месяц', 'Ø Netto pro Monat': 'Ø нетто в месяц', Insgesamt: 'Всего', 'Insgesamt fehlen': 'Всего не хватает', 'mehr bezahlt': 'оплачено больше',
       'zu wenig': 'слишком мало', 'zu viel': 'слишком много', 'Nach Stundenzetteln': 'По табелям', Unterschied: 'Разница',
       'Unvollständig:': 'Неполные:', 'Ohne Stundenzettel:': 'Без табеля:', 'Ohne Lohnabrechnung:': 'Без расчётного листа:',
       'Unter „Nach Stundenzetteln“ zählen Überstunden und Lohn nur vollständige Monate.': 'В разделе «По табелям» переработка и зарплата учитываются только за полные месяцы.',
