@@ -278,6 +278,10 @@ if (LANG === 'ru') {
       'Gerät abgemeldet': 'Устройство отключено', 'Die Daten auf diesem Gerät wurden gelöscht.': 'Данные на этом устройстве удалены.',
       'Team auf einem anderen Gerät verlassen': 'Выход из команды на другом устройстве', 'Auf einem anderen Gerät angemeldet': 'Вход выполнен на другом устройстве',
       'Auf allen Geräten verlassen?': 'Выйти на всех устройствах?',
+      // ── Abgleich: Konflikt-Fenster, neuere Fassung ──
+      'Welche Fassung soll gelten?': 'Какой вариант оставить?', Behalten: 'Оставить', 'Gelöscht lassen': 'Оставить удалённым',
+      gelöscht: 'удалён', 'Anderes Gerät': 'Другое устройство', 'Bitte App neu öffnen': 'Откройте приложение заново',
+      'Auf einem anderen Gerät läuft schon eine neuere Fassung.': 'На другом устройстве уже работает более новая версия.',
     },
 
     patterns: [
@@ -306,6 +310,8 @@ if (LANG === 'ru') {
       [/^Im Zettel steht (.+)\. Der (\S+) ist aber ein (\S+)\.$/, (m, r, d, w) => `В табеле указано ${r}. Но ${d} — это не понедельник.`],
       [/^Konto: (.+)$/, 'Аккаунт: $1'],
       [/^Schon (\d) Geräte$/, 'Уже $1 устройства'],
+      [/^Zettel (.+) auf zwei Geräten geändert$/, 'Табель $1 изменён на двух устройствах'],
+      [/^gelöscht (.+)$/, 'удалён $1'],
       [/^„(.+)“ abmelden\?$/, 'Отключить «$1»?'],
       [/^· seit (\d+\.\d+\.)$/, '· с $1'],
       [/^(\d) von 3 aus$/, '$1 из 3 выкл.'],

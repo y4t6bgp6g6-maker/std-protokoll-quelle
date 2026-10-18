@@ -1,5 +1,5 @@
 // Offline-Cache: Mit Internet wird immer die neueste Version geladen, ohne Internet die gespeicherte.
-const CACHE = 'std-protokoll-v118';
+const CACHE = 'std-protokoll-v119';
 const ASSETS = [
   './',
   'index.html',
@@ -20,6 +20,7 @@ const ASSETS = [
   'lock.js',
   'team.js',
   'konto.js',
+  'abgleich.js',
   'karten.js',
   'fonts/special-elite.woff2',
   'manifest.webmanifest',

@@ -336,6 +336,8 @@ async function teamUpload() {
   if (typeof settings === 'undefined') return teamQueueUpload(1000), false;
   // Passwort auf einem anderen Gerät geändert: erst neu anmelden
   if (!team || !TEAM_URL || !navigator.onLine || accountRestorePending() || (account && account.pwchanged)) return false;
+  // Abgleich mehrerer Geräte: nur mit aktuellem Stand (sonst überschriebe ein Gerät mit altem Stand den gemeinsamen Eintrag)
+  if (!syncCurrent()) return false;
   if (teamUploading) {
     teamUploadAgain = true;
     return false;
@@ -405,6 +407,7 @@ async function joinTeam(code) {
   } catch {}
   team = { code, member: out.member, token, sent: '', seen };
   saveTeam();
+  syncSoon(0);
   // Angemeldet, aber ohne Namen und ohne Sicherung (die ihn zurückbrächte): die Kollegen sähen „?“
   if (!settings.name.trim() && !(out.backups || []).length) toast('Bitte zuerst deinen Namen eintragen');
   haptic();

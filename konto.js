@@ -141,6 +141,7 @@ async function accountSyncCheck() {
   if (account && JSON.stringify([account.sync, accountDevs]) !== before) {
     saveAccount();
     accountRerender();
+    syncSoon(0);
   }
 }
 
@@ -304,9 +305,12 @@ async function accountJoin(code, member, token) {
   delete account.pwchanged;
   accountDevs = null;
   accountSyncAt = 0;
-  // Bestehendes Konto mit Sicherungen auf einem leeren iPhone: erst fragen, dann sichern
-  if (out.backups && out.backups.length && !account.at) account.restore = 'ask';
+  // Bestehendes Konto mit Sicherungen auf einem leeren iPhone: erst fragen, dann sichern.
+  // Mit Abgleich nicht: das Gerät holt alles vom Server (abgleich.js)
+  if (out.backups && out.backups.length && !account.at && !account.sync) account.restore = 'ask';
+  if (account.sync) account.restore = '';
   saveAccount();
+  syncSoon(0);
   return out;
 }
 
@@ -378,6 +382,7 @@ async function accountSetup(user, pw, mode, again) {
   haptic();
   toast(mode === 'create' ? 'Konto erstellt' : 'Angemeldet');
   accountRerender();
+  syncSoon(0);
   if (accountRestorePending()) accountOfferRestore();
   else if (team) {
     teamQueueUpload(0);
@@ -600,6 +605,11 @@ const accountWhen = (t) => {
 /** Frage „Sicherung einlesen?“ noch offen (App vorher geschlossen, keine Verbindung): beim Start erneut stellen –
  *  bis zur Antwort wird nichts hochgeladen */
 function accountResumeRestore() {
+  // mit Abgleich kommt alles vom Server
+  if (account && account.sync && accountRestorePending()) {
+    account.restore = '';
+    saveAccount();
+  }
   if (team && accountOk() && accountRestorePending()) accountOfferRestore();
 }
 

@@ -1221,6 +1221,7 @@ function saveSheets(changed) {
     toast('Speichern fehlgeschlagen!');
   }
   teamQueueUpload();
+  syncSoon();
 }
 function saveSettings() {
   try {
@@ -1230,6 +1231,7 @@ function saveSettings() {
     toast('Speichern fehlgeschlagen!');
   }
   teamQueueUpload();
+  syncSoon();
 }
 
 // Speicher als dauerhaft markieren, damit iOS ihn nicht aufräumt
@@ -2134,6 +2136,8 @@ function route() {
     window.scrollTo(0, listScroll);
   }
   if (currentView !== 'editor') editorSaved = null;
+  // Editor verlassen: zurückgehaltene Fassungen und wartende Konflikte (Abgleich) jetzt
+  if (prevView === 'editor' && currentView !== 'editor') syncSoon(0);
   updateTopButton();
   updateTabbar();
   pageAnim(prevView, currentView);
@@ -6923,6 +6927,7 @@ accountLink();
 accountResumeRestore();
 accountSyncCheck();
 deviceWipedNotice();
+syncStart();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   fetchReports();
