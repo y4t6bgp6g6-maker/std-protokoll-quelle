@@ -25,23 +25,40 @@ const teamFirstName = (name) => String(name ?? '').trim().split(/\s+/)[0];
 const teamMonth = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 
 async function teamRequest(method, path, body, code = team && team.code) {
+  // /sync: alles im Inhalt (Team-Code, Konto, Token), keine eigenen Header – der Server verlangt es so
+  const sync = path === '/sync';
   const res = await fetch(TEAM_URL + path, {
     method,
-    // mit Konto immer dabei (Lesen verlangt es); Name kodiert, Header erlauben keine kyrillischen Buchstaben
-    headers: {
-      'X-Team-Code': code,
-      ...(account && account.auth ? { 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth } : {}),
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
+    // mit Konto immer dabei (Lesen verlangt es); Name kodiert, Header erlauben keine kyrillischen Buchstaben.
+    // X-Token: Konten mit Abgleich brauchen zusätzlich das Token eines ihrer Geräte
+    headers: sync
+      ? { 'Content-Type': 'text/plain;charset=utf-8' }
+      : {
+          'X-Team-Code': code,
+          ...(account && account.auth ? { 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth } : {}),
+          ...(team && team.token ? { 'X-Token': team.token } : {}),
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+    body: body ? JSON.stringify(sync ? { code, ...body } : body) : undefined,
     cache: 'no-store',
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     window.serverFehler?.(method, path + (body && (body.action || body.task) ? ` ${body.action || body.task}` : ''), res.status, data.error);
-    throw Object.assign(new Error(data.error || 'fehler'), { status: res.status });
+    teamAccessError(res.status, data.error);
+    throw Object.assign(new Error(data.error || 'fehler'), { status: res.status, data });
   }
   return data;
+}
+
+/** Antworten, die für das ganze Gerät gelten (Konto mit Abgleich): abgemeldet → Daten löschen, Team auf einem anderen
+ *  Gerät verlassen, kein Gerät des Kontos (mehr), Passwort anderswo geändert */
+function teamAccessError(status, error) {
+  if (status !== 403) return;
+  if (error === 'removed') deviceWipe();
+  else if (error === 'left' && team) leaveTeamLocal('Team auf einem anderen Gerät verlassen');
+  else if (error === 'device' && team) leaveTeamLocal('Auf einem anderen Gerät angemeldet');
+  else if (error === 'pwchanged' && account && account.ok) accountPwChanged();
 }
 
 // ───────── KI (Workers AI über den Team-Server, nur im Team) ─────────
@@ -317,7 +334,8 @@ async function teamUpload() {
   // app.js (settings, Zettel) ist beim ersten Start nach einem Update teils noch nicht geladen, wenn die
   // Zeitgeber aus team.js schon ablaufen (langsames Netz): dann etwas später noch einmal
   if (typeof settings === 'undefined') return teamQueueUpload(1000), false;
-  if (!team || !TEAM_URL || !navigator.onLine || accountRestorePending()) return false;
+  // Passwort auf einem anderen Gerät geändert: erst neu anmelden
+  if (!team || !TEAM_URL || !navigator.onLine || accountRestorePending() || (account && account.pwchanged)) return false;
   if (teamUploading) {
     teamUploadAgain = true;
     return false;
@@ -370,6 +388,8 @@ async function joinTeam(code) {
   try {
     out = await accountJoin(code, uid(), token);
   } catch (e) {
+    // Gerät abgemeldet: Daten werden gelöscht, die App startet neu
+    if (e.message === 'removed') return;
     toast(accountError(e));
     // Name vergeben, Passwort falsch …: steht dann auch auf der Konto-Seite
     if (e.status && e.status !== 401) {
@@ -422,19 +442,22 @@ function leaveTeamLocal(message) {
 }
 
 function leaveTeam() {
-  confirmDialog('Team verlassen?', 'Deine Zettel werden für das Team gelöscht.', 'Verlassen', async () => {
+  // Konto mit Abgleich: der Server nimmt alle Geräte des Kontos mit heraus (sonst legten sie den Eintrag gleich wieder an)
+  const all = !!(account && account.sync);
+  confirmDialog(all ? 'Auf allen Geräten verlassen?' : 'Team verlassen?', 'Deine Zettel werden für das Team gelöscht.', 'Verlassen', async () => {
     // Inzwischen schon draußen (z. B. Code ungültig): nichts mehr zu tun
     if (!team) return;
     try {
       await teamRequest('DELETE', '/me', { member: team.member, token: team.token });
     } catch (e) {
-      // Code ungültig oder der Eintrag gehört inzwischen einem anderen iPhone (dasselbe Konto): hier nur noch austreten
-      if (e.status !== 401 && !(e.status === 403 && e.message === 'token')) {
+      // Code ungültig oder der Eintrag gehört inzwischen einem anderen iPhone (dasselbe Konto) bzw. schon auf einem
+      // anderen Gerät verlassen: hier nur noch austreten
+      if (e.status !== 401 && !(e.status === 403 && ['token', 'left', 'device'].includes(e.message))) {
         toast('Keine Verbindung');
         return;
       }
     }
-    leaveTeamLocal();
+    if (team) leaveTeamLocal();
   }, true);
 }
 
@@ -551,7 +574,7 @@ async function teamLoad() {
     }
     // Passwort anderswo geändert oder Konto gelöscht: neu anmelden (Team-Seite zeigt „Erst anmelden“, auch im Teammeeting
     // und in der Zettel-Ansicht eines Kollegen)
-    if (account && ['auth', 'unknown', 'konto'].includes(e.message)) {
+    if (account && ['auth', 'unknown', 'konto', 'pwchanged'].includes(e.message)) {
       account.ok = false;
       account.error = accountError(e);
       saveAccount();

@@ -4,9 +4,11 @@
 // dem iPhone, liegt wie bisher in stdprotokoll.crypt.v1). Beide hängen nur von Benutzername und Passwort ab – nach einem
 // Datenverlust reicht erneutes Anmelden, um die Sicherungen vom Team-Server wieder zu öffnen.
 //
-// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error }
+// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error, sync, pwchanged }
 // mode: 'create' (neues Konto) | 'login' (bestehendes); ok: vom Server bestätigt; restore: 'ask' = Sicherung auf dem
-// Server, Frage nach dem Einlesen noch offen (bis dahin wird nichts hochgeladen, sonst überschriebe ein leerer Stand sie)
+// Server, Frage nach dem Einlesen noch offen (bis dahin wird nichts hochgeladen, sonst überschriebe ein leerer Stand sie);
+// sync: Abgleich mehrerer Geräte für dieses Konto eingeschaltet (Schalter auf der Server-Seite); pwchanged: Passwort auf
+// einem anderen Gerät geändert – Team-Upload und Sicherung warten, bis hier neu angemeldet ist
 
 const ACCOUNT_KEY = 'stdprotokoll.account.v1';
 /** Sicherung auf dem Team-Server: nach Änderungen höchstens einmal je Stunde */
@@ -43,7 +45,226 @@ async function accountDerive(user, pw) {
   return { auth: toB64(bits), key, salt };
 }
 
-const accountRequest = (action, extra = {}, code) => teamRequest('POST', '/account', { action, user: account.user, auth: account.auth, ...extra }, code);
+// token: Konten mit Abgleich brauchen zusätzlich das Token eines ihrer Geräte (beim Beitreten das neue, siehe accountJoin)
+const accountRequest = (action, extra = {}, code) =>
+  teamRequest('POST', '/account', { action, user: account.user, auth: account.auth, token: team ? team.token : undefined, ...extra }, code);
+/** Abgleich (nur Konten mit Schalter): Geräte-Liste, umbenennen, abmelden */
+const accountSyncRequest = (action, extra = {}) =>
+  teamRequest('POST', '/sync', { action, user: account.user, auth: account.auth, token: team.token, device: deviceInfo().id, ...extra });
+
+// ───────── Geräte (Konto mit Abgleich: bis zu 3 je Konto) ─────────
+// Eigener Speicher je Gerät (nie abgeglichen, nicht in der Sicherung): { id }. Die ID bleibt beim Verlassen des Teams und
+// bei ungültigem Team-Code erhalten – sonst belegte jedes erneute Beitreten einen neuen Platz
+
+const DEVICE_KEY = 'stdprotokoll.device.v1';
+const WIPED_KEY = 'stdprotokoll.wiped.v1';
+/** Vorgabe für den Gerätenamen (iPadOS meldet sich als Mac, hat aber Touch) */
+function deviceKind() {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'iPad';
+  if (/iPhone|iPod/.test(ua)) return 'iPhone';
+  if (/Android/.test(ua)) return 'Handy';
+  return /Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'PC' : 'Gerät';
+}
+function deviceInfo() {
+  let d = null;
+  try {
+    d = JSON.parse(localStorage.getItem(DEVICE_KEY) || 'null');
+  } catch {}
+  if (!d || typeof d.id !== 'string' || !/^[A-Za-z0-9-]{8,128}$/.test(d.id)) {
+    d = { id: uid() };
+    try {
+      localStorage.setItem(DEVICE_KEY, JSON.stringify(d));
+    } catch {}
+  }
+  return d;
+}
+
+/** Auf einem anderen Gerät abgemeldet (Server antwortet „removed“, nur dann): alle Daten der App auf diesem Gerät löschen
+ *  und neu starten. Auch die Geräte-ID – mit ihr nähme der Server dieses Gerät 90 Tage lang nicht wieder an */
+async function deviceWipe() {
+  if (deviceWipe.done) return;
+  deviceWipe.done = true;
+  try {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('stdprotokoll.')) localStorage.removeItem(k);
+    localStorage.setItem(WIPED_KEY, '1');
+  } catch {}
+  // ab jetzt nichts mehr speichern (offene Zeitgeber, Editor): sonst stünden Daten nach dem Neustart wieder da
+  Storage.prototype.setItem = () => {};
+  try {
+    const db = await bhDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction('img', 'readwrite');
+      tx.objectStore('img').clear();
+      tx.oncomplete = tx.onerror = tx.onabort = resolve;
+    });
+  } catch {}
+  history.replaceState(null, '', location.pathname);
+  location.reload();
+}
+/** Nach dem Neustart einmal sagen, warum alles leer ist */
+function deviceWipedNotice() {
+  try {
+    if (!localStorage.getItem(WIPED_KEY)) return;
+    localStorage.removeItem(WIPED_KEY);
+  } catch {
+    return;
+  }
+  infoDialog('Gerät abgemeldet', 'Die Daten auf diesem Gerät wurden gelöscht.');
+}
+
+/** Geräte des Kontos (null = nicht geladen bzw. ohne Abgleich): [{ device, name, created, seen, me }] */
+let accountDevs = null;
+let accountSyncAt = 0;
+/** Abgleich an? Welche Geräte? Beim Start, beim Zurückkehren und auf der Konto-Seite. Dabei kommen auch „abgemeldet“,
+ *  „Team verlassen“ und „Passwort geändert“ an (teamRequest), ohne dass etwas hochgeladen werden muss */
+async function accountSyncCheck() {
+  if (!team || !accountOk() || !navigator.onLine || accountSyncCheck.busy || Date.now() - accountSyncAt < 10e3) return;
+  accountSyncCheck.busy = true;
+  accountSyncAt = Date.now();
+  const before = JSON.stringify([account.sync, accountDevs]);
+  try {
+    accountDevs = (await accountSyncRequest('devices')).devices || [];
+    account.sync = true;
+    // beim Einschalten trägt der Server das bisherige Gerät nur als „Gerät“ ein
+    const me = accountDevs.find((d) => d.me);
+    if (me && me.name === 'Gerät' && deviceKind() !== 'Gerät') accountDevs = (await accountSyncRequest('device-name', { device: me.device, name: deviceKind() })).devices || accountDevs;
+  } catch (e) {
+    // Abgleich aus (Schalter auf der Server-Seite)
+    if (account && e.status === 403 && e.message === 'sync') {
+      account.sync = false;
+      accountDevs = null;
+    }
+  } finally {
+    accountSyncCheck.busy = false;
+  }
+  if (account && JSON.stringify([account.sync, accountDevs]) !== before) {
+    saveAccount();
+    accountRerender();
+  }
+}
+
+/** Beim Anmelden schon alle Plätze belegt: eins abmelden (Passwort ist geprüft). Ergebnis: true = abgemeldet */
+function accountFreeDevice(devices, code) {
+  return new Promise((resolve) => {
+    const modal = openModal(
+      `<div class="alert-body"><b>Schon ${devices.length} Geräte</b><div class="alert-msg">Eins abmelden – es löscht dann seine Daten.</div></div>
+      <div class="alert-buttons stacked acc-pick">${devices
+        .map((d) => `<button data-dev="${escapeHtml(d.device)}"><span translate="no">${escapeHtml(d.name || 'Gerät')}</span> · seit ${fmtDayMonth(new Date(d.created))}</button>`)
+        .join('')}<button data-dev="">Abbrechen</button></div>`,
+      'alert',
+      false
+    );
+    modal.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-dev]');
+      if (!b) return;
+      closeModal();
+      const d = devices.find((x) => x.device === b.dataset.dev);
+      if (!d) return resolve(false);
+      setTimeout(
+        () =>
+          confirmDialog(
+            `„${escapeHtml(d.name || 'Gerät')}“ abmelden?`,
+            'Es löscht seine Daten, sobald es online ist.',
+            'Abmelden',
+            async () => {
+              try {
+                await accountRequest('device-remove', { device: d.device }, code);
+                resolve(true);
+              } catch (err) {
+                toast(accountError(err));
+                resolve(false);
+              }
+            },
+            true,
+            'Abbrechen',
+            () => resolve(false)
+          ),
+        280
+      );
+    });
+  });
+}
+
+function accountDevicesHTML() {
+  return `<h2 class="section-title">Geräte</h2>
+    <div class="card form">${accountDevs
+      .map(
+        (d) => `<button class="field acc-dev" data-acc="device" data-dev="${escapeHtml(d.device)}"><span translate="no">${escapeHtml(d.name || 'Gerät')}</span><span class="muted">${
+          d.me ? 'Dieses Gerät' : d.seen ? accountWhen(d.seen) : ''
+        }</span></button>`
+      )
+      .join('')}</div>`;
+}
+
+function accountDeviceMenu(id) {
+  const d = (accountDevs || []).find((x) => x.device === id);
+  if (!d) return;
+  actionSheet([
+    { label: 'Umbenennen', run: () => accountDeviceRename(d) },
+    // das eigene nicht: es löschte sofort alle Daten hier
+    ...(d.me ? [] : [{ label: 'Abmelden', destructive: true, run: () => accountDeviceRemove(d) }]),
+  ]);
+}
+
+function accountDeviceRename(d) {
+  const modal = openModal(
+    `<div class="alert-body"><b>Gerätename</b>
+      <input class="pw-input" data-dev-name maxlength="40" autocomplete="off" enterkeyhint="done">
+    </div>
+    <div class="alert-buttons"><button data-c="no">Abbrechen</button><button data-c="yes" class="strong">OK</button></div>`,
+    'alert'
+  );
+  const input = modal.querySelector('[data-dev-name]');
+  input.value = d.name || '';
+  const send = async () => {
+    const name = input.value.replace(/\s+/g, ' ').trim();
+    if (!name) return;
+    closeModal();
+    if (name === d.name) return;
+    try {
+      accountDevs = (await accountSyncRequest('device-name', { device: d.device, name })).devices || accountDevs;
+    } catch (e) {
+      return toast(accountError(e));
+    }
+    accountRerender();
+  };
+  modal.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-c]');
+    if (!b) return;
+    if (b.dataset.c === 'no') closeModal();
+    else send();
+  });
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && send());
+  setTimeout(() => input.focus(), 50);
+}
+
+function accountDeviceRemove(d) {
+  confirmDialog(`„${escapeHtml(d.name || 'Gerät')}“ abmelden?`, 'Es löscht seine Daten, sobald es online ist.', 'Abmelden', async () => {
+    try {
+      accountDevs = (await accountSyncRequest('device-remove', { device: d.device })).devices || accountDevs;
+    } catch (e) {
+      return toast(accountError(e));
+    }
+    accountRerender();
+  }, true);
+}
+
+/** Passwort auf einem anderen Gerät geändert: Lesen, Team-Upload und Sicherung warten, bis hier neu angemeldet ist
+ *  (zählt beim Server nicht als Fehlversuch) */
+function accountPwChanged() {
+  account.ok = false;
+  account.pwchanged = true;
+  account.error = accountError({ message: 'pwchanged' });
+  saveAccount();
+  accountRerender();
+}
+
+/** Mit dem neuen Passwort wieder anmelden (Konto bleibt, nur das Passwort wird neu eingegeben) */
+async function accountRelogin() {
+  const pw = await askPassword('Neu anmelden', `<span translate="no">${escapeHtml(account.user)}</span>`);
+  if (pw != null) accountSetup(account.user, pw, 'login');
+}
 
 /** Fehlermeldung des Servers als kurzer Text */
 const accountError = (e) =>
@@ -55,14 +276,34 @@ const accountError = (e) =>
     wait: 'Zu viele Versuche – in 10 Minuten wieder',
     size: 'Sicherung zu groß',
     token: 'Team-Eintrag gehört zu einem anderen Konto – dort anmelden',
+    devices: 'Schon 3 Geräte angemeldet',
+    pwchanged: 'Passwort geändert – neu anmelden',
+    device: 'Gerät unbekannt – neu beitreten',
   })[e && (e.status === 401 ? 401 : e.message)] || (e && e.status ? 'Fehler auf dem Server' : 'Keine Verbindung');
 
-/** Konto beim Team-Server anlegen bzw. prüfen und mit dem Team-Eintrag verbinden → { member, backups } */
+/** Konto beim Team-Server anlegen bzw. prüfen und mit dem Team-Eintrag verbinden → { member, backups, sync }.
+ *  Konto mit Abgleich: dieses Gerät wird eins seiner Geräte (Geräte-ID, Name); alle Plätze belegt → eins abmelden */
 async function accountJoin(code, member, token) {
-  const out = await accountRequest('join', { mode: account.mode, member, token, name: teamFirstName(settings.name), fullname: settings.name.trim() }, code);
+  let out;
+  for (;;) {
+    try {
+      out = await accountRequest(
+        'join',
+        { mode: account.mode, member, token, name: teamFirstName(settings.name), fullname: settings.name.trim(), device: deviceInfo().id, deviceName: deviceKind() },
+        code
+      );
+      break;
+    } catch (e) {
+      if (e.status !== 409 || e.message !== 'devices' || !(await accountFreeDevice((e.data && e.data.devices) || [], code))) throw e;
+    }
+  }
   account.ok = true;
   account.mode = 'login';
   account.error = '';
+  account.sync = !!out.sync;
+  delete account.pwchanged;
+  accountDevs = null;
+  accountSyncAt = 0;
   // Bestehendes Konto mit Sicherungen auf einem leeren iPhone: erst fragen, dann sichern
   if (out.backups && out.backups.length && !account.at) account.restore = 'ask';
   saveAccount();
@@ -147,6 +388,7 @@ async function accountSetup(user, pw, mode, again) {
 /** Konto und Sicherungs-Schlüssel von diesem iPhone entfernen (Abmelden, Konto gelöscht) */
 function accountForget() {
   account = null;
+  accountDevs = null;
   saveAccount();
   cryptStore = null;
   try {
@@ -235,12 +477,13 @@ async function accountBackup(force = false) {
     if (!data.startsWith('{"app":"std-protokoll","enc"')) throw new Error('plain');
     const res = await fetch(TEAM_URL + '/backup', {
       method: 'PUT',
-      headers: { 'X-Team-Code': team.code, 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth, 'Content-Type': 'text/plain;charset=utf-8' },
+      headers: { 'X-Team-Code': team.code, 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth, 'X-Token': team.token, 'Content-Type': 'text/plain;charset=utf-8' },
       body: data,
       cache: 'no-store',
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok) window.serverFehler?.('PUT', '/backup', res.status, out.error);
+    if (!res.ok) teamAccessError(res.status, out.error);
     if (!res.ok) throw Object.assign(new Error(out.error || 'fehler'), { status: res.status });
     if (account) Object.assign(account, { at: out.at || Date.now(), hash, error: '' });
     done = true;
@@ -258,13 +501,17 @@ async function accountBackup(force = false) {
   return done;
 }
 setInterval(() => accountBackup(), 10 * 60e3);
-document.addEventListener('visibilitychange', () => accountBackup());
+document.addEventListener('visibilitychange', () => {
+  accountBackup();
+  if (document.visibilityState === 'visible') accountSyncCheck();
+});
 
 const accountStatusText = () => {
   if (!team) return 'Im Team wird automatisch auf dem Team-Server gesichert.';
   const at = account.at ? new Date(account.at) : null;
   const when = at ? `Auf dem Team-Server gesichert: ${sameDay(at, new Date()) ? 'heute' : fmtDayMonth(at)} ${fmtTime(at.getHours() * 60 + at.getMinutes())}` : 'Noch nicht auf dem Team-Server gesichert';
-  return account.error ? `${when} · ${account.error}` : when;
+  // nicht angemeldet: der Grund steht schon unter „Status“
+  return account.error && account.ok ? `${when} · ${account.error}` : when;
 };
 
 // ───────── Arbeitsscheine vom Team-Server ─────────
@@ -456,11 +703,15 @@ function kontoPageHTML() {
     <p class="footnote center">Fürs Team nötig, Sicherungen werden damit verschlüsselt.</p>`;
   }
   const ok = accountOk();
+  // Geräte-Liste (nur mit Abgleich) frisch holen
+  if (team && ok) setTimeout(accountSyncCheck);
   return `
     <div class="card form">
       <div class="field"><span>Benutzername</span><span class="muted" translate="no">${escapeHtml(account.user)}</span></div>
       <div class="field"><span>Status</span><span class="muted" ${ok ? '' : 'style="color: var(--warning)"'}>${ok ? 'Angemeldet' : account.error || 'Wird beim Beitreten ins Team geprüft'}</span></div>
     </div>
+    ${team && !ok && account.error ? '<div class="card list"><button class="list-btn" data-acc="relogin">Neu anmelden …</button></div>' : ''}
+    ${team && ok && account.sync && accountDevs ? accountDevicesHTML() : ''}
     ${
       team && ok
         ? `<div class="card list">
@@ -471,7 +722,7 @@ function kontoPageHTML() {
         : `<p class="footnote" id="account-status">${accountStatusText()}</p>`
     }
     <div class="card list">
-      ${team && ok ? '<button class="list-btn" data-acc="password">Passwort ändern …</button>' : ''}
+      ${team && ok && !account.sync ? '<button class="list-btn" data-acc="password">Passwort ändern …</button>' : ''}
       <button class="list-btn destructive" data-acc="logout">Abmelden</button>
       ${team && ok ? '<button class="list-btn destructive" data-acc="delete">Konto löschen</button>' : ''}
     </div>`;
@@ -507,6 +758,12 @@ document.addEventListener('click', (e) => {
       break;
     case 'password':
       accountPassword();
+      break;
+    case 'relogin':
+      accountRelogin();
+      break;
+    case 'device':
+      accountDeviceMenu(el.dataset.dev);
       break;
     case 'restore':
       accountPickRestore();

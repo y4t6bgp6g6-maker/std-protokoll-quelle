@@ -6921,6 +6921,8 @@ fetchReports();
 accountBackup();
 accountLink();
 accountResumeRestore();
+accountSyncCheck();
+deviceWipedNotice();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   fetchReports();
