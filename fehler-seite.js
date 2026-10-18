@@ -149,7 +149,8 @@ function adminServerHTML() {
 const adminVer = (v) => Number(String(v || '').split('-v')[1]) || 0;
 
 /** Team diesen Monat mit den Konten: je Person App-Version (veraltete gelb) und letzter Upload, darunter Benutzername
- *  und letzte Sicherung bzw. „ohne Konto“ (orange), bei Konten mit Abgleich je Gerät eine Zeile (zuletzt gesehen);
+ *  und letzte Sicherung bzw. „ohne Konto“ (orange), bei Konten mit Abgleich „Abgleich“ (sie sichern nicht mehr) und je
+ *  Gerät eine Zeile (zuletzt gesehen);
  *  Konten ohne Eintrag in diesem Monat unten („nicht im Team“).
  *  Lang drücken → Menü: aus dem Team entfernen (z. B. doppelt nach Neuinstallation), Abgleich ein/aus, Konto löschen */
 function adminTeamHTML(tm, accounts) {
@@ -164,7 +165,7 @@ function adminTeamHTML(tm, accounts) {
   const cleanup = y && m ? fmtDayMonth(new Date(y, m + 1, 1)) : '';
   const sub = (a) =>
     a
-      ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>${
+      ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.sync ? '<span>Abgleich</span>' : a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>${
           a.sync
             ? (a.devices || []).map((d) => `<span class="fb-sub">⇄ <span translate="no">${escapeHtml(d.name || 'Gerät')}</span> · <span>${d.state === 'left' ? 'nicht im Team' : d.seen ? teamAgo(d.seen) : '–'}</span></span>`).join('') ||
               '<span class="fb-sub">⇄ <span>Abgleich ohne Gerät</span></span>'

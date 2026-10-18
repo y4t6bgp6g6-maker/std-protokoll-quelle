@@ -382,10 +382,11 @@ async function accountSetup(user, pw, mode, again) {
   toast('Wird eingerichtet …', 10000);
   const { auth, key, salt } = await accountDerive(user, pw);
   const prev = account;
-  // Passwort auf einem anderen Gerät geändert: bisherigen Schlüssel behalten, bis alles neu verschlüsselt ist (abgleich.js)
+  // Passwort auf einem anderen Gerät geändert: bisherigen Schlüssel behalten, bis alles neu verschlüsselt ist (abgleich.js).
+  // Einen schon gemerkten nicht ersetzen – nach einem eigenen Wechsel (pwNext übernommen) ist cryptStore schon der neue
   if (prev && prev.user === user && prev.sync && cryptStore) {
     const st = syncState();
-    if (st.kg) st.oldKeys[st.kg] = cryptStore.key;
+    if (st.kg && !st.oldKeys[st.kg]) st.oldKeys[st.kg] = cryptStore.key;
     syncSave();
   }
   account = { user, auth, mode, ok: false, restore: '', at: 0, hash: '', error: '' };
@@ -515,7 +516,8 @@ async function accountPassword() {
     left = !!Object.keys(syncState().oldKeys).length;
   }
   // Der Server hat die alten Sicherungen gelöscht (mit dem neuen Passwort nicht zu öffnen): gleich die neue anlegen
-  const saved = !left && (await accountBackup(true));
+  // (mit Abgleich gibt es keine)
+  const saved = !left && (sync || (await accountBackup(true)));
   document.getElementById('toast').classList.remove('show');
   if (left) infoDialog('Passwort geändert', ACCOUNT_PW_LEFT_MSG);
   else if (saved) toast('Passwort geändert');
@@ -543,11 +545,10 @@ async function accountBackup(force = false) {
     }
     return false;
   }
+  // Abgleich: der Server hat alles je Datensatz und frühere Fassungen 30 Tage („Stand vom …“) – keine Sicherung mehr
+  if (account.sync) return false;
   // erst die Zeit prüfen: die Sicherung zusammenzustellen kostet bei vielen Bildern spürbar
   if (!force && Date.now() - (account.at || 0) < ACCOUNT_BACKUP_GAP) return false;
-  // Abgleich: nur mit aktuellem Stand sichern – ein frisch angemeldetes, noch leeres Gerät schöbe sonst eine leere
-  // Sicherung vor die guten (der Server behält nur die neuesten)
-  if (account.sync && !syncCurrent()) return false;
   const plain = backupJson();
   const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, ''));
   if (!force && hash === account.hash) return false;
@@ -557,6 +558,7 @@ async function accountBackup(force = false) {
     const data = await sealBackup(plain);
     // nie unverschlüsselt senden (der Server nimmt es auch nicht an)
     if (!data.startsWith('{"app":"std-protokoll","enc"')) throw new Error('plain');
+    const sentAuth = account.auth;
     const res = await fetch(TEAM_URL + '/backup', {
       method: 'PUT',
       headers: { 'X-Team-Code': team.code, 'X-User': encodeURIComponent(account.user), 'X-Auth': account.auth, 'X-Token': team.token, 'Content-Type': 'text/plain;charset=utf-8' },
@@ -565,7 +567,7 @@ async function accountBackup(force = false) {
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok) window.serverFehler?.('PUT', '/backup', res.status, out.error);
-    if (!res.ok) teamAccessError(res.status, out.error);
+    if (!res.ok) teamAccessError(res.status, out.error, sentAuth);
     if (!res.ok) throw Object.assign(new Error(out.error || 'fehler'), { status: res.status });
     if (account) Object.assign(account, { at: out.at || Date.now(), hash, error: '' });
     done = true;
@@ -590,6 +592,13 @@ document.addEventListener('visibilitychange', () => {
 
 const accountStatusText = () => {
   if (!team) return 'Im Team wird automatisch auf dem Team-Server gesichert.';
+  if (account.sync) {
+    // Sicherung gibt es mit Abgleich nicht: sagen, ob noch etwas nur auf diesem Gerät liegt
+    const st = syncState();
+    const open = st.conflicts.length || st.held.length || st.hold > SYNC_F || (syncStarted && syncChanges().some((c) => !syncSkip.has(c.key)));
+    const when = open ? 'Noch nicht alles gesendet' : st.at ? `Abgeglichen: ${accountWhen(st.at)}` : 'Noch nicht abgeglichen';
+    return account.error && account.ok ? `${when} · ${account.error}` : when;
+  }
   const at = account.at ? new Date(account.at) : null;
   const when = at ? `Auf dem Team-Server gesichert: ${sameDay(at, new Date()) ? 'heute' : fmtDayMonth(at)} ${fmtTime(at.getHours() * 60 + at.getMinutes())}` : 'Noch nicht auf dem Team-Server gesichert';
   // nicht angemeldet: der Grund steht schon unter „Status“
@@ -802,9 +811,13 @@ function kontoPageHTML() {
     ${
       team && ok
         ? `<div class="card list">
-      <button class="list-btn" data-acc="restore">Sicherung vom Team-Server einlesen …</button>
-      ${account.sync ? '<button class="list-btn" data-acc="state">Stand vom … wiederherstellen</button>' : ''}
-      <button class="list-btn" data-acc="backup">Jetzt sichern</button>
+      ${
+        // Abgleich: keine Sicherungen mehr, frühere Stände über „Stand vom …“
+        account.sync
+          ? '<button class="list-btn" data-acc="state">Stand vom … wiederherstellen</button>'
+          : `<button class="list-btn" data-acc="restore">Sicherung vom Team-Server einlesen …</button>
+      <button class="list-btn" data-acc="backup">Jetzt sichern</button>`
+      }
     </div>
     <p class="footnote" id="account-status">${accountStatusText()}</p>`
         : `<p class="footnote" id="account-status">${accountStatusText()}</p>`

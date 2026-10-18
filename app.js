@@ -1314,7 +1314,9 @@ const REPORT_KEY = 'stdprotokoll.reports.v1';
 // items: Scheine; since: Zeitpunkt der neuesten abgeholten Mail; at: letztes Abholen
 let reportStore = { items: [], since: 0, at: 0, ...readJson(REPORT_KEY, {}) };
 if (reportStore.items.some((r) => !r.v)) reportStore.since = 0;
-const reports = () => reportStore.items;
+/** Scheine ohne die von Hand gelöschten (Abgleich: Platzhalter { id, date, v, gone }, damit das Abholen auf den anderen
+ *  Geräten sie nicht zurückbringt) */
+const reports = () => reportStore.items.filter((r) => !r.gone);
 function saveReports() {
   try {
     localStorage.setItem(REPORT_KEY, JSON.stringify(reportStore));
@@ -1326,9 +1328,10 @@ function saveReports() {
 }
 /** Neue Scheine übernehmen, gleiche Nummer ersetzt den alten (nachträglich geänderter Schein) mit allen Teilen –
  *  die Zahl der Zeitzeilen und damit die IDs („123“, „123#1“ …) kann sich ändern; Rückgabe: Anzahl neue.
- *  fetched: automatisch abgeholt – auf einem anderen Gerät gelöschte Scheine nicht wieder aufnehmen (Abgleich) */
+ *  fetched: automatisch abgeholt – von Hand gelöschte Scheine nicht wieder aufnehmen (bewusstes Einlesen bringt sie zurück) */
 function addReports(list, fetched = false) {
-  if (fetched) list = list.filter((r) => !syncGone('report', r.id));
+  const gone = new Set(reportStore.items.filter((r) => r.gone).map((r) => r.id));
+  if (fetched) list = list.filter((r) => !gone.has(r.id));
   let n = 0;
   const nos = new Set(list.map((r) => r.no).filter(Boolean));
   const ids = new Set(list.map((r) => r.id));
@@ -5999,7 +6002,8 @@ document.addEventListener('click', (e) => {
     case 'report-delete': {
       const id = el.dataset.id;
       confirmDialog('Arbeitsschein löschen?', '', 'Löschen', () => {
-        reportStore.items = reportStore.items.filter((r) => r.id !== id);
+        // Abgleich: Platzhalter statt ganz weg (geht an die anderen Geräte, deren Abholen ihn dann überspringt)
+        reportStore.items = reportStore.items.flatMap((r) => (r.id !== id ? [r] : account && account.sync ? [{ id: r.id, date: r.date, v: r.v, gone: true }] : []));
         saveReports();
         goBack();
       }, true);

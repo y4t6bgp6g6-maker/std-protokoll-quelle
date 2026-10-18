@@ -4,7 +4,7 @@
 // (POST /sync, cloudflare/team-worker.js) und von dort auf die anderen Geräte desselben Kontos.
 //
 // Eigener Speicher je Gerät (nie abgeglichen, nicht in der Sicherung) stdprotokoll.sync.v1:
-// { user, kinds, rev, kg, at, hold, recs, held, conflicts, devs, oldKeys }
+// { user, kinds, rev, kg, at, hold, recs, held, conflicts, devs, oldKeys, sent }
 //   rev: bis hierher abgeholt; at: zuletzt erfolgreich abgeholt (Team-Upload nur mit frischem Stand)
 //   recs: { 'k:id': { rev, h, a } } je Datensatz der Stand auf dem Server und der Fingerabdruck der Fassung, die dieses
 //         Gerät zuletzt gesendet oder übernommen hat ('del' = gelöscht, '!' = auf jeden Fall senden). Lokal anders →
@@ -19,6 +19,9 @@
 //   devs: Geräte-ID → Name (für das Fenster)
 //   oldKeys: { kg: Schlüssel } frühere Schlüssel nach einem Passwortwechsel – damit verschlüsselt dieses Gerät die noch
 //            alten Datensätze neu (syncRekey) und kann sie bis dahin lesen; weg, sobald der Server nichts Altes mehr hat
+//   sent: { 'k:id': [Fingerabdruck, …] } die zuletzt gesendeten Fassungen ohne Antwort – ging die Antwort verloren,
+//         erkennt das Abholen bzw. die Ablehnung beim erneuten Senden die eigene Fassung (sonst Konflikt-Fenster
+//         „auf zwei Geräten geändert“ mit zweimal diesem Gerät)
 // Passwort ändern (konto.js accountPassword): erst alles abgleichen, dann neues Passwort beim Server (kg + 1), dann neu
 // verschlüsseln in Teilen. Andere Geräte bekommen „pwchanged“, melden sich neu an und behalten dabei den alten Schlüssel.
 // Ungesendetes dort wird kein Konflikt, wenn die Server-Fassung inhaltlich die bekannte ist (syncIncoming).
@@ -30,11 +33,11 @@
 // gelöscht). Wochen und Monate tragen ihre Unterschriften; ein Heft löschen = Löschmarken für alles darin.
 // Zettel, Abrechnung, Lohn, Berichtsheft: Konflikt-Fenster. Einstellungen, Arbeitsscheine: die zuletzt gesendete gilt (ohne
 // SYNC_SET_SKIP, die bleiben je Gerät). Arbeitsscheine holt jedes Gerät weiter selbst ab (Server/Google); ein auf einem
-// anderen Gerät gelöschter Schein kommt dabei nicht wieder (syncGone in addReports).
+// anderen Gerät gelöschter Schein kommt dabei nicht wieder (von Hand gelöscht = Platzhalter mit gone, addReports).
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 123;
+const SYNC_F = 124;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
 const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report', 'bh-profile', 'bh-heft', 'bh-img', 'bh-week', 'bh-month'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
@@ -56,6 +59,7 @@ function syncState() {
   if (!syncSt || syncSt.user !== user) syncSt = { user, rev: 0, kg: 0, at: 0, hold: 0, recs: {}, held: [], conflicts: [], devs: {} };
   syncSt.wait ||= [];
   syncSt.oldKeys ||= {};
+  syncSt.sent ||= {};
   // neue Arten in dieser Fassung: einmal alles abholen (Fingerabdrücke verhindern doppelte Arbeit)
   if (String(syncSt.kinds) !== String(SYNC_KINDS_HERE)) {
     syncSt.kinds = SYNC_KINDS_HERE;
@@ -70,8 +74,10 @@ const syncSave = () => {
   } catch {}
 };
 
+/** app.js ist ganz geladen (syncStart) – vorher gibt es cryptStore noch nicht (Zugriff wirft, z. B. savePayslips beim Laden) */
+let syncStarted = false;
 /** Abgleich aktiv: im Team, Konto bestätigt und mit Abgleich, Schlüssel da */
-const syncOn = () => !!(team && account && account.ok && account.sync && !account.pwchanged && cryptStore && typeof settings !== 'undefined');
+const syncOn = () => !!(syncStarted && team && account && account.ok && account.sync && !account.pwchanged && cryptStore);
 
 // ───────── Datensätze und Fingerabdrücke ─────────
 
@@ -128,7 +134,8 @@ function syncLocal() {
   // leere Abrechnung (noch kein Tag): entsteht beim Öffnen und verschwindet beim Verlassen wieder
   for (const t of trips) if (t.dates.length) m.set(syncKeyOf('trip', t.id), { k: 'trip', id: t.id, v: t });
   for (const [n, p] of Object.entries(payslips)) if (p) m.set(syncKeyOf('pay', n), { k: 'pay', id: n, v: p });
-  for (const r of reports()) m.set(syncKeyOf('report', r.id), { k: 'report', id: r.id, v: r });
+  // mit von Hand gelöschten (gone) – die gehen als Datensatz an die anderen Geräte, damit deren Abholen sie nicht zurückbringt
+  for (const r of reportStore.items) m.set(syncKeyOf('report', r.id), { k: 'report', id: r.id, v: r });
   // Berichtsheft: Heft vor seinen Berichten, Bilder vor den Monaten (so kommt auf dem anderen Gerät alles in der Reihenfolge an)
   const add = (k, id, v) => v && m.set(syncKeyOf(k, id), { k, id, v });
   add('bh-profile', 'profile', syncBhProfile());
@@ -161,7 +168,7 @@ function syncLocalOne(k, id) {
   if (k === 'set') return !SYNC_SET_SKIP.has(id) && settings[id] !== undefined ? { v: settings[id] } : null;
   if (k === 'trip') return trips.find((t) => t.id === id && t.dates.length) || null;
   if (k === 'pay') return payslips[id] || null;
-  if (k === 'report') return reports().find((r) => r.id === id) || null;
+  if (k === 'report') return reportStore.items.find((r) => r.id === id) || null;
   if (k === 'bh-profile') return syncBhProfile();
   if (k === 'bh-heft') return findHeft(id) ? syncBhHeft(findHeft(id)) : null;
   if (k === 'bh-img') return bhImages.has(id) ? { d: bhImages.get(id) } : null;
@@ -172,12 +179,6 @@ function syncLocalOne(k, id) {
   }
   return null;
 }
-/** Auf einem anderen Gerät gelöscht (Arbeitsschein beim Abholen nicht wieder aufnehmen) */
-const syncGone = (k, id) => {
-  if (!(account && account.sync)) return false;
-  const e = syncState().recs[syncKeyOf(k, id)];
-  return !!e && e.h === 'del';
-};
 
 /** Was zu senden ist: [{ key, k, id, base, del, v, h }] – ohne Datensätze mit offenem Konflikt */
 function syncChanges(local = syncLocal()) {
@@ -189,13 +190,18 @@ function syncChanges(local = syncLocal()) {
     if (blocked.has(key)) continue;
     const h = syncHk(r.k, r.v);
     const e = st.recs[key];
+    // Einstellung noch nie abgeglichen und nur die Vorgabe: nicht senden (ein frisch angemeldetes Gerät überschriebe
+    // sonst die Werte des bisherigen, 18.10.) – so heißt eine Vorgabe auf dem Server immer „bewusst eingestellt“
+    if (!e && r.k === 'set' && syncSetDefault(r.id, r.v.v)) continue;
     if (!e || e.h !== h) out.push({ key, k: r.k, id: r.id, base: e ? e.rev : 0, v: r.v, h });
   }
+  let used = null;
   for (const [key, e] of Object.entries(st.recs)) {
     const { k, id } = syncSplit(key);
     if (local.has(key) || e.h === 'del' || blocked.has(key) || !SYNC_KINDS_HERE.includes(k)) continue;
-    // Bilder noch nicht aus IndexedDB geladen bzw. IndexedDB geht nicht: fehlen nur scheinbar
-    if (k === 'bh-img' && (!bhImagesLoaded || bhImagesBroken)) continue;
+    // Bilder noch nicht aus IndexedDB geladen, IndexedDB geht nicht oder ein Bericht zeigt noch darauf: fehlen nur
+    // scheinbar (z. B. Speichern in IndexedDB gescheitert) – gelöscht wird ein Bild nur mit seinem Verweis
+    if (k === 'bh-img' && (!bhImagesLoaded || bhImagesBroken || (used ||= syncImgUsed()).has(id))) continue;
     out.push({ key, k, id, base: e.rev, del: true, h: 'del' });
   }
   return out;
@@ -228,9 +234,13 @@ async function syncOpen(data, k, raw) {
 
 // ───────── Server ─────────
 
+/** Keine Verbindung (bzw. inzwischen abgemeldet): kein Fehlerbericht – alles andere im Abgleich ist ein Programmfehler */
+const syncNetError = (e) => Object.assign(e instanceof Error ? e : new Error(String(e)), { net: true });
 /** POST /sync: alles im Inhalt (keine eigenen Header → keine Vorab-Anfrage, keepalive geht) */
 async function syncRequest(action, extra = {}) {
-  const body = JSON.stringify({ code: team.code, user: account.user, auth: account.auth, token: team.token, device: deviceInfo().id, action, ...extra });
+  if (!team || !account) throw syncNetError(new Error('offline'));
+  const auth = account.auth;
+  const body = JSON.stringify({ code: team.code, user: account.user, auth, token: team.token, device: deviceInfo().id, action, ...extra });
   const opts = { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body, cache: 'no-store' };
   // keepalive: geht auch noch raus, wenn das iPhone gleich nach dem Speichern gesperrt wird
   const ka = body.length < SYNC_KEEPALIVE;
@@ -239,13 +249,17 @@ async function syncRequest(action, extra = {}) {
     res = await fetch(TEAM_URL + '/sync', { ...opts, keepalive: ka });
   } catch (e) {
     // keepalive-Grenze voll (andere Anfragen): ohne noch einmal
-    if (!ka) throw e;
-    res = await fetch(TEAM_URL + '/sync', opts);
+    if (!ka) throw syncNetError(e);
+    try {
+      res = await fetch(TEAM_URL + '/sync', opts);
+    } catch (e2) {
+      throw syncNetError(e2);
+    }
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     window.serverFehler?.('POST', `/sync ${action}`, res.status, data.error);
-    teamAccessError(res.status, data.error);
+    teamAccessError(res.status, data.error, auth);
     throw Object.assign(new Error(data.error || 'fehler'), { status: res.status, data });
   }
   return data;
@@ -311,7 +325,7 @@ async function syncRun(pushFirst = false) {
       saveAccount();
     } else if (e.status === 409 && e.message === 'version') syncHold(e.data && e.data.f);
     else if (e.status === 409 && e.message === 'kg') syncMeta(e.data || {});
-    else if (!e.status && e.message !== 'Failed to fetch' && e.name !== 'TypeError') window.fehlerMelden?.(e, 'abgleich');
+    else if (!e.status && !e.net) window.fehlerMelden?.(e, 'abgleich');
   } finally {
     syncBusy = false;
     syncSave();
@@ -322,6 +336,9 @@ async function syncRun(pushFirst = false) {
     }
   }
   syncShowConflicts();
+  // Konto-Seite offen: „Abgeglichen: …“
+  const el = document.getElementById('account-status');
+  if (el && account) el.textContent = accountStatusText();
   // Team-Upload wartete auf den aktuellen Stand
   if (syncCurrent()) teamQueueUpload(500);
 }
@@ -354,24 +371,35 @@ async function syncPull() {
   st.at = Date.now();
 }
 
-/** Datensätze, die nicht in eine Anfrage passen (bis zum nächsten Start nicht erneut versuchen) */
-const syncTooBig = new Set();
+/** Datensätze, die nicht in eine Anfrage passen bzw. die der Server nie annimmt (Kennung mit Steuerzeichen …): bis zum
+ *  nächsten Start übergehen, statt alles andere aufzuhalten */
+const syncSkip = new Set();
+/** Kennung, die der Server annimmt (wie im Worker) */
+const syncIdOk = (id) => typeof id === 'string' && /^[^\u0000-\u001f]{1,200}$/.test(id);
+/** Einmal melden und ab jetzt übergehen */
+function syncSkipKey(key, why) {
+  if (syncSkip.has(key)) return;
+  syncSkip.add(key);
+  window.fehlerMelden?.(new Error(`${why}: ${syncSplit(key).k}`), 'abgleich');
+}
 /** Eigenes senden, in Teilen. Ergebnis: Zähler des Servers nach dem letzten Senden (0 = nichts gesendet) */
 async function syncPush() {
   const st = syncState();
   if (st.hold > SYNC_F) return 0;
   let top = 0;
   for (let round = 0; round < 30; round++) {
-    const list = syncChanges().filter((c) => !syncTooBig.has(c.key) && !syncKgWait.has(c.key));
+    const list = syncChanges().filter((c) => !syncSkip.has(c.key) && !syncKgWait.has(c.key));
     if (!list.length) break;
     const batch = [];
     let size = 0;
     for (const c of list) {
-      if (syncTooBig.has(c.key)) continue;
+      if (!syncIdOk(c.id)) {
+        syncSkipKey(c.key, 'Kennung');
+        continue;
+      }
       const data = c.del ? '' : await syncSeal(c.v, st.kg, c.k);
       if (data.length > SYNC_ONE_MAX) {
-        syncTooBig.add(c.key);
-        window.fehlerMelden?.(new Error(`zu groß: ${c.k} ${data.length}`), 'abgleich');
+        syncSkipKey(c.key, `zu groß ${data.length}`);
         continue;
       }
       if (batch.length && (batch.length >= SYNC_PUSH_N || size + data.length > SYNC_PUSH_BYTES)) break;
@@ -379,7 +407,20 @@ async function syncPush() {
       size += data.length + 200;
     }
     if (!batch.length) break;
-    const out = await syncRequest('push', { f: SYNC_F, kg: st.kg, records: batch.map((c) => ({ k: c.k, id: c.id, base: c.base, del: !!c.del, data: c.data })) });
+    for (const c of batch) st.sent[c.key] = [...(st.sent[c.key] || []).slice(-2), c.h];
+    syncSave();
+    let out;
+    try {
+      out = await syncRequest('push', { f: SYNC_F, kg: st.kg, records: batch.map((c) => ({ k: c.k, id: c.id, base: c.base, del: !!c.del, data: c.data })) });
+    } catch (e) {
+      // sent bleibt stehen: ein früherer Versuch ohne Antwort kann angenommen worden sein (aufgeräumt beim nächsten
+      // Eingang bzw. Senden dieses Datensatzes)
+      // ein Datensatz, den der Server nie annimmt: übergehen und den Rest erneut senden
+      const bad = e.status === 400 && e.message === 'record' && e.data && batch.find((c) => c.k === e.data.k && c.id === e.data.id);
+      if (!bad) throw e;
+      syncSkipKey(bad.key, 'abgelehnt');
+      continue;
+    }
     const accepted = out.accepted || [];
     for (const a of accepted) {
       const c = batch.find((x) => x.k === a.k && x.id === a.id);
@@ -400,8 +441,10 @@ async function syncPush() {
         else if (c) st.recs[key] = { rev: 0, h: '!' };
       }
     }
-    // abgelehnt: ein anderes Gerät war schneller – dessen Fassung wie beim Abholen behandeln (gleich, gewinnt, Konflikt)
+    // abgelehnt: ein anderes Gerät war schneller – dessen Fassung wie beim Abholen behandeln (gleich, gewinnt, Konflikt;
+    // ist es eine eigene frühere, deren Antwort verloren ging: sent)
     await syncApply(rejected.filter((r) => r.rev));
+    for (const c of batch) delete st.sent[c.key];
     syncSave();
   }
   return top;
@@ -547,23 +590,27 @@ async function syncRestore(pick) {
 async function syncApply(records) {
   const st = syncState();
   const ch = { sheets: false, editor: false, settings: [] };
-  for (const r of records) {
-    if (!SYNC_KINDS_HERE.includes(r.k)) continue;
-    // mit älterem Passwort verschlüsselt (wird gerade neu verschlüsselt): mit dem früheren Schlüssel, sonst später
-    const raw = r.kg === st.kg ? cryptStore.key : st.oldKeys[r.kg];
-    if (!r.del && !raw) continue;
-    let v = null;
-    if (!r.del)
-      try {
-        v = await syncOpen(r.data, r.k, raw);
-      } catch (e) {
-        window.fehlerMelden?.(e, 'abgleich');
-        continue;
-      }
-    if (v && !syncValid(r.k, r.id, v)) continue;
-    syncIncoming({ k: r.k, id: r.id, rev: r.rev, del: !!r.del, v, dev: r.dev, updated: r.updated }, ch);
+  // auch wenn mittendrin etwas schiefgeht: Übernommenes speichern (die Fingerabdrücke in recs sind schon gemerkt)
+  try {
+    for (const r of records) {
+      if (!SYNC_KINDS_HERE.includes(r.k)) continue;
+      // mit älterem Passwort verschlüsselt (wird gerade neu verschlüsselt): mit dem früheren Schlüssel, sonst später
+      const raw = r.kg === st.kg ? cryptStore && cryptStore.key : st.oldKeys[r.kg];
+      if (!r.del && !raw) continue;
+      let v = null;
+      if (!r.del)
+        try {
+          v = await syncOpen(r.data, r.k, raw);
+        } catch (e) {
+          window.fehlerMelden?.(e, 'abgleich');
+          continue;
+        }
+      if (v && !syncValid(r.k, r.id, v)) continue;
+      syncIncoming({ k: r.k, id: r.id, rev: r.rev, del: !!r.del, v, dev: r.dev, updated: r.updated }, ch);
+    }
+  } finally {
+    syncAfter(ch);
   }
-  syncAfter(ch);
 }
 
 /** Eingehende Fassung passt zur Art (sonst übergehen) */
@@ -590,6 +637,9 @@ function syncIncoming(srv, ch) {
   const local = syncLocalOne(srv.k, srv.id);
   const hl = syncHk(srv.k, local);
   const hs = syncHk(srv.k, srv.v);
+  // eine Fassung, die dieses Gerät gesendet hat, ohne die Antwort zu bekommen?
+  const mine = (st.sent[key] || []).includes(hs);
+  delete st.sent[key];
   const drop = () => {
     st.conflicts = st.conflicts.filter((c) => c.key !== key);
     st.held = st.held.filter((x) => syncKeyOf(x.k, x.id) !== key);
@@ -599,10 +649,27 @@ function syncIncoming(srv, ch) {
     st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
     return drop();
   }
+  // Bilder ändern sich nie (neue ID je Bild): nie ein Fenster. Gelöscht wird hier nur, was kein Monatsbericht hier noch
+  // braucht (auch ein unveränderter: dessen neue Fassung kann im Wettlauf abgelehnt worden sein) – sonst bleibt es und geht
+  // wieder hoch; wird der Bericht ersetzt, räumt syncPutBh es ab. Fehlt es hier (IndexedDB), kommt es so auch wieder
+  if (srv.k === 'bh-img') {
+    drop();
+    if (srv.del && local && syncImgUsed().has(srv.id)) st.recs[key] = { rev: srv.rev, h: 'del' };
+    else {
+      syncPut(srv, ch);
+      st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
+    }
+    return;
+  }
   // inhaltlich die Fassung, auf der die eigene Änderung aufbaut (neu verschlüsselt nach einem Passwortwechsel): kein
   // Konflikt, die eigene geht auf die neue Fassung
   if (e && (hs === e.h || hs === e.a)) {
     st.recs[key] = { ...e, rev: srv.rev };
+    return drop();
+  }
+  // die eigene, schon angenommene Fassung (Antwort aufs Senden ging verloren): kein Konflikt – Neueres von hier geht darauf
+  if (mine) {
+    st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
     return drop();
   }
   // Bericht eines Hefts, das hier (noch) fehlt: warten, bis das Heft kommt
@@ -627,21 +694,33 @@ function syncIncoming(srv, ch) {
   if (unchanged || syncBareH(srv.k, local) === syncBareH(srv.k, srv.v)) {
     // neuer Zettel einer Woche, für die es hier schon einen (anderen) gibt: beide auf zwei Geräten angelegt
     const twin = srv.k === 'sheet' && !srv.del && !local && sheets.find((s) => s.id !== srv.id && weekKey(s) === weekKey(srv.v));
+    // der andere Zettel ist gerade mit ungespeicherten Tagen im Editor offen: nicht anfassen, nach dem Speichern erneut
+    if (twin && editorSaved && editorSaved.id === twin.id && editorPending()) {
+      st.held = st.held.filter((x) => x.id !== srv.id || x.k !== srv.k).concat([srv]);
+      return;
+    }
     if (twin && !syncSameSheet(savedSheet(twin), srv.v)) {
       st.conflicts.push({ key, k: srv.k, id: srv.id, srv, twin: twin.id });
       return;
     }
-    if (twin) syncDropTwin(twin.id, srv.id, ch);
+    if (twin) {
+      // gleicher Inhalt: alle Geräte behalten denselben (kleinere ID) – auch wenn sie es gleichzeitig entscheiden
+      // (sonst wirft jedes den eigenen weg und löscht danach den anderen); der andere verschwindet auf seinem Gerät
+      if (twin.id < srv.id) {
+        st.recs[key] = { rev: srv.rev, h: 'del' };
+        return;
+      }
+      syncDropTwin(twin.id, srv.id, ch);
+    }
     syncPut(srv, ch);
     st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
     return;
   }
   if (srv.k === 'set' || srv.k === 'report') {
     // schon einmal abgeglichen und hier geändert: die eigene gewinnt (auf die Fassung des Servers senden);
-    // zum ersten Mal (neues Gerät): die des Servers – außer der Server hat nur die Vorgabe und hier ist etwas
-    // eingestellt (ein frisch angemeldetes Gerät war schneller als das bisherige, 18.10.: Name und Lohn wären weg)
+    // zum ersten Mal (neues Gerät): die des Servers – Vorgaben schickt ein Gerät nie ungefragt (syncChanges), eine
+    // Vorgabe auf dem Server ist also bewusst eingestellt
     if (e) st.recs[key] = { rev: srv.rev, h: e.h };
-    else if (srv.k === 'set' && syncSetDefault(srv.id, srv.v && srv.v.v) && !syncSetDefault(srv.id, local && local.v)) st.recs[key] = { rev: srv.rev, h: '!' };
     else {
       syncPut(srv, ch);
       st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
@@ -665,8 +744,26 @@ function syncBhDirty(hid) {
   return out;
 }
 
-/** Einstellung hat den Wert der Vorgabe (bzw. ist leer, wenn es keine Vorgabe gibt) */
-const syncSetDefault = (id, v) => (id in DEFAULT_SETTINGS ? syncCanon(v) === syncCanon(DEFAULT_SETTINGS[id]) : v == null || v === '' || v === false);
+/** Einstellung hat den Wert der Vorgabe (bzw. ist leer, wenn es keine Vorgabe gibt – false zählt dann als bewusst
+ *  eingestellt: „Aus“ bei Hinweisen, deren Vorgabe „an“ ist) */
+const syncSetDefault = (id, v) => (id in DEFAULT_SETTINGS ? syncCanon(v) === syncCanon(DEFAULT_SETTINGS[id]) : v == null || v === '');
+
+/** Bilder, auf die ein Monatsbericht hier zeigt, dazu die der Server-Fassungen offener Konflikte (Wahl „Übernehmen“).
+ *  onlyOwn: nur Berichte mit eigener, noch nicht abgeglichener Änderung bzw. offenem Konflikt (die anderen ersetzt
+ *  ohnehin bald die Fassung vom Server) */
+function syncImgUsed(onlyOwn = false) {
+  const st = syncState();
+  const ids = new Set();
+  for (const h of bh.hefte)
+    for (const [ym, mo] of Object.entries(h.months || {})) {
+      const key = syncKeyOf('bh-month', `${h.id}|${ym}`);
+      const e = st.recs[key];
+      if (onlyOwn && e && (e.h === syncH(mo) || e.a === syncH(mo)) && !st.conflicts.some((c) => c.key === key)) continue;
+      for (const id of syncBhImgIds(mo)) ids.add(id);
+    }
+  for (const c of st.conflicts) if (c.k === 'bh-month' && c.srv.v) for (const id of syncBhImgIds(c.srv.v)) ids.add(id);
+  return ids;
+}
 
 /** Gleicher Inhalt zweier Zettel derselben Woche (Tage, Name, gesendet) */
 const syncSameSheet = (a, b) => !sheetDiff(a, b).length && !!a.sentAt === !!b.sentAt && (a.name || '') === (b.name || '');
@@ -765,11 +862,12 @@ function syncAfter(ch) {
     saveSettings();
     if (ch.settings.includes('warnSigns')) applyWarnSigns();
   }
-  if (ch.sheets) saveSheets();
+  // offener Zettel: erst den gespeicherten Stand umstellen, dann speichern (sonst schriebe savedSheets die alten Tage)
   if (ch.editor) {
     const s = editorSaved && findSheet(editorSaved.id);
     if (s) editorSaved = editorSnapshot(s);
   }
+  if (ch.sheets) saveSheets();
   if (ch.sheets || ch.settings.includes('hiddenSuggestions')) refreshSuggestions();
   syncRerender();
 }
@@ -802,8 +900,11 @@ function syncRetryHeld() {
   st.held = [];
   st.wait = st.wait.filter((x) => !ready.includes(x));
   const ch = { sheets: false, editor: false, settings: [] };
-  for (const srv of held) syncIncoming(srv, ch);
-  syncAfter(ch);
+  try {
+    for (const srv of held) syncIncoming(srv, ch);
+  } finally {
+    syncAfter(ch);
+  }
 }
 
 // ───────── Konflikte ─────────
@@ -826,6 +927,7 @@ function syncTitle(k, x, id) {
     return `Abrechnung ${syncRange(parseDate(d[0]), parseDate(d.at(-1)))}`;
   }
   if (k === 'pay') return `Lohn ${MONTHS[x.month - 1]} ${x.year}`;
+  if (k !== 'sheet') return 'Eintrag';
   return `Zettel ${syncRange(sheetFirstDate(x), sheetLastDate(x))}`;
 }
 /** Summe oben in der Karte: Stunden, Verpflegung, Auszahlung */
@@ -970,6 +1072,16 @@ async function syncShowConflicts() {
   try {
     for (const c of list) {
       if (!st.conflicts.includes(c)) continue;
+      // Bild (gespeichert von einer älteren Fassung): folgt seinem Bericht, ohne Fenster
+      if (c.k === 'bh-img') {
+        syncResolve(c, syncImgUsed().has(c.id) ? 'mine' : 'theirs');
+        continue;
+      }
+      // zweiter Zettel derselben Woche, der hier inzwischen gelöscht ist (auf dem anderen Gerät wurde dessen behalten): nichts zu wählen
+      if (c.twin && !findSheet(c.twin)) {
+        syncResolve(c, 'theirs');
+        continue;
+      }
       const mine = c.twin ? savedSheet(findSheet(c.twin)) || null : syncLocalOne(c.k, c.id);
       // inzwischen gleich (z. B. Heft gelöscht, Bericht darin auch gelöscht): ohne Fenster
       if (!c.twin && syncHk(c.k, mine) === syncHk(c.k, c.srv.del ? null : c.srv.v)) {
@@ -980,6 +1092,8 @@ async function syncShowConflicts() {
       if (!pick) {
         pick = await syncAskConflict(c, mine, list.length - list.indexOf(c));
         if (pick.endsWith('All')) all = pick = pick.slice(0, -3);
+        // während das Fenster offen war, kam eine neuere Fassung (der Konflikt ist ersetzt): die nächste Runde zeigt sie
+        if (!st.conflicts.includes(c)) continue;
       }
       syncResolve(c, pick);
     }
@@ -1056,6 +1170,8 @@ function syncAskConflict(c, mine, remaining) {
       'alert wide',
       false
     );
+    // festhalten: andere Fenster (z. B. „Passwort geändert“) warten, Seitenwechsel schließen es nicht – sonst hinge die Wahl
+    holdModal(true);
     scrollBar(modal);
     let done = false;
     modal.addEventListener('click', (e) => {
@@ -1063,6 +1179,7 @@ function syncAskConflict(c, mine, remaining) {
       if (!b || done) return;
       done = true;
       haptic();
+      holdModal(false);
       closeModal();
       setTimeout(() => resolve(modal.querySelector('.cf-switch')?.checked ? `${b.dataset.c}All` : b.dataset.c), 280);
     });
@@ -1074,10 +1191,21 @@ function syncAskConflict(c, mine, remaining) {
 /** Darf dieses Gerät ins Team hochladen? Mit Abgleich nur mit frischem Stand, ohne offenen Konflikt und ohne
  *  Ungesendetes – sonst überschriebe ein Gerät mit altem Stand den Eintrag, den alle Geräte des Kontos teilen */
 function syncCurrent() {
-  if (!(account && account.sync)) return true;
+  // ohne bestätigtes Konto hat ein Gerät, das schon im Abgleich war, womöglich einen alten Stand (z. B. abgemeldet)
+  if (!(account && account.sync)) return !(syncWasOn() && !accountOk());
   if (!syncOn()) return false;
   const st = syncState();
-  return !st.conflicts.length && !st.held.length && Date.now() - st.at < SYNC_FRESH && !(st.hold > SYNC_F) && !syncChanges().some((c) => !syncTooBig.has(c.key));
+  return !st.conflicts.length && !st.held.length && Date.now() - st.at < SYNC_FRESH && !(st.hold > SYNC_F) && !syncChanges().some((c) => !syncSkip.has(c.key));
+}
+
+/** Dieses Gerät hat schon einmal abgeglichen (gespeicherter Stand mit Konto und Zähler) */
+function syncWasOn() {
+  try {
+    const s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+    return !!(s && s.user && s.rev > 0);
+  } catch {
+    return false;
+  }
 }
 
 /** Nach dem Speichern: gleich senden */
@@ -1089,6 +1217,7 @@ function syncSoon(delay = 300) {
 
 /** Start (app.js ganz geladen), Zurückkehren, wieder online, alle 45 s solange sichtbar */
 function syncStart() {
+  syncStarted = true;
   syncRun();
   setInterval(() => document.visibilityState === 'visible' && syncRun(), SYNC_TICK);
   document.addEventListener('visibilitychange', () => (document.visibilityState === 'visible' ? syncRun() : syncSoon(0)));

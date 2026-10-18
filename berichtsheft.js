@@ -82,7 +82,11 @@ const bhImagesReady = bhDb()
           bhImages.set(c.key, c.value);
           c.continue();
         };
-        req.onerror = () => resolve();
+        req.onerror = () => {
+          // nicht alle gelesen: fehlende Bilder sind dann nicht gelöscht (Abgleich)
+          bhImagesBroken = true;
+          resolve();
+        };
       })
   )
   .catch(() => (bhImagesBroken = true))
@@ -92,7 +96,16 @@ let bhImagesBroken = false; // IndexedDB geht nicht (Abgleich: fehlende Bilder s
 function bhPutImage(id, data) {
   bhImages.set(id, data);
   return bhDb()
-    .then((db) => db.transaction('img', 'readwrite').objectStore('img').put(data, id))
+    .then(
+      (db) =>
+        // erst mit abgeschlossener Transaktion gespeichert (Speicher voll o. Ä. kommt erst dann)
+        new Promise((resolve, reject) => {
+          const tx = db.transaction('img', 'readwrite');
+          tx.objectStore('img').put(data, id);
+          tx.oncomplete = () => resolve();
+          tx.onerror = tx.onabort = () => reject(tx.error || new Error('abgebrochen'));
+        })
+    )
     .catch((e) => {
       window.fehlerMelden?.(e, 'bild speichern');
       toast('Bild konnte nicht gespeichert werden');

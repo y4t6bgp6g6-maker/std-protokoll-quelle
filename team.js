@@ -27,6 +27,8 @@ const teamMonth = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1
 async function teamRequest(method, path, body, code = team && team.code) {
   // /sync: alles im Inhalt (Team-Code, Konto, Token), keine eigenen Header – der Server verlangt es so
   const sync = path === '/sync';
+  // mit diesem Prüfwert gesendet (Antworten auf ältere Anfragen nach einem Passwortwechsel zählen nicht)
+  const sentAuth = (body && body.auth) || (account && account.auth);
   const res = await fetch(TEAM_URL + path, {
     method,
     // mit Konto immer dabei (Lesen verlangt es); Name kodiert, Header erlauben keine kyrillischen Buchstaben.
@@ -45,20 +47,28 @@ async function teamRequest(method, path, body, code = team && team.code) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     window.serverFehler?.(method, path + (body && (body.action || body.task) ? ` ${body.action || body.task}` : ''), res.status, data.error);
-    teamAccessError(res.status, data.error);
+    teamAccessError(res.status, data.error, sentAuth);
     throw Object.assign(new Error(data.error || 'fehler'), { status: res.status, data });
   }
   return data;
 }
 
-/** Antworten, die für das ganze Gerät gelten (Konto mit Abgleich): abgemeldet → Daten löschen, Team auf einem anderen
- *  Gerät verlassen, kein Gerät des Kontos (mehr), Passwort anderswo geändert */
-function teamAccessError(status, error) {
-  if (status !== 403) return;
-  if (error === 'removed') deviceWipe();
-  else if (error === 'left' && team) leaveTeamLocal('Team auf einem anderen Gerät verlassen');
-  else if (error === 'device' && team) leaveTeamLocal('Auf einem anderen Gerät angemeldet');
-  else if (error === 'pwchanged' && account && account.ok) accountPwChanged();
+/** Antworten, die für das ganze Gerät gelten: abgemeldet → Daten löschen, Team auf einem anderen Gerät verlassen, kein
+ *  Gerät des Kontos (mehr), Passwort anderswo geändert, Passwort abgelehnt bzw. Konto gelöscht. sentAuth: Prüfwert der
+ *  Anfrage – ist er inzwischen ein anderer (eigener Passwortwechsel übernommen), gilt die Antwort nicht mehr */
+function teamAccessError(status, error, sentAuth) {
+  if (status === 403 && error === 'removed') return deviceWipe();
+  if (status === 403 && error === 'left' && team) return leaveTeamLocal('Team auf einem anderen Gerät verlassen');
+  if (status === 403 && error === 'device' && team) return leaveTeamLocal('Auf einem anderen Gerät angemeldet');
+  if (!account || !account.ok || (sentAuth && sentAuth !== account.auth)) return;
+  if (status === 403 && error === 'pwchanged') accountPwChanged();
+  // nicht von selbst wiederholen: jede Anfrage zählte als Fehlversuch und sperrte das Konto (auch für die anderen Geräte)
+  else if ((status === 403 && error === 'auth') || (status === 404 && error === 'unknown')) {
+    account.ok = false;
+    account.error = accountError({ message: error });
+    saveAccount();
+    accountRerender();
+  }
 }
 
 // ───────── KI (Workers AI über den Team-Server, nur im Team) ─────────
@@ -336,8 +346,9 @@ async function teamUpload() {
   if (typeof settings === 'undefined') return teamQueueUpload(1000), false;
   // Passwort auf einem anderen Gerät geändert: erst neu anmelden
   if (!team || !TEAM_URL || !navigator.onLine || accountRestorePending() || (account && account.pwchanged)) return false;
-  // Abgleich mehrerer Geräte: nur mit aktuellem Stand (sonst überschriebe ein Gerät mit altem Stand den gemeinsamen Eintrag)
-  if (!syncCurrent()) return false;
+  // Abgleich mehrerer Geräte: nur mit aktuellem Stand (sonst überschriebe ein Gerät mit altem Stand den gemeinsamen Eintrag);
+  // ohne Namen hat ein neues Gerät noch nichts vom bisherigen (die Kollegen sähen „?“ und leere Zettel)
+  if (!syncCurrent() || (account && account.sync && !settings.name.trim())) return false;
   if (teamUploading) {
     teamUploadAgain = true;
     return false;
@@ -575,13 +586,15 @@ async function teamLoad() {
       leaveTeamLocal('Team-Code ungültig');
       return;
     }
-    // Passwort anderswo geändert oder Konto gelöscht: neu anmelden (Team-Seite zeigt „Erst anmelden“, auch im Teammeeting
-    // und in der Zettel-Ansicht eines Kollegen)
-    if (account && ['auth', 'unknown', 'konto', 'pwchanged'].includes(e.message)) {
+    // Konto nicht im Team bekannt; Passwort abgelehnt, anderswo geändert oder Konto gelöscht (teamAccessError): neu anmelden
+    // (Team-Seite zeigt „Erst anmelden“, auch im Teammeeting und in der Zettel-Ansicht eines Kollegen)
+    if (account && account.ok && e.message === 'konto') {
       account.ok = false;
       account.error = accountError(e);
       saveAccount();
       accountRerender();
+    }
+    if (account && !account.ok && ['auth', 'unknown', 'konto', 'pwchanged'].includes(e.message)) {
       if (currentView === 'team') renderTeamBody();
       else if (currentView === 'teamSheet') location.replace('#/team');
     }

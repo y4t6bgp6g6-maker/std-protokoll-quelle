@@ -51,7 +51,8 @@
 //   bzw. token im Inhalt), sonst 403 'device'; abgemeldete Geräte bekommen 'removed', nach „Team verlassen“ auf einem
 //   Gerät alle anderen 'left'. join braucht device (Geräte-ID) und deviceName; mehr als SYNC_DEVICES → 409 'devices'.
 //   Anfrage mit dem vorigen Passwort → 403 'pwchanged' (kein Fehlversuch). Passwort ändern geht auch mit Abgleich:
-//   kg + 1, accounts.rekey = 1, bis ein Gerät, das den alten Schlüssel kennt, alles neu verschlüsselt hat (rekey).
+//   kg + 1, accounts.rekey = 1 (nur mit Abgleich), bis ein Gerät, das den alten Schlüssel kennt, alles neu verschlüsselt
+//   hat (rekey). Abgleich einschalten löscht Datensätze mit älterem Schlüssel (Passwort geändert, während er aus war).
 //   POST   /sync    ← { code, user, auth, token, device, action, … } (alles im Inhalt, Content-Type text/plain)
 //                    head                      → { rev, kg, f, rekey }   rekey: nach einem Passwortwechsel liegen noch
 //                                                Datensätze mit älterem Schlüssel da
@@ -625,8 +626,9 @@ async function accountRequest(db, body, h, ip = '') {
     // alte Sicherungen sind mit dem alten Passwort verschlüsselt – mit dem neuen ließen sie sich nicht öffnen.
     // Der alte Prüfwert bleibt als old_auth: andere Geräte mit dem alten Passwort sind dann kein Fehlversuch.
     // Abgleich: die Datensätze tragen noch den alten Schlüssel (kg), rekey = 1 bis ein Gerät sie neu verschlüsselt hat
+    // (ohne Abgleich nicht: dann hielte niemand den alten Schlüssel, und rekey bliebe für immer – „Stand vom …“ gesperrt)
     const [, , kg] = await db.batch([
-      db.prepare('UPDATE accounts SET auth = ?, old_auth = auth, kg = kg + 1, rekey = 1 WHERE user = ?').bind(await sha256(body.newAuth), user),
+      db.prepare('UPDATE accounts SET auth = ?, old_auth = auth, kg = kg + 1, rekey = sync WHERE user = ?').bind(await sha256(body.newAuth), user),
       db.prepare('DELETE FROM backups WHERE user = ?').bind(user),
       db.prepare('SELECT kg FROM accounts WHERE user = ?').bind(user),
     ]);
@@ -672,7 +674,8 @@ function checkReport(r) {
   if (!r || typeof r !== 'object') return 'Inhalt';
   if (r.format !== 'arbeitsschein/1') return 'format';
   if (typeof r.id !== 'string' || !/^[A-Za-z0-9._:-]{1,100}$/.test(r.id)) return 'id';
-  if (!str(r.nummer, 40, false)) return 'nummer';
+  // ohne Steuerzeichen (die Nummer wird Teil der Kennung im Abgleich; der Server nimmt solche Kennungen dort nicht an)
+  if (!str(r.nummer, 40, false) || /[\u0000-\u001f]/.test(r.nummer)) return 'nummer';
   if (r.erstellt != null && !(typeof r.erstellt === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(r.erstellt))) return 'erstellt';
   if (!person(r.verfasser)) return 'verfasser';
   const ra = r.rechnungsadresse || {};
@@ -1496,8 +1499,14 @@ export default {
           if (!acc) return json({ error: 'user' }, 400, h);
           const now = Date.now();
           if (body.on && !acc.sync) {
-            // Das bisherige Gerät wird Gerät 1 (Geräte-ID noch unbekannt: Platzhalter, ersetzt beim ersten Abgleich)
-            const ops = [db.prepare('UPDATE accounts SET sync = 1 WHERE user = ?').bind(user)];
+            // Das bisherige Gerät wird Gerät 1 (Geräte-ID noch unbekannt: Platzhalter, ersetzt beim ersten Abgleich).
+            // Datensätze mit älterem Schlüssel (Passwort geändert, während der Abgleich aus war) kann kein Gerät mehr öffnen
+            // oder neu verschlüsseln: weg damit, sonst hinge jedes Gerät daran (Senden immer abgelehnt)
+            const ops = [
+              db.prepare('UPDATE accounts SET sync = 1, rekey = 0 WHERE user = ?').bind(user),
+              db.prepare('DELETE FROM sync WHERE user = ? AND kg < (SELECT kg FROM accounts WHERE user = ?)').bind(user, user),
+              db.prepare('DELETE FROM sync_old WHERE user = ? AND kg < (SELECT kg FROM accounts WHERE user = ?)').bind(user, user),
+            ];
             if (acc.token)
               ops.push(
                 db
