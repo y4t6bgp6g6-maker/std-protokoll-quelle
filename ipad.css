@@ -1,0 +1,134 @@
+/* iPad (ipad.js setzt die Klassen am <html>, nie auf dem iPhone):
+   ipad-quer – Seitenleiste links mit Bereichen und Zettel-Liste, Plus oben rechts
+   ipad-hoch – Leiste oben in der Mitte mit Plus rechts, Zettel-Liste im Zettel einblendbar
+   Im Zettel stehen die Tage bei genug Breite in zwei Spalten. */
+
+:root { --ipad-side-w: 320px; --ipad-side: #e9e6dc; --ipad-line: #d9d6cc; }
+:root[data-theme='dark'] { --ipad-side: #070b17; --ipad-line: #1c2440; }
+
+/* Die Leiste unten gibt es auf dem iPad nicht */
+html.ipad body.tabs .tabbar { display: none; }
+html.ipad body.tabs #app { padding-bottom: calc(40px + env(safe-area-inset-bottom)); }
+html.ipad .edge-fade.bottom { height: calc(env(safe-area-inset-bottom) + 20px); }
+html.ipad body.tabs .to-top.floating { bottom: calc(20px + env(safe-area-inset-bottom)); }
+html.ipad #toast { bottom: calc(32px + env(safe-area-inset-bottom)); }
+
+/* Plus (neuer Zettel bzw. neues Heft) */
+#ipad-plus { display: none; }
+html.ipad #ipad-plus {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: 16px;
+  z-index: 22;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--on-accent);
+  background: linear-gradient(180deg, color-mix(in srgb, #fff 12%, var(--accent-fill)), var(--accent-fill) 60%);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent-fill) 40%, transparent);
+}
+html.ipad #ipad-plus:active { transform: scale(0.94); }
+html.ipad #ipad-plus svg { width: 24px; height: 24px; }
+
+/* ───────── Seitenleiste ───────── */
+#ipad-side { display: none; }
+html.ipad #ipad-side {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 30;
+  width: var(--ipad-side-w);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: calc(env(safe-area-inset-top) + 14px) 12px 0;
+  background: var(--ipad-side);
+  border-right: 1px solid var(--ipad-line);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ipad-side-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 8px 12px; }
+.ipad-side-nav { display: flex; flex-direction: column; gap: 2px; }
+.ipad-side-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 46px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 17px;
+  font-weight: 500;
+  text-align: left;
+}
+.ipad-side-row svg { width: 24px; height: 24px; color: var(--accent); flex: none; }
+.ipad-side-row:active { background: var(--fill); }
+.ipad-side-row.on { background: var(--accent-fill); color: var(--on-accent); }
+.ipad-side-row.on svg { color: var(--on-accent); }
+.ipad-side-sep { height: 1px; background: var(--ipad-line); margin: 12px 12px 4px; }
+.ipad-side-list { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+.ipad-side-list .bh-switch { margin: 10px 0 2px; }
+.ipad-side-list .list-row.sel { background: var(--accent-soft); }
+.ipad-side-list:empty, .ipad-side-sep:has(+ .ipad-side-list:empty) { display: none; }
+
+/* Quer: Seitenleiste fest, alles andere rückt nach rechts */
+html.ipad-quer body { padding-left: var(--ipad-side-w); }
+html.ipad-quer .nav { left: var(--ipad-side-w); padding-right: 72px; }
+/* Zurück zur Liste braucht es im Zettel nicht: sie steht links */
+html.ipad-quer[data-view='editor'] .nav > .nav-btn.back { visibility: hidden; }
+html.ipad-quer .edge-fade { left: var(--ipad-side-w); }
+html.ipad-quer #suggest-bar { left: var(--ipad-side-w); }
+html.ipad-quer #toast { left: calc(50% + var(--ipad-side-w) / 2); }
+
+/* Hoch: Seitenleiste nur als eingeblendete Zettel-Liste */
+html.ipad-hoch #ipad-side { width: 360px; transform: translateX(-102%); visibility: hidden; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s 0.28s; }
+html.ipad-hoch.ipad-side-open #ipad-side { transform: none; visibility: visible; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 0 40px rgba(0, 0, 0, 0.25); }
+html.ipad-hoch .ipad-side-nav, html.ipad-hoch .ipad-side-sep { display: none; }
+#ipad-scrim { display: none; }
+html.ipad-hoch.ipad-side-open #ipad-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--backdrop); }
+
+/* ───────── Leiste oben (hoch) ───────── */
+#ipad-top { display: none; }
+html.ipad-hoch #ipad-top {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  z-index: 21;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.ipad-tabs {
+  pointer-events: auto;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 26px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02) 40%, rgba(255, 255, 255, 0.04)), color-mix(in srgb, var(--card) 70%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.6);
+  backdrop-filter: blur(12px) saturate(1.6);
+  box-shadow: inset 0 0 0 0.75px rgba(255, 255, 255, 0.35), 0 10px 30px rgba(0, 0, 0, 0.16);
+}
+.ipad-tab { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 16px; border-radius: 22px; font-size: 15px; font-weight: 600; }
+.ipad-tab svg { width: 20px; height: 20px; color: var(--muted); }
+.ipad-tab.on { background: var(--accent-soft); color: var(--accent); }
+.ipad-tab.on svg { color: var(--accent); }
+.ipad-tab:active { transform: scale(0.96); }
+/* Seitenkopf unter die Leiste */
+html.ipad-hoch .nav { top: calc(env(safe-area-inset-top) + 56px); padding-top: 6px; min-height: 56px; }
+html.ipad-hoch #app { padding-top: calc(var(--nav-h, 56px) + env(safe-area-inset-top) + 56px); }
+html.ipad-hoch .edge-fade.top { height: calc(env(safe-area-inset-top) + 64px); }
+
+/* ───────── Zettel: Tage nebeneinander ───────── */
+html.ipad[data-view='editor'] #app { max-width: none; padding-left: 20px; padding-right: 20px; }
+html.ipad[data-view='editor'] .nav { max-width: none; }
+html.ipad[data-view='editor'] .sum-bar,
+html.ipad[data-view='editor'] .pdf-thumb { max-width: 640px; margin-left: auto; margin-right: auto; }
+html.ipad.ipad-cols[data-view='editor'] #days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
+html.ipad:not(.ipad-cols)[data-view='editor'] #days { max-width: 680px; margin: 0 auto; }
