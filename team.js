@@ -58,7 +58,10 @@ async function teamRequest(method, path, body, code = team && team.code) {
  *  Anfrage – ist er inzwischen ein anderer (eigener Passwortwechsel übernommen), gilt die Antwort nicht mehr */
 function teamAccessError(status, error, sentAuth) {
   if (status === 403 && error === 'removed') return deviceWipe();
-  if (status === 403 && error === 'left' && team) return leaveTeamLocal('Team auf einem anderen Gerät verlassen');
+  if (status === 403 && error === 'left' && team) {
+    teamLeftRemember();
+    return leaveTeamLocal('Team auf einem anderen Gerät verlassen');
+  }
   if (status === 403 && error === 'device' && team) return leaveTeamLocal('Auf einem anderen Gerät angemeldet');
   if (!account || !account.ok || (sentAuth && sentAuth !== account.auth)) return;
   if (status === 403 && error === 'pwchanged') accountPwChanged();
@@ -471,8 +474,18 @@ function leaveTeam() {
         return;
       }
     }
-    if (team) leaveTeamLocal();
+    if (team) {
+      if (all) teamLeftRemember();
+      leaveTeamLocal();
+    }
   }, true);
+}
+/** Team mit Abgleich verlassen: Code und Token merken – damit erfährt das Gerät später noch, ob es abgemeldet wurde
+ *  (accountLeftCheck) */
+function teamLeftRemember() {
+  if (!account || !account.sync || !team) return;
+  account.left = { code: team.code, token: team.token };
+  saveAccount();
 }
 
 // ───────── Team-Seite: je Person eine Karte mit ihren Zetteln des Monats (gleiche KW untereinander) ─────────

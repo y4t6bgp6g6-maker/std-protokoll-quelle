@@ -4,13 +4,14 @@
 // dem iPhone, liegt wie bisher in stdprotokoll.crypt.v1). Beide hängen nur von Benutzername und Passwort ab – nach einem
 // Datenverlust reicht erneutes Anmelden, um die Sicherungen vom Team-Server wieder zu öffnen.
 //
-// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error, sync, pwchanged, pwNext }
+// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error, sync, pwchanged, pwNext, left }
 // mode: 'create' (neues Konto) | 'login' (bestehendes); ok: vom Server bestätigt; restore: 'ask' = Sicherung auf dem
 // Server, Frage nach dem Einlesen noch offen (bis dahin wird nichts hochgeladen, sonst überschriebe ein leerer Stand sie);
 // sync: Abgleich mehrerer Geräte für dieses Konto eingeschaltet (Schalter auf der Server-Seite); pwchanged: Passwort auf
 // einem anderen Gerät geändert – Team-Upload und Sicherung warten, bis hier neu angemeldet ist; pwNext: { auth, key, salt }
 // neues Passwort, das gerade beim Server geändert wird (Abgleich) – kam die Antwort nicht an und meldet der Server danach
-// „pwchanged“, gilt es (accountPwAdopt), statt neu anmelden zu müssen
+// „pwchanged“, gilt es (accountPwAdopt), statt neu anmelden zu müssen; left: { code, token } Team mit Abgleich verlassen –
+// damit fragt das Gerät beim Start, ob es inzwischen abgemeldet ist (accountLeftCheck)
 
 const ACCOUNT_KEY = 'stdprotokoll.account.v1';
 /** Sicherung auf dem Team-Server: nach Änderungen höchstens einmal je Stunde */
@@ -29,7 +30,8 @@ const saveAccount = () => {
   } catch {}
 };
 const accountOk = () => !!(account && account.ok);
-const accountRestorePending = () => !!(account && account.restore === 'ask');
+/** Mit Abgleich kommt alles vom Server (keine Frage, der Team-Upload wartet nicht darauf) */
+const accountRestorePending = () => !!(account && account.restore === 'ask' && !account.sync);
 /** Benutzername wie auf dem Server: 3–32 Buchstaben, Ziffern, Punkt, Strich, Unterstrich; klein */
 const accountUser = (s) => {
   const u = String(s ?? '').trim().toLowerCase();
@@ -145,6 +147,28 @@ async function accountSyncCheck() {
     accountRerender();
     syncSoon(0);
   }
+}
+
+/** Team mit Abgleich verlassen (hier oder auf einem anderen Gerät): seitdem fragt das Gerät nichts mehr – beim Start
+ *  einmal nachsehen, ob es inzwischen abgemeldet wurde (dann Daten löschen) */
+async function accountLeftCheck() {
+  const l = account && account.ok && !team && account.left;
+  if (!l || !TEAM_URL || !navigator.onLine) return;
+  let res;
+  let data = {};
+  try {
+    const body = JSON.stringify({ code: l.code, user: account.user, auth: account.auth, token: l.token, device: deviceInfo().id, action: 'head' });
+    res = await fetch(TEAM_URL + '/sync', { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body, cache: 'no-store' });
+    data = await res.json().catch(() => ({}));
+  } catch {
+    return;
+  }
+  if (res.status === 403 && data.error === 'removed') return deviceWipe();
+  // weiter „verlassen“: beim nächsten Start wieder; alles andere (Team-Code oder Passwort geändert, Abgleich aus, Gerät
+  // nach 90 Tagen vergessen): nicht mehr fragen
+  if ((res.status === 403 && data.error === 'left') || res.status === 429 || res.status >= 500) return;
+  delete account.left;
+  saveAccount();
 }
 
 /** Beim Anmelden schon alle Plätze belegt: eins abmelden (Passwort ist geprüft). Ergebnis: true = abgemeldet */
@@ -324,6 +348,7 @@ async function accountJoin(code, member, token) {
   account.error = '';
   account.sync = !!out.sync;
   delete account.pwchanged;
+  delete account.left;
   accountDevs = null;
   accountSyncAt = 0;
   // Bestehendes Konto mit Sicherungen auf einem leeren iPhone: erst fragen, dann sichern.
@@ -692,7 +717,7 @@ const accountWhen = (t) => {
  *  bis zur Antwort wird nichts hochgeladen */
 function accountResumeRestore() {
   // mit Abgleich kommt alles vom Server
-  if (account && account.sync && accountRestorePending()) {
+  if (account && account.sync && account.restore === 'ask') {
     account.restore = '';
     saveAccount();
   }

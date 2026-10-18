@@ -54,8 +54,9 @@
 //   kg + 1, accounts.rekey = 1 (nur mit Abgleich), bis ein Gerät, das den alten Schlüssel kennt, alles neu verschlüsselt
 //   hat (rekey). Abgleich einschalten löscht Datensätze mit älterem Schlüssel (Passwort geändert, während er aus war).
 //   POST   /sync    ← { code, user, auth, token, device, action, … } (alles im Inhalt, Content-Type text/plain)
-//                    head                      → { rev, kg, f, rekey }   rekey: nach einem Passwortwechsel liegen noch
-//                                                Datensätze mit älterem Schlüssel da
+//                    head                      → { rev, kg, f, rekey, created }   rekey: nach einem Passwortwechsel liegen
+//                                                noch Datensätze mit älterem Schlüssel da; created: Konto angelegt (anders
+//                                                als gemerkt = gelöscht und gleichnamig neu angelegt)
 //                    rekey { kgs }             → { records, left } Datensätze mit diesen älteren Schlüssel-Generationen
 //                                                (Teile à SYNC_PUSH_MAX); das Gerät verschlüsselt sie neu und sendet sie
 //                                                per push zurück; left = 0 → fertig (accounts.rekey = 0, kg_at = jetzt)
@@ -745,8 +746,18 @@ const SYNC_OLD_TABLE =
   'CREATE TABLE IF NOT EXISTS sync_old (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, replaced INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL, updated INTEGER)';
 /** Spalten und Tabellen für den Abgleich nachrüsten; einmal je Worker-Instanz */
 let syncSchema = false;
+/** Stand der Tabellen für den Abgleich (hochzählen, wenn ensureSync etwas Neues anlegt): eine neue Instanz prüft ihn mit
+ *  einer Abfrage statt mit zwölf (ensureSync läuft auf fast allen Wegen, auch für Kollegen ohne Abgleich) */
+const SYNC_SCHEMA_V = '1';
 async function ensureSync(db) {
   if (syncSchema) return;
+  try {
+    const row = await db.prepare("SELECT value FROM config WHERE key = 'sync_schema'").first();
+    if (row && row.value === SYNC_SCHEMA_V) {
+      syncSchema = tokenColumn = true;
+      return;
+    }
+  } catch {}
   await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
   await ensureTokenColumn(db);
   // sync: Schalter; sync_rev: letzter rev; kg: Schlüssel-Generation (+1 je Passwortwechsel); old_auth: Prüfwert des
@@ -769,6 +780,10 @@ async function ensureSync(db) {
   try {
     await db.exec('ALTER TABLE sync_old ADD COLUMN updated INTEGER');
   } catch {}
+  await db.batch([
+    db.prepare('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)'),
+    db.prepare("INSERT INTO config (key, value) VALUES ('sync_schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").bind(SYNC_SCHEMA_V),
+  ]);
   syncSchema = true;
 }
 
@@ -791,10 +806,21 @@ async function ownsMember(db, member, token) {
 /** Konto mit Abgleich: Anfragen mit Passwort brauchen zusätzlich das Token eines Geräts des Kontos (ein abgemeldetes
  *  Gerät kommt sonst mit dem gespeicherten Passwort weiter an die Daten). Ergebnis: '' oder 'device' | 'removed' */
 async function deviceError(db, row, raw) {
-  if (!row.sync) return '';
+  if (!row.sync) return (await deviceRemoved(db, row.user, raw)) ? 'removed' : '';
   if (!validId(raw)) return 'device';
   const d = await db.prepare('SELECT state FROM devices WHERE user = ? AND token = ?').bind(row.user, await sha256(raw)).first();
   return !d ? 'device' : d.state === 'removed' ? 'removed' : '';
+}
+
+/** Abgemeldetes Gerät – auch nachdem der Abgleich ausgeschaltet wurde (es soll seine Daten trotzdem löschen) */
+async function deviceRemoved(db, user, raw) {
+  if (!validId(raw)) return false;
+  try {
+    return !!(await db.prepare("SELECT 1 AS x FROM devices WHERE user = ? AND token = ? AND state = 'removed'").bind(user, await sha256(raw)).first());
+  } catch (e) {
+    if (/no such table/i.test(String(e && e.message))) return false;
+    throw e;
+  }
 }
 
 /** Geräte eines Kontos für die App (ohne Tokens) */
@@ -814,9 +840,10 @@ const syncOut = (r) => ({ k: r.k, id: r.id, rev: r.rev, updated: r.updated, dev:
 /** Nur Verschlüsseltes annehmen (Hülle der App: {"kg":…,"iv":"…","d":"…"}) */
 const sealedRe = /^\{"kg":\d{1,6},"iv":"[A-Za-z0-9+/=]{16}","d":"[A-Za-z0-9+/=]+"\}$/;
 /** Anweisungen, die sich auf den Stand eines Datensatzes beziehen: gilt nur, solange er noch die Fassung base hat */
-/** Fassung, die gleich überschrieben wird, aufheben (Werte: replaced, user, k, id, rev) */
+/** Fassung, die gleich überschrieben wird, aufheben (Werte: replaced, user, k, id, rev, kg) – nur mit dem aktuellen
+ *  Schlüssel (mit einem früheren ließe sie sich nie wiederherstellen; beim Neu-Verschlüsseln wären das alle Datensätze) */
 const SYNC_KEEP_OLD =
-  'INSERT INTO sync_old (user, k, id, rev, replaced, dev, del, f, kg, data, updated) SELECT user, k, id, rev, ?, dev, del, f, kg, data, updated FROM sync WHERE user = ? AND k = ? AND id = ? AND rev = ?';
+  'INSERT INTO sync_old (user, k, id, rev, replaced, dev, del, f, kg, data, updated) SELECT user, k, id, rev, ?, dev, del, f, kg, data, updated FROM sync WHERE user = ? AND k = ? AND id = ? AND rev = ? AND kg = ?';
 const SYNC_BASE = 'COALESCE((SELECT rev FROM sync WHERE user = ? AND k = ? AND id = ?), 0) = ?';
 
 /** POST /sync – Zugang über den Inhalt (Team-Code, Benutzer, auth, Token: keine eigenen Header, damit „keepalive“ ohne
@@ -826,7 +853,7 @@ async function syncRequest(db, b, h, ip) {
   const user = userKey(b.user);
   const row = await checkAccount(db, user, b.auth, ip);
   if (row.error) return json({ error: row.error }, row.status, h);
-  if (!row.sync) return json({ error: 'sync' }, 403, h);
+  if (!row.sync) return json({ error: (await deviceRemoved(db, user, b.token)) ? 'removed' : 'sync' }, 403, h);
   if (!validId(b.token)) return json({ error: 'device' }, 403, h);
   const dev = await db.prepare('SELECT device, seen, state FROM devices WHERE user = ? AND token = ?').bind(user, await sha256(b.token)).first();
   if (!dev) return json({ error: 'device' }, 403, h);
@@ -839,7 +866,7 @@ async function syncRequest(db, b, h, ip) {
     device = b.device;
   } else if (now - (dev.seen || 0) > 60000) await db.prepare('UPDATE devices SET seen = ? WHERE user = ? AND device = ?').bind(now, user, device).run();
 
-  if (b.action === 'head') return json({ rev: row.sync_rev, kg: row.kg, f: row.max_f, rekey: !!row.rekey }, 200, h);
+  if (b.action === 'head') return json({ rev: row.sync_rev, kg: row.kg, f: row.max_f, rekey: !!row.rekey, created: row.created }, 200, h);
 
   if (b.action === 'pull') {
     const since = Math.max(0, Math.floor(Number(b.since) || 0));
@@ -904,7 +931,7 @@ async function syncRequest(db, b, h, ip) {
         ops.push(
           db
             .prepare(SYNC_KEEP_OLD)
-            .bind(now, user, r.k, r.id, r.base)
+            .bind(now, user, r.k, r.id, r.base, row.kg)
         );
       ops.push(db.prepare(`UPDATE accounts SET sync_rev = sync_rev + 1 WHERE user = ? AND ${SYNC_BASE}`).bind(user, ...cond));
       writes.push(ops.length);
@@ -1018,7 +1045,7 @@ async function syncRequest(db, b, h, ip) {
     // wie push: alte Fassung aufheben, Zähler +1, Fassung von damals als neue – nur, wenn sich nichts dazwischen geändert hat
     for (const { c, t } of chunk) {
       const cond = [user, c.k, c.id, c.rev];
-      ops.push(db.prepare(SYNC_KEEP_OLD).bind(now, ...cond));
+      ops.push(db.prepare(SYNC_KEEP_OLD).bind(now, ...cond, row.kg));
       ops.push(db.prepare(`UPDATE accounts SET sync_rev = sync_rev + 1 WHERE user = ? AND ${SYNC_BASE}`).bind(user, ...cond));
       ops.push(
         db
@@ -1519,7 +1546,8 @@ export default {
             const last = await db.prepare("SELECT token FROM devices WHERE user = ? AND state = 'active' ORDER BY seen DESC LIMIT 1").bind(user).first();
             const ops = [db.prepare('UPDATE accounts SET sync = 0, token = COALESCE(?, token) WHERE user = ?').bind(last ? last.token : null, user)];
             if (last && acc.member) ops.push(db.prepare('UPDATE members SET token = ? WHERE member = ?').bind(last.token, acc.member));
-            ops.push(db.prepare('DELETE FROM devices WHERE user = ?').bind(user));
+            // abgemeldete bleiben (SYNC_REMOVED_DAYS): sie bekommen weiter „removed“ und löschen ihre Daten
+            ops.push(db.prepare("DELETE FROM devices WHERE user = ? AND (state <> 'removed' OR changed < ?)").bind(user, now - SYNC_REMOVED_DAYS * 86400e3));
             await db.batch(ops);
           }
           return json({ ok: true, sync: !!body.on }, 200, h);

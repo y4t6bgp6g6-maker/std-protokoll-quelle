@@ -393,7 +393,8 @@ function savePayslips() {
     window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
-  syncSoon();
+  // gespeichert wird beim Tippen: erst nach einer Pause senden (beim Verlassen sofort)
+  syncSoon(2000);
 }
 const payKey = (year, month) => `${year}-${pad(month)}`;
 // Früher eingelesene Abrechnungen: falsch gelesene Summen einmal nachträglich aus den übrigen Werten ergänzen (danach
@@ -1234,7 +1235,8 @@ function saveSettings() {
     toast('Speichern fehlgeschlagen!');
   }
   teamQueueUpload();
-  syncSoon();
+  // gespeichert wird beim Tippen: erst nach einer Pause senden (beim Verlassen sofort)
+  syncSoon(2000);
 }
 
 // Speicher als dauerhaft markieren, damit iOS ihn nicht aufräumt
@@ -6938,6 +6940,7 @@ accountBackup();
 accountLink();
 accountResumeRestore();
 accountSyncCheck();
+accountLeftCheck();
 deviceWipedNotice();
 syncStart();
 document.addEventListener('visibilitychange', () => {

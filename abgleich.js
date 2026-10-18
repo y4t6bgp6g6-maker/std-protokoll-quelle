@@ -4,13 +4,16 @@
 // (POST /sync, cloudflare/team-worker.js) und von dort auf die anderen Geräte desselben Kontos.
 //
 // Eigener Speicher je Gerät (nie abgeglichen, nicht in der Sicherung) stdprotokoll.sync.v1:
-// { user, kinds, rev, kg, at, hold, recs, held, conflicts, devs, oldKeys, sent }
+// { user, created, kinds, rev, kg, at, hold, recs, held, conflicts, devs, oldKeys, sent }
+//   created: wann das Konto auf dem Server angelegt wurde (anders = gelöscht und gleichnamig neu angelegt: alles neu)
 //   rev: bis hierher abgeholt; at: zuletzt erfolgreich abgeholt (Team-Upload nur mit frischem Stand)
-//   recs: { 'k:id': { rev, h, a } } je Datensatz der Stand auf dem Server und der Fingerabdruck der Fassung, die dieses
+//   recs: { 'k:id': { rev, h, a, b } } je Datensatz der Stand auf dem Server und der Fingerabdruck der Fassung, die dieses
 //         Gerät zuletzt gesendet oder übernommen hat ('del' = gelöscht, '!' = auf jeden Fall senden). Lokal anders →
 //         senden (base = rev), lokal fehlt → Löschmarke. So muss keiner der vielen save…-Aufrufe wissen, was er ändert.
 //         a: Fingerabdruck derselben Fassung nach dem automatischen Nachtragen (Feiertage, fixWeekend) – das macht
 //         jedes Gerät selbst, es zählt nicht als eigene Änderung (sonst Konflikt mit jeder echten Änderung anderswo)
+//         b: Fingerabdruck des Inhalts ohne „zuletzt geändert“ und Ansicht (syncBareH) – ändert sich nur die Ansicht (Tage
+//         der Abrechnung weitergeblättert, leere Zeilen im Wochenbericht weg), ist das keine eigene Änderung
 //   held: eingehende Fassungen des Zettels, der gerade mit ungespeicherten Tagen im Editor offen ist (später anwenden)
 //   wait: eingehende Berichte, deren Heft hier (noch) fehlt (kommt es, werden sie angewendet)
 //   conflicts: [{ key, k, id, srv: { rev, del, v, dev, updated }, twin }] auf zwei Geräten geändert → Fenster;
@@ -37,7 +40,7 @@
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 124;
+const SYNC_F = 125;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
 const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report', 'bh-profile', 'bh-heft', 'bh-img', 'bh-week', 'bh-month'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
@@ -98,12 +101,15 @@ function syncHash(s) {
 const syncH = (v) => (v == null ? 'del' : syncHash(syncCanon(v)));
 /** Fingerabdruck je Art: Bilder ändern sich nie (neue ID je Bild) – ihr Inhalt muss nicht jedes Mal durchgerechnet werden */
 const syncHk = (k, v) => (k === 'bh-img' ? (v == null ? 'del' : 'img') : syncH(v));
-/** Zum Vergleich des Inhalts: ohne „zuletzt geändert“, eingelesen um, angezeigte Tage der Abrechnung */
+/** Zum Vergleich des Inhalts: ohne „zuletzt geändert“, eingelesen um, angezeigte Tage der Abrechnung, leere Zeilen im
+ *  Wochenbericht (fallen beim Anzeigen weg) */
 const syncBareH = (k, v) =>
   v == null
     ? 'del'
-    : k === 'sheet' || k === 'bh-week' || k === 'bh-month' || k === 'bh-profile'
-    ? syncHk(k, { ...v, updatedAt: 0 })
+    : k === 'bh-week'
+    ? syncH({ ...v, updatedAt: 0, days: Array.isArray(v.days) ? v.days.map((d) => (d && Array.isArray(d.lines) ? { ...d, lines: d.lines.filter((l) => String(l?.t || '').trim() || String(l?.h || '').trim()) } : d)) : v.days })
+    : k === 'sheet' || k === 'bh-month' || k === 'bh-profile'
+    ? syncH({ ...v, updatedAt: 0 })
     : k === 'trip'
     ? syncH({ ...v, updatedAt: 0, from: 0, to: 0 })
     : k === 'pay'
@@ -115,11 +121,18 @@ function syncAutoH(k, v) {
   const c = structuredClone(v);
   return fixWeekend(c) ? syncH(c) : undefined;
 }
+/** Arten, bei denen syncBareH mehr weglässt als syncHk */
+const SYNC_BARE = new Set(['sheet', 'trip', 'pay', 'bh-week', 'bh-month', 'bh-profile']);
 /** Merken, welche Fassung der Server hat */
 const syncRec = (k, v, rev, h = syncHk(k, v)) => {
+  const e = { rev, h };
   const a = syncAutoH(k, v);
-  return a ? { rev, h, a } : { rev, h };
+  if (a) e.a = a;
+  if (v != null && SYNC_BARE.has(k)) e.b = syncBareH(k, v);
+  return e;
 };
+/** Hier seit dem Abgleich nichts geändert (höchstens Feiertage nachgetragen bzw. die Ansicht) */
+const syncSame = (e, k, local, hl = syncHk(k, local)) => e.h === hl || e.a === hl || (!!e.b && local != null && e.b === syncBareH(k, local));
 const syncKeyOf = (k, id) => `${k}:${id}`;
 const syncSplit = (key) => {
   const i = key.indexOf(':');
@@ -184,7 +197,12 @@ function syncLocalOne(k, id) {
 function syncChanges(local = syncLocal()) {
   const st = syncState();
   // offener Konflikt, zurückgehaltene Fassung (Editor): erst nach der Wahl bzw. dem Speichern
-  const blocked = new Set([...st.conflicts.flatMap((c) => [c.key, ...(c.twin ? [syncKeyOf('sheet', c.twin)] : [])]), ...st.held.map((x) => syncKeyOf(x.k, x.id))]);
+  // bzw. eingehender Bericht, dessen Heft hier fehlt: erst, wenn das Heft wieder da ist oder der Bericht gelöscht
+  const blocked = new Set([
+    ...st.conflicts.flatMap((c) => [c.key, ...(c.twin ? [syncKeyOf('sheet', c.twin)] : [])]),
+    ...st.held.map((x) => syncKeyOf(x.k, x.id)),
+    ...st.wait.map((x) => syncKeyOf(x.k, x.id)),
+  ]);
   const out = [];
   for (const [key, r] of local) {
     if (blocked.has(key)) continue;
@@ -193,7 +211,10 @@ function syncChanges(local = syncLocal()) {
     // Einstellung noch nie abgeglichen und nur die Vorgabe: nicht senden (ein frisch angemeldetes Gerät überschriebe
     // sonst die Werte des bisherigen, 18.10.) – so heißt eine Vorgabe auf dem Server immer „bewusst eingestellt“
     if (!e && r.k === 'set' && syncSetDefault(r.id, r.v.v)) continue;
-    if (!e || e.h !== h) out.push({ key, k: r.k, id: r.id, base: e ? e.rev : 0, v: r.v, h });
+    if (e && e.h === h) continue;
+    // nur die Ansicht anders (Abrechnung weitergeblättert …): nicht senden
+    if (e && e.b && syncBareH(r.k, r.v) === e.b) continue;
+    out.push({ key, k: r.k, id: r.id, base: e ? e.rev : 0, v: r.v, h });
   }
   let used = null;
   for (const [key, e] of Object.entries(st.recs)) {
@@ -306,8 +327,10 @@ async function syncRun(pushFirst = false) {
       }
       // nichts mehr neu zu verschlüsseln: frühere Schlüssel vergessen
       if (!head.rekey && Object.keys(st.oldKeys).length) st.oldKeys = {};
-      // Server kennt weniger als dieses Gerät (Konto gelöscht und gleichnamig neu angelegt): alles neu abgleichen
-      if (head.rev < st.rev) Object.assign(st, { rev: 0, at: 0, recs: {} });
+      // Konto gelöscht und gleichnamig neu angelegt (bzw. Server kennt weniger als dieses Gerät): alles neu abgleichen
+      if ((head.created && st.created && head.created !== st.created) || head.rev < st.rev)
+        Object.assign(st, { rev: 0, at: 0, recs: {}, conflicts: [], held: [], wait: [], sent: {} });
+      if (head.created) st.created = head.created;
       if (head.rev !== st.rev || !st.at) await syncPull();
       else st.at = Date.now();
     }
@@ -387,8 +410,12 @@ async function syncPush() {
   const st = syncState();
   if (st.hold > SYNC_F) return 0;
   let top = 0;
+  // abgelehnt, ohne dass sich danach etwas geändert hat (Fassung des Servers nicht lesbar …): in diesem Lauf nicht noch einmal
+  const stuck = new Set();
+  // verschlüsselt, passte aber nicht mehr ins Paket: im nächsten Paket nicht noch einmal verschlüsseln
+  const sealed = new Map();
   for (let round = 0; round < 30; round++) {
-    const list = syncChanges().filter((c) => !syncSkip.has(c.key) && !syncKgWait.has(c.key));
+    const list = syncChanges().filter((c) => !syncSkip.has(c.key) && !syncKgWait.has(c.key) && !stuck.has(c.key));
     if (!list.length) break;
     const batch = [];
     let size = 0;
@@ -397,12 +424,16 @@ async function syncPush() {
         syncSkipKey(c.key, 'Kennung');
         continue;
       }
-      const data = c.del ? '' : await syncSeal(c.v, st.kg, c.k);
+      const pre = sealed.get(c.key);
+      const data = c.del ? '' : pre && pre.h === c.h ? pre.data : await syncSeal(c.v, st.kg, c.k);
       if (data.length > SYNC_ONE_MAX) {
         syncSkipKey(c.key, `zu groß ${data.length}`);
         continue;
       }
-      if (batch.length && (batch.length >= SYNC_PUSH_N || size + data.length > SYNC_PUSH_BYTES)) break;
+      if (batch.length && (batch.length >= SYNC_PUSH_N || size + data.length > SYNC_PUSH_BYTES)) {
+        sealed.set(c.key, { h: c.h, data });
+        break;
+      }
       batch.push({ ...c, data });
       size += data.length + 200;
     }
@@ -444,6 +475,10 @@ async function syncPush() {
     // abgelehnt: ein anderes Gerät war schneller – dessen Fassung wie beim Abholen behandeln (gleich, gewinnt, Konflikt;
     // ist es eine eigene frühere, deren Antwort verloren ging: sent)
     await syncApply(rejected.filter((r) => r.rev));
+    for (const r of rejected) {
+      const c = batch.find((x) => x.k === r.k && x.id === r.id);
+      if (c && ((st.recs[c.key] && st.recs[c.key].rev) || 0) === c.base) stuck.add(c.key);
+    }
     for (const c of batch) delete st.sent[c.key];
     syncSave();
   }
@@ -488,6 +523,8 @@ async function syncRekey(onProgress) {
       const e = st.recs[syncKeyOf(a.k, a.id)];
       if (x && e && e.rev === x.r.rev) e.rev = a.rev;
     }
+    // niemand sonst hat dazwischen gesendet: das Neu-Verschlüsselte nicht noch einmal abholen
+    if (res.rev - (res.accepted || []).length === st.rev) st.rev = res.rev;
     top = Math.max(top, res.rev || 0);
     syncSave();
   }
@@ -594,6 +631,9 @@ async function syncApply(records) {
   try {
     for (const r of records) {
       if (!SYNC_KINDS_HERE.includes(r.k)) continue;
+      // schon bekannt (z. B. eigene neu verschlüsselte Fassung): nicht erst entschlüsseln
+      const e = st.recs[syncKeyOf(r.k, r.id)];
+      if (e && e.rev >= r.rev) continue;
       // mit älterem Passwort verschlüsselt (wird gerade neu verschlüsselt): mit dem früheren Schlüssel, sonst später
       const raw = r.kg === st.kg ? cryptStore && cryptStore.key : st.oldKeys[r.kg];
       if (!r.del && !raw) continue;
@@ -661,9 +701,9 @@ function syncIncoming(srv, ch) {
     }
     return;
   }
-  // inhaltlich die Fassung, auf der die eigene Änderung aufbaut (neu verschlüsselt nach einem Passwortwechsel): kein
-  // Konflikt, die eigene geht auf die neue Fassung
-  if (e && (hs === e.h || hs === e.a)) {
+  // inhaltlich die Fassung, auf der die eigene Änderung aufbaut (neu verschlüsselt nach einem Passwortwechsel, nur die
+  // Ansicht anders): kein Konflikt, die eigene geht auf die neue Fassung
+  if (e && syncSame(e, srv.k, srv.v, hs)) {
     st.recs[key] = { ...e, rev: srv.rev };
     return drop();
   }
@@ -684,7 +724,7 @@ function syncIncoming(srv, ch) {
     return;
   }
   drop();
-  const unchanged = e ? e.h === hl || e.a === hl : local == null;
+  const unchanged = e ? syncSame(e, srv.k, local, hl) : local == null;
   // Heft auf einem anderen Gerät gelöscht, hier aber ein Bericht darin geändert: fragen statt still alles zu löschen
   if (srv.k === 'bh-heft' && srv.del && unchanged && syncBhDirty(srv.id).length) {
     st.conflicts.push({ key, k: srv.k, id: srv.id, srv });
@@ -739,7 +779,8 @@ function syncBhDirty(hid) {
   for (const [k, store, filled] of [['bh-week', h.weeks, weekFilled], ['bh-month', h.months, monthFilled]])
     for (const [key, x] of Object.entries(store || {})) {
       const id = `${hid}|${key}`;
-      if (filled(x) && st.recs[syncKeyOf(k, id)]?.h !== syncH(x)) out.push(syncTitle(k, x, id));
+      const e = st.recs[syncKeyOf(k, id)];
+      if (filled(x) && !(e && syncSame(e, k, x))) out.push(syncTitle(k, x, id));
     }
   return out;
 }
@@ -758,7 +799,7 @@ function syncImgUsed(onlyOwn = false) {
     for (const [ym, mo] of Object.entries(h.months || {})) {
       const key = syncKeyOf('bh-month', `${h.id}|${ym}`);
       const e = st.recs[key];
-      if (onlyOwn && e && (e.h === syncH(mo) || e.a === syncH(mo)) && !st.conflicts.some((c) => c.key === key)) continue;
+      if (onlyOwn && e && syncSame(e, 'bh-month', mo) && !st.conflicts.some((c) => c.key === key)) continue;
       for (const id of syncBhImgIds(mo)) ids.add(id);
     }
   for (const c of st.conflicts) if (c.k === 'bh-month' && c.srv.v) for (const id of syncBhImgIds(c.srv.v)) ids.add(id);
@@ -950,7 +991,7 @@ function syncSheetDiff(mine, theirs) {
   if (moved) out.push({ label: 'Woche', mine: range(mine), theirs: range(theirs) });
   out.push(...sheetDiff(mine, theirs).map((d) => ({ ...d, label: moved ? WEEKDAYS_SHORT[d.i] : `${WEEKDAYS_SHORT[d.i]} ${fmtDayMonth(sheetDate(mine, d.i))}` })));
   if ((mine.name || '') !== (theirs.name || '')) out.push({ label: 'Name', mine: mine.name || '–', theirs: theirs.name || '–' });
-  if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: mine.sentAt ? 'gesendet' : 'offen', theirs: theirs.sentAt ? 'gesendet' : 'offen' });
+  if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: tr(mine.sentAt ? 'gesendet' : 'offen'), theirs: tr(theirs.sentAt ? 'gesendet' : 'offen') });
   return out;
 }
 
@@ -959,8 +1000,8 @@ function syncTripDiff(mine, theirs) {
   const out = tripDiff(mine, theirs);
   if ((mine.name || '') !== (theirs.name || '')) out.push({ label: 'Name', mine: mine.name || '–', theirs: theirs.name || '–' });
   if ((mine.signature || '') !== (theirs.signature || ''))
-    out.push({ label: 'Unterschrift', mine: mine.signature ? 'vorhanden' : '–', theirs: theirs.signature ? (mine.signature ? 'andere' : 'vorhanden') : '–' });
-  if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: mine.sentAt ? 'gesendet' : 'offen', theirs: theirs.sentAt ? 'gesendet' : 'offen' });
+    out.push({ label: 'Unterschrift', mine: mine.signature ? tr('vorhanden') : '–', theirs: theirs.signature ? tr(mine.signature ? 'andere' : 'vorhanden') : '–' });
+  if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: tr(mine.sentAt ? 'gesendet' : 'offen'), theirs: tr(theirs.sentAt ? 'gesendet' : 'offen') });
   return out;
 }
 /** Felder der Lohnabrechnung im Fenster (wie auf ihrer Seite; Funktion: HOUR_KINDS steht erst in app.js) */
@@ -984,7 +1025,7 @@ const syncPayFields = () => [
 function syncPayDiff(mine, theirs) {
   const get = (p, path) => path.split('.').reduce((o, n) => (o == null ? o : o[n]), p);
   const fmt = (v, unit, p) =>
-    unit === 'y' ? String(v || p.year) : v == null || v === '' ? '–' : unit === '€' ? fmtMoney(v, true) : unit === 'h' ? fmtH(v * 60) : `${fmtDec(v * 60)} %`;
+    unit === 'y' ? String(v || p.year) : v == null || v === '' ? '–' : unit === '€' ? fmtMoney(v, true) : unit === 'h' ? tr(fmtH(v * 60)) : `${fmtDec(v * 60)} %`;
   return syncPayFields().map(([path, label, unit]) => ({ label, mine: fmt(get(mine, path), unit, mine), theirs: fmt(get(theirs, path), unit, theirs) })).filter(
     (d) => d.mine !== d.theirs
   );
@@ -1000,7 +1041,7 @@ function syncBhDayText(d) {
   if (d.type) return tr(bhTypes()[d.type] || d.type);
   const lines = (d.lines || []).filter((l) => l.t.trim() || l.h.trim()).map((l) => (l.h.trim() ? `${l.t.trim()} (${l.h.trim()})` : l.t.trim()));
   // eigenes Wort für den Umbruch (wordDiffHTML trennt an Leerzeichen; die Karte bricht dort um)
-  return [...lines, d.hours ? `= ${d.hours} Std.` : ''].filter(Boolean).join(' \n ') || '–';
+  return [...lines, d.hours ? `= ${d.hours} ${tr('Std.')}` : ''].filter(Boolean).join(' \n ') || '–';
 }
 /** Unterschiede zweier Wochenberichte: je abweichender Tag, dazu die Unterschriften */
 function syncBhWeekDiff(mine, theirs, id) {
@@ -1037,9 +1078,11 @@ function syncBhProfileDiff(mine, theirs) {
     const b = theirs.sigs[r] ? JSON.stringify(theirs.sigs[r]) : '';
     if (a !== b) out.push({ label: `Unterschrift ${label}`, mine: a ? tr('vorhanden') : '–', theirs: b ? tr(a ? 'andere' : 'vorhanden') : '–' });
   }
-  out.push({ label: 'Automatisch unterschreiben', mine: tr(mine.autoSign ? 'an' : 'aus'), theirs: tr(theirs.autoSign ? 'an' : 'aus') });
+  out.push({ label: 'Automatisch unterschreiben', mine: syncOnOff(mine.autoSign), theirs: syncOnOff(theirs.autoSign) });
   return out.filter((d) => d.mine !== d.theirs);
 }
+/** „an“/„aus“ eines Schalters (übersetzt steht „aus“ schon für „aus Datei“) */
+const syncOnOff = (on) => (on ? tr('an') : LANG === 'de' ? 'aus' : tr('Schalter aus'));
 /** Unterschiede zweier Fassungen eines Hefts (Zeitraum) */
 const syncBhHeftDiff = (mine, theirs) =>
   [{ label: 'Zeitraum', mine: fmtYearSpan(mine), theirs: fmtYearSpan(theirs) }].filter((d) => d.mine !== d.theirs);
