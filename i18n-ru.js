@@ -231,7 +231,7 @@ if (LANG === 'ru') {
       'ist verschlüsselt.': 'зашифрован.', 'nur Numbers-, PDF- oder Sicherungsdateien': 'только файлы Numbers, PDF или резервные копии',
       'Kein Eintrag': 'Нет записи', 'Noch nicht eingetragen': 'Ещё не внесено', 'Schon eingetragen': 'Уже внесено', 'Eingetragen': 'Внесено', 'Übernommen': 'Перенесено', 'Ganzen Tag übernehmen': 'Перенести весь день', 'Eintrag übernommen': 'Запись перенесена',
       // ── Berichtsheft ──
-      'kein Bild': 'нет изображения', Geändert: 'Изменено', vorhanden: 'есть', andere: 'другая', an: 'вкл.', 'Schalter aus': 'выкл.', Zeitraum: 'Период',
+      'kein Bild': 'нет изображения', 'Weitere Angaben': 'Прочие данные', Geändert: 'Изменено', vorhanden: 'есть', andere: 'другая', an: 'вкл.', 'Schalter aus': 'выкл.', Zeitraum: 'Период',
       Berichtsheft: 'Дневник обучения', 'Neues Berichtsheft': 'Новый дневник обучения', 'Noch kein Berichtsheft': 'Дневника обучения пока нет',
       'Berichtsheft senden': 'Отправить дневник', 'Berichtsheft löschen': 'Удалить дневник', 'Wochen und Monate als PDF': 'Недели и месяцы в PDF',
       Angaben: 'Данные', 'Für Deckblatt, Vorblatt und jede Seite des Berichtshefts.': 'Для обложки, титульного листа и каждой страницы дневника.',

@@ -40,7 +40,7 @@
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 125;
+const SYNC_F = 126;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
 const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report', 'bh-profile', 'bh-heft', 'bh-img', 'bh-week', 'bh-month'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
@@ -351,6 +351,7 @@ async function syncRun(pushFirst = false) {
     else if (!e.status && !e.net) window.fehlerMelden?.(e, 'abgleich');
   } finally {
     syncBusy = false;
+    syncUnsentMemo = null;
     syncSave();
     if (syncAgain) {
       const full = syncAgain === 'full';
@@ -913,11 +914,12 @@ function syncAfter(ch) {
   syncRerender();
 }
 
+/** Gerade ein Fenster offen oder mitten im Tippen (Berichtsheft speichert bei jedem Tastendruck): nicht neu zeichnen bzw. fragen */
+const syncUiBusy = () => layer.classList.contains('open') || !!(document.activeElement && document.activeElement.matches('input, textarea, [contenteditable="true"]'));
 /** Offene Seite neu zeichnen – nicht mitten im Tippen und nicht unter einem Fenster (dann etwas später) */
 function syncRerender() {
   clearTimeout(syncRerender.t);
-  const busy = layer.classList.contains('open') || (document.activeElement && document.activeElement.matches('input, textarea, [contenteditable="true"]'));
-  if (busy) {
+  if (syncUiBusy()) {
     syncRerender.t = setTimeout(syncRerender, 1500);
     return;
   }
@@ -1026,9 +1028,12 @@ function syncPayDiff(mine, theirs) {
   const get = (p, path) => path.split('.').reduce((o, n) => (o == null ? o : o[n]), p);
   const fmt = (v, unit, p) =>
     unit === 'y' ? String(v || p.year) : v == null || v === '' ? '–' : unit === '€' ? fmtMoney(v, true) : unit === 'h' ? tr(fmtH(v * 60)) : `${fmtDec(v * 60)} %`;
-  return syncPayFields().map(([path, label, unit]) => ({ label, mine: fmt(get(mine, path), unit, mine), theirs: fmt(get(theirs, path), unit, theirs) })).filter(
+  const out = syncPayFields().map(([path, label, unit]) => ({ label, mine: fmt(get(mine, path), unit, mine), theirs: fmt(get(theirs, path), unit, theirs) })).filter(
     (d) => d.mine !== d.theirs
   );
+  // anders in einem Feld, das die Liste nicht kennt (neues Feld, Lohnzeilen …): nicht „kein Unterschied“ zeigen
+  if (!out.length && syncBareH('pay', mine) !== syncBareH('pay', theirs)) out.push({ label: 'Weitere Angaben', mine: tr('andere'), theirs: tr('andere') });
+  return out;
 }
 /** Unterschriften eines Berichts: „am 13.10.“ bzw. „–“ je Rolle */
 function syncSignDiff(mine, theirs) {
@@ -1104,8 +1109,7 @@ async function syncShowConflicts() {
   const editing = editorSaved && editorPending() ? editorSaved.id : null;
   const list = st.conflicts.filter((c) => c.id !== editing && c.twin !== editing);
   if (!list.length || !syncOn()) return;
-  // nicht unter einem Fenster und nicht mitten im Tippen (Berichtsheft speichert bei jedem Tastendruck)
-  if (layer.classList.contains('open') || (document.activeElement && document.activeElement.matches('input, textarea'))) {
+  if (syncUiBusy()) {
     clearTimeout(syncShowConflicts.t);
     syncShowConflicts.t = setTimeout(syncShowConflicts, 2000);
     return;
@@ -1238,7 +1242,16 @@ function syncCurrent() {
   if (!(account && account.sync)) return !(syncWasOn() && !accountOk());
   if (!syncOn()) return false;
   const st = syncState();
-  return !st.conflicts.length && !st.held.length && Date.now() - st.at < SYNC_FRESH && !(st.hold > SYNC_F) && !syncChanges().some((c) => !syncSkip.has(c.key));
+  return !st.conflicts.length && !st.held.length && Date.now() - st.at < SYNC_FRESH && !(st.hold > SYNC_F) && !syncUnsent();
+}
+/** Liegt noch Ungesendetes hier? Nach jedem Lauf fragen mehrere (Ende des Laufs, Team-Upload, Konto-Seite) – darum kurz
+ *  gemerkt; jede Änderung (syncSoon) und jeder Lauf vergessen es */
+let syncUnsentMemo = null;
+function syncUnsent() {
+  if (syncUnsentMemo && Date.now() - syncUnsentMemo.at < 2000) return syncUnsentMemo.v;
+  const v = syncChanges().some((c) => !syncSkip.has(c.key));
+  syncUnsentMemo = { at: Date.now(), v };
+  return v;
 }
 
 /** Dieses Gerät hat schon einmal abgeglichen (gespeicherter Stand mit Konto und Zähler) */
@@ -1253,6 +1266,7 @@ function syncWasOn() {
 
 /** Nach dem Speichern: gleich senden */
 function syncSoon(delay = 300) {
+  syncUnsentMemo = null;
   if (!syncOn()) return;
   clearTimeout(syncSoon.t);
   syncSoon.t = setTimeout(() => syncRun(true), delay);

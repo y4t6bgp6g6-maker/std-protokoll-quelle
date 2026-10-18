@@ -120,13 +120,18 @@ function deviceWipedNotice() {
 /** Geräte des Kontos (null = nicht geladen bzw. ohne Abgleich): [{ device, name, created, seen, me }] */
 let accountDevs = null;
 let accountSyncAt = 0;
-/** Abgleich an? Welche Geräte? Beim Start, beim Zurückkehren und auf der Konto-Seite. Dabei kommen auch „abgemeldet“,
- *  „Team verlassen“ und „Passwort geändert“ an (teamRequest), ohne dass etwas hochgeladen werden muss */
-async function accountSyncCheck() {
-  if (!team || !accountOk() || !navigator.onLine || accountSyncCheck.busy || Date.now() - accountSyncAt < 10e3) return;
+/** Abgleich an? Welche Geräte? Beim Start, beim Zurückkehren und auf der Konto-Seite (page). Dabei kommen auch „abgemeldet“,
+ *  „Team verlassen“ und „Passwort geändert“ an (teamRequest), ohne dass etwas hochgeladen werden muss.
+ *  Mit Abgleich fragt syncRun (head) das ohnehin – die Geräteliste braucht nur die Konto-Seite. Ohne Abgleich (fast alle
+ *  Kollegen, Antwort 403) beim Start und danach höchstens alle 30 min */
+async function accountSyncCheck(page = false) {
+  if (!team || !accountOk() || !navigator.onLine || accountSyncCheck.busy) return;
+  if (!page && account.sync && !account.pwchanged && cryptStore) return;
+  if (Date.now() - accountSyncAt < (page ? 10e3 : 30 * 60e3)) return;
   accountSyncCheck.busy = true;
   accountSyncAt = Date.now();
-  const before = JSON.stringify([account.sync, accountDevs]);
+  const sync = account.sync;
+  const before = JSON.stringify(accountDevs);
   try {
     accountDevs = (await accountSyncRequest('devices')).devices || [];
     account.sync = true;
@@ -142,11 +147,13 @@ async function accountSyncCheck() {
   } finally {
     accountSyncCheck.busy = false;
   }
-  if (account && JSON.stringify([account.sync, accountDevs]) !== before) {
+  if (!account) return;
+  // nur „zuletzt gesehen“ anders: neu zeichnen genügt
+  if (account.sync !== sync) {
     saveAccount();
-    accountRerender();
     syncSoon(0);
   }
+  if (account.sync !== sync || JSON.stringify(accountDevs) !== before) accountRerender();
 }
 
 /** Team mit Abgleich verlassen (hier oder auf einem anderen Gerät): seitdem fragt das Gerät nichts mehr – beim Start
@@ -254,6 +261,10 @@ function accountDeviceRename(d) {
     } catch (e) {
       return toast(accountError(e));
     }
+    // Namen fürs Konflikt-Fenster (sonst bis zum nächsten Abholen der alte)
+    const st = syncState();
+    if (st.devs) st.devs[d.device] = name;
+    syncSave();
     accountRerender();
   };
   modal.addEventListener('click', (e) => {
@@ -298,12 +309,7 @@ function accountPwAdopt() {
   delete account.pwNext;
   Object.assign(account, { auth: n.auth, at: 0, hash: '' });
   saveAccount();
-  cryptStore = { salt: n.salt, key: n.key };
-  try {
-    localStorage.setItem(CRYPT_KEY, JSON.stringify(cryptStore));
-  } catch (e) {
-    window.fehlerMelden?.(e, 'speichern');
-  }
+  storeCryptKey({ salt: n.salt, key: n.key });
 }
 
 /** Mit dem neuen Passwort wieder anmelden (Konto bleibt, nur das Passwort wird neu eingegeben) */
@@ -620,7 +626,7 @@ const accountStatusText = () => {
   if (account.sync) {
     // Sicherung gibt es mit Abgleich nicht: sagen, ob noch etwas nur auf diesem Gerät liegt
     const st = syncState();
-    const open = st.conflicts.length || st.held.length || st.hold > SYNC_F || (syncStarted && syncChanges().some((c) => !syncSkip.has(c.key)));
+    const open = st.conflicts.length || st.held.length || st.hold > SYNC_F || (syncStarted && syncUnsent());
     const when = open ? 'Noch nicht alles gesendet' : st.at ? `Abgeglichen: ${accountWhen(st.at)}` : 'Noch nicht abgeglichen';
     return account.error && account.ok ? `${when} · ${account.error}` : when;
   }
@@ -825,7 +831,7 @@ function kontoPageHTML() {
   }
   const ok = accountOk();
   // Geräte-Liste (nur mit Abgleich) frisch holen
-  if (team && ok) setTimeout(accountSyncCheck);
+  if (team && ok) setTimeout(() => accountSyncCheck(true));
   return `
     <div class="card form">
       <div class="field"><span>Benutzername</span><span class="muted" translate="no">${escapeHtml(account.user)}</span></div>

@@ -1528,7 +1528,11 @@ async function passwordKey(pw, salt, iter = PBKDF2_ITER) {
   return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
 }
 async function rememberKey(key, salt) {
-  cryptStore = { salt: toB64(salt), key: toB64(await crypto.subtle.exportKey('raw', key)) };
+  storeCryptKey({ salt: toB64(salt), key: toB64(await crypto.subtle.exportKey('raw', key)) });
+}
+/** Schlüssel (Base64) merken – auch der neue nach einem Passwortwechsel auf einem anderen Gerät (accountPwAdopt) */
+function storeCryptKey(store) {
+  cryptStore = store;
   try {
     localStorage.setItem(CRYPT_KEY, JSON.stringify(cryptStore));
   } catch (e) {
