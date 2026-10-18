@@ -446,7 +446,7 @@ function parsePayslipText(text, opts = {}) {
   }
   const zulageKnown = [...groups.values()].some((g) => g.kind === 'zulage');
 
-  // Netto-Be-/Abzüge („9001 bereits erhalten 900,00-“, „aus NB 03/2026 12,34“): je Durchgang der Teil der Zeile hinter
+  // Netto-Be-/Abzüge („9001 bereits erhalten 500,00-“, „aus NB 03/2026 12,34“): je Durchgang der Teil der Zeile hinter
   // der Verdienstbescheinigung (die steht links daneben); je Durchgang Summen von Abschlag, Betriebsrente und Sonstigem
   const nettoPasses = passes
     .map((p) => {
@@ -723,7 +723,7 @@ function parsePayslipText(text, opts = {}) {
     r.auszahlung = psMost(auszReads, seen) ?? (r.netto != null ? psR2(r.netto - r.abschlag - r.bav + sonst) : null);
   }
 
-  // Jahressumme (Verdienstbescheinigung, links unten): „Gesamt-Brutto 33.340,65 | SV-Brutto …“
+  // Jahressumme (Verdienstbescheinigung, links unten): „Gesamt-Brutto 12.345,67 | SV-Brutto …“
   const ytds = [];
   for (const l of lines) {
     if (!/G.{0,2}sam.{0,2}-?\s?Br/i.test(l) || !/S\s?V.?Br|Sv-?B/i.test(l)) continue;
