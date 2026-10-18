@@ -1066,7 +1066,7 @@ html.no-warn .suggest-wrap.missing .txt { padding-right: 0; }
 /* Rückfrage bei doppelten Zetteln */
 .modal.alert.wide { width: min(380px, calc(100% - 32px)); }
 .alert-buttons.stacked { grid-template-columns: 1fr; }
-.alert-buttons.stacked button + button { border-left: 0; border-top: 0.5px solid var(--sep); }
+.alert-buttons.stacked > * + * { border-left: 0; border-top: 0.5px solid var(--sep); }
 .ad-hint { display: block; margin-bottom: 2px; font-size: 13px; font-weight: 400; color: var(--muted); }
 .cf .alert-msg { text-align: left; max-height: 52vh; margin-top: 0; }
 .cf-scroll { position: relative; margin-top: 6px; }

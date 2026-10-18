@@ -182,6 +182,8 @@ if (LANG === 'ru') {
       'KV + RV + AV + PV = Sozialabgaben': 'KV + RV + AV + PV = соцвзносы', 'Brutto − Steuern − Sozialabgaben = Netto': 'Брутто − налоги − соцвзносы = нетто',
       'Netto − Abzüge = Auszahlung': 'Нетто − удержания = выплата', 'Netto ± Be-/Abzüge = Auszahlung': 'Нетто ± начисления/удержания = выплата',
       'Jahressumme = Gesamt-Brutto': 'Сумма за год = общее брутто', 'Jahressumme passt zum Vormonat': 'Сумма за год сходится с прошлым месяцем',
+      'Jahressumme passt nicht zum Vormonat': 'Сумма за год не сходится с прошлым месяцем', 'Jahressumme mit Nachberechnung': 'Сумма за год с перерасчётом',
+      'Jahressumme des Vormonats unsicher': 'Сумма за год в прошлом месяце под вопросом', 'Gesamt-Brutto im Jahr': 'Общее брутто за год', 'Nicht übernehmen': 'Не сохранять',
       'Alle Werte gelesen': 'Все значения прочитаны', 'KV + RV + AV + PV nicht lesbar': 'KV + RV + AV + PV не читаются', 'Stunden oben rechts nicht lesbar': 'Часы вверху справа не читаются', 'Nicht alles sicher gelesen': 'Не всё прочитано надёжно', 'Monat nicht lesbar': 'Месяц не читается', 'Texterkennung dauert zu lange': 'Распознавание длится слишком долго', Abschlag: 'Аванс', 'Monat nicht lesbar – wird gleich abgefragt': 'Месяц не читается – сейчас будет запрошен',
       'Neu einlesen': 'Загрузить заново', 'Trotzdem ansehen': 'Всё равно открыть',
       'Am besten neu fotografieren: ganze Seite gerade von oben, gutes Licht, ohne Schatten.': 'Лучше сфотографировать заново: весь лист прямо сверху, хороший свет, без теней.', 'Gesamt-Brutto': 'Общее брутто',

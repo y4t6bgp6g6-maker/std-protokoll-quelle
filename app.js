@@ -333,8 +333,7 @@ function monthSollMinutes(year, month) {
 function monthPay(year, month, otMin, minusMin = 0) {
   if (!hasWage()) return null;
   const wage = monthValue(year, month, 'rate', parseNum(settings.wage));
-  // Jede Lohnart wie auf der Abrechnung einzeln auf Cent runden (kaufmännisch, ohne Gleitkomma-Fehler)
-  const cents = (v) => Math.round(v * 100 + 1e-6) / 100;
+  // Jede Lohnart wie auf der Abrechnung einzeln auf Cent runden (cents)
   const base = cents(((monthSollMinutes(year, month) + Math.min(0, otMin) - minusMin) / 60) * wage);
   const ot = cents((Math.max(0, otMin) / 60) * wage * otFactor());
   // Monat mit Abrechnung: deren Betriebsrente und Zulage – eine spätere Änderung der Einstellungen gilt nicht rückwirkend
@@ -396,7 +395,8 @@ const HOUR_KINDS = [
   ['krank', 'Krankheit'],
   ['feiertag', 'Feiertage'],
 ];
-const cents = (v) => Math.round(v * 100 + 1e-6) / 100;
+/** Auf Cent runden (kaufmännisch, ohne Gleitkomma-Fehler) – wie beim Einlesen */
+const cents = psR2;
 /** Angaben für die Netto-Rechnung eines Monats (Steuertarif des Jahres, Zusatzbeitrag wie auf der Abrechnung) */
 const lohnOpts = (bav, year, month, zusatz, tarif) => ({
   // Steuer- und beitragsfreie Bezüge (z. B. Inflationsprämie) wie auf der Abrechnung des Monats
@@ -572,15 +572,14 @@ function payslipCompareHTML(p) {
 }
 
 /** Eingabefeld für einen Wert der Abrechnung (Zahl mit Komma) */
-function psField(label, path, value, unit, signed = false, guess = false) {
+function psField(label, path, value, unit, signed = false) {
   const v = value == null ? '' : String(Math.round(value * 100) / 100).replace('.', ',');
-  // Mit Vorzeichen: Zahlentastatur ohne Minus reicht nicht. guess: nicht gelesen, sondern ergänzt (orange)
-  return `<label class="field${guess ? ' ps-guess' : ''}"><span>${label}</span><input data-ps="${path}" inputmode="${signed ? 'text' : 'decimal'}" value="${v}" placeholder="–" enterkeyhint="done"><span class="unit">${unit}</span></label>`;
+  // Mit Vorzeichen: Zahlentastatur ohne Minus reicht nicht
+  return `<label class="field"><span>${label}</span><input data-ps="${path}" inputmode="${signed ? 'text' : 'decimal'}" value="${v}" placeholder="–" enterkeyhint="done"><span class="unit">${unit}</span></label>`;
 }
 
 function renderPayslip(key) {
   const p = payslips[key];
-  const guess = (k) => (p?.fixed || []).includes(k);
   if (!p) {
     const [y, m] = key.split('-').map(Number);
     if (y > 2000 && m >= 1 && m <= 12) renderMonthNoSlip(y, m);
@@ -611,20 +610,23 @@ function renderPayslip(key) {
         )
         .join('')}</select></label>
       ${psField('Stundenlohn', 'rate', p.rate, '€')}
-      ${HOUR_KINDS.map(([k, label]) => psField(k === 'krank' ? 'Krankheit (Entgeltfortzahlung)' : label, `hours.${k}`, p.hours[k], 'h', false, guess(`hours.${k}`))).join('')}
-      ${psField('Zulagen', 'zulage', p.zulage, '€', false, guess('zulage'))}
+      ${HOUR_KINDS.map(([k, label]) => psField(k === 'krank' ? 'Krankheit (Entgeltfortzahlung)' : label, `hours.${k}`, p.hours[k], 'h')).join('')}
+      ${psField('Zulagen', 'zulage', p.zulage, '€')}
       ${psField('Gesamt-Brutto', 'brutto', p.brutto, '€')}
-      ${psField('Steuern', 'steuer', p.steuer, '€', false, guess('steuer'))}
-      ${psField('Sozialabgaben', 'sv', p.sv, '€', false, guess('sv'))}
-      ${psField('Netto-Verdienst', 'netto', p.netto, '€', false, guess('netto'))}
-      ${psField('Abschlag (bereits erhalten)', 'abschlag', p.abschlag, '€', false, guess('abschlag'))}
-      ${psField('Betriebsrente', 'bav', p.bav, '€', false, guess('bav'))}
-      ${psField('Weitere Netto-Be-/Abzüge (+/−)', 'nettoSonst', p.nettoSonst || 0, '€', true, guess('nettoSonst'))}
-      ${psField('Auszahlung', 'auszahlung', p.auszahlung, '€', false, guess('auszahlung'))}
+      ${psField('Steuern', 'steuer', p.steuer, '€')}
+      ${psField('Sozialabgaben', 'sv', p.sv, '€')}
+      ${psField('Netto-Verdienst', 'netto', p.netto, '€')}
+      ${psField('Abschlag (bereits erhalten)', 'abschlag', p.abschlag, '€')}
+      ${psField('Betriebsrente', 'bav', p.bav, '€')}
+      ${psField('Weitere Netto-Be-/Abzüge (+/−)', 'nettoSonst', p.nettoSonst || 0, '€', true)}
+      ${psField('Auszahlung', 'auszahlung', p.auszahlung, '€')}
       ${psField('Zusatzbeitrag Krankenkasse', 'kvZusatz', p.kvZusatz, '%')}
+      ${psField('Gesamt-Brutto im Jahr', 'ytd', p.ytd, '€')}
     </div>
     <ul class="ps-checks" id="ps-checks">${psChecksHTML(p)}</ul>
     <button class="list-btn destructive card ps-delete" data-act="payslip-delete" data-key="${key}">Lohnabrechnung löschen</button>`;
+  // Nicht gelesen, sondern ergänzt: orange (nur Werte, die „Berechnet statt gelesen“ nennt)
+  app.querySelectorAll('input[data-ps]').forEach((i) => PS_FIELD_NAMES[i.dataset.ps] && psGuess(p, i.dataset.ps) && i.closest('.field').classList.add('ps-guess'));
   fitPsTables();
 }
 
@@ -836,11 +838,15 @@ function updatePayslipField(input) {
   document.getElementById('ps-checks').innerHTML = psChecksHTML(p);
 }
 
+/** Wert der Abrechnung nicht gelesen, sondern aus den übrigen ergänzt */
+const psGuess = (p, path) => (p.fixed || []).includes(path);
 /** Abrechnung des Vormonats (für die Prüfung der Jahressumme) */
 const prevPayslip = (p) => (p && p.year && p.month ? payslips[payKey(p.month === 1 ? p.year - 1 : p.year, p.month === 1 ? 12 : p.month - 1)] || null : null);
-/** Prüfungen der Abrechnung als Liste (✓ grün, ✕ rot) */
+/** Prüfungen der Abrechnung mit den beiden Vormonaten (Jahressumme) */
+const psChecks = (p) => payslipChecks(p, prevPayslip(p), prevPayslip(prevPayslip(p)));
+/** Prüfungen der Abrechnung als Liste (✓ grün, ✕ rot, – ohne Wertung) */
 function psChecksHTML(p) {
-  return payslipChecks(p, prevPayslip(p))
+  return psChecks(p)
     .map((c) => `<li class="${c.ok ? 'ok' : c.ok === null ? 'skip' : 'bad'}">${c.ok ? '✓' : c.ok === null ? '–' : '✕'} <span>${escapeHtml(c.text)}</span></li>`)
     .join('');
 }
@@ -856,6 +862,12 @@ async function importPayslip(input) {
     'alert ps-modal',
     false
   );
+  // Bis zur Antwort im Ergebnis bleibt das Fenster stehen; andere (z. B. „Sicherung einlesen?“) warten
+  holdModal(true);
+  const close = () => {
+    holdModal(false);
+    closeModal(true);
+  };
   const bar = modal.querySelector('.ps-bar i');
   const step = modal.querySelector('#ps-step');
   const live = modal.querySelector('#ps-live');
@@ -923,7 +935,7 @@ async function importPayslip(input) {
       if (p.brutto != null || p.netto != null) live.innerHTML = psChecksHTML(p);
     }
   } catch (err) {
-    closeModal(true);
+    close();
     if (err === CANCEL) return;
     // Netzfehler (auch als Text von Tesseract) sind kein Fehler der App
     const msg = typeof err === 'string' ? err : err?.message || String(err);
@@ -936,16 +948,15 @@ async function importPayslip(input) {
   }
   modal.querySelector('.ps-cancel')?.remove();
   if (!p.rate && !p.brutto && !p.netto) {
-    closeModal(true);
+    close();
     infoDialog('Einlesen nicht möglich', 'Auf dem Foto wurde keine Lohnabrechnung erkannt.');
     return;
   }
   // Fertig: Ergebnis im selben Fenster – Monat, die wichtigsten Beträge, Prüfungen und was unsicher ist. Stimmt nicht
   // alles, Empfehlung zum neuen Foto mit Knopf dafür; „Ansehen“ öffnet die Abrechnung
-  const ok = payslipAllOk(p, prevPayslip(p)) && p.month && p.year;
-  const unsure = (k) => (p.fixed || []).includes(k);
+  const ok = psChecks(p).every((c) => c.ok !== false) && p.month && p.year;
   const sumRow = (label, k) =>
-    `<span>${label}</span><b class="${unsure(k) || p[k] == null ? 'ps-unsure' : ''}">${p[k] == null ? '?' : fmtMoney(p[k], true)}</b>`;
+    `<span>${label}</span><b class="${psGuess(p, k) || p[k] == null ? 'ps-unsure' : ''}">${p[k] == null ? '?' : fmtMoney(p[k], true)}</b>`;
   bar.style.width = '100%';
   modal.querySelector('.ps-progress > b').textContent = p.month && p.year ? `${MONTHS[p.month - 1]} ${p.year}` : 'Monat nicht lesbar';
   step.textContent = ok ? 'Alle Prüfungen stimmen' : 'Nicht alles sicher gelesen';
@@ -960,16 +971,20 @@ async function importPayslip(input) {
   modal.insertAdjacentHTML(
     'beforeend',
     ok
-      ? '<div class="alert-buttons single"><button data-c="yes" class="strong">Ansehen</button></div>'
-      : '<div class="alert-buttons"><label class="ps-again">Neu einlesen<input type="file" accept="image/*" hidden></label><button data-c="yes">Trotzdem ansehen</button></div>'
+      ? '<div class="alert-buttons stacked"><button data-c="yes" class="strong">Ansehen</button><button data-c="no">Nicht übernehmen</button></div>'
+      : '<div class="alert-buttons stacked"><label class="ps-again">Neu einlesen<input type="file" accept="image/*" hidden></label><button data-c="yes">Trotzdem ansehen</button><button data-c="no">Nicht übernehmen</button></div>'
   );
   const again = modal.querySelector('.ps-again input');
   const choice = await new Promise((resolve) => {
     modal.querySelector('[data-c="yes"]').addEventListener('click', () => resolve('show'), { once: true });
+    modal.querySelector('[data-c="no"]').addEventListener('click', () => resolve('drop'), { once: true });
     again?.addEventListener('change', () => again.files?.length && resolve('again'), { once: true });
   });
+  // Neu einlesen: das neue Fenster ersetzt dieses (wartende Fenster warten weiter)
+  holdModal(false);
   if (choice === 'again') return importPayslip(again);
   closeModal(true);
+  if (choice === 'drop') return;
   p.importedAt = Date.now();
   const store = (year, month) => {
     // Von Hand gewählter Monat: mit dem Tarif dieses Jahres noch einmal gegenprüfen
@@ -1537,7 +1552,7 @@ function askPassword(title, message, confirm = false) {
       else if (p1 !== p2) msg.textContent = 'Die beiden Passwörter sind verschieden.';
       else if (p1) done(p1);
     });
-    layer.querySelector('.backdrop').addEventListener('click', () => resolve(null));
+    modal.previousElementSibling.addEventListener('click', () => resolve(null));
   });
 }
 
@@ -4765,7 +4780,7 @@ function askImportDate(fileName, stated, options) {
       const b = e.target.closest('[data-c]');
       if (b) finish(b.dataset.c === 'asis' ? asIs : b.dataset.c === 'skip' ? null : options[+b.dataset.c]);
     });
-    layer.querySelector('.backdrop').addEventListener('click', () => finish(null));
+    modal.previousElementSibling.addEventListener('click', () => finish(null));
   });
 }
 
@@ -4822,7 +4837,7 @@ function askConflict(c, remaining) {
       if (b) finish(modal.querySelector('.cf-switch')?.checked ? `${b.dataset.c}All` : b.dataset.c);
     });
     // Antippen neben das Fenster: Fassung in der App behalten
-    layer.querySelector('.backdrop').addEventListener('click', () => finish('keep'));
+    modal.previousElementSibling.addEventListener('click', () => finish('keep'));
   });
 }
 
@@ -4909,7 +4924,7 @@ function infoDialog(title, message, onClose = null) {
   modal.addEventListener('click', (e) => {
     if (e.target.closest('[data-c]')) close();
   });
-  if (onClose) layer.querySelector('.backdrop').addEventListener('click', close);
+  if (onClose) modal.previousElementSibling.addEventListener('click', close);
 }
 
 // ───────────────────────── Modale Fenster ─────────────────────────
@@ -4919,13 +4934,39 @@ let modalGen = 0;
 
 /** outsideCloses = false: Antippen neben das Fenster schließt es nicht (Rückfragen, die eine Antwort brauchen) */
 function openModal(html, className = '', outsideCloses = true) {
+  // Hintergrund und Fenster zusammen (modal.previousElementSibling ist der Hintergrund – auch solange es wartet)
+  const box = document.createElement('div');
+  box.innerHTML = `<div class="backdrop"></div><div class="modal ${className}" role="dialog" aria-modal="true">${html}</div>`;
+  const modal = box.lastElementChild;
+  if (outsideCloses) modal.previousElementSibling.addEventListener('click', () => closeModal());
+  // Ein festgehaltenes Fenster (Einlesen der Lohnabrechnung) wird nicht ersetzt: andere warten, bis es zu ist
+  if (modalHeld) {
+    // im Dokument (unsichtbar), damit getElementById im Fenster schon jetzt geht
+    box.hidden = true;
+    document.body.append(box);
+    modalQueue.push(box);
+  } else showModal(box);
+  return modal;
+}
+function showModal(box) {
   const gen = ++modalGen;
-  layer.innerHTML = `<div class="backdrop"></div><div class="modal ${className}" role="dialog" aria-modal="true">${html}</div>`;
+  layer.replaceChildren(...box.childNodes);
+  box.remove();
   layer.classList.add('open');
   document.activeElement && document.activeElement.blur && document.activeElement.blur();
   requestAnimationFrame(() => requestAnimationFrame(() => gen === modalGen && layer.classList.add('show')));
-  if (outsideCloses) layer.querySelector('.backdrop').addEventListener('click', () => closeModal());
-  return layer.querySelector('.modal');
+}
+/** Fenster festhalten: andere Fenster warten, closeModal schließt es nicht (nur holdModal(false) und danach closeModal) */
+let modalHeld = false;
+const modalQueue = [];
+function holdModal(on) {
+  modalHeld = on;
+}
+/** Wartende Fenster erst zeigen, wenn eine Weile keins offen ist (Folge-Rückfragen des festgehaltenen gehen vor) */
+function showQueuedModal() {
+  setTimeout(() => {
+    if (!modalHeld && modalQueue.length && !layer.classList.contains('open')) showModal(modalQueue.shift());
+  }, 400);
 }
 
 /** Bei offenem Fenster scrollt nichts im Hintergrund: Ziehen zählt nur in Bereichen des Fensters, die selbst scrollen
@@ -4946,12 +4987,14 @@ layer.addEventListener(
 );
 
 function closeModal(immediate = false) {
+  if (modalHeld) return;
   const gen = ++modalGen;
   layer.classList.remove('show');
   const clear = () => {
     if (gen !== modalGen) return;
     layer.classList.remove('open');
     layer.innerHTML = '';
+    if (modalQueue.length) showQueuedModal();
   };
   if (immediate) clear();
   else setTimeout(clear, 260);
@@ -4984,7 +5027,7 @@ function wheelPicker(title, columns, initial, onDone, extraHTML = '', onExtra = 
     ${extraHTML}`,
     'sheet'
   );
-  if (onCancel) layer.querySelector('.backdrop').addEventListener('click', onCancel);
+  if (onCancel) modal.previousElementSibling.addEventListener('click', onCancel);
   const lists = [...modal.querySelectorAll('.wheel-list')];
   const indexOf = (list) => Math.max(0, Math.min(list.children.length - 1, Math.round(list.scrollTop / ITEM)));
   const mark = (list) => {
@@ -5251,7 +5294,7 @@ function confirmDialog(title, message, okLabel, onOk, destructive = false, cance
     else if (onCancel) onCancel();
   });
   // Antippen neben das Fenster zählt wie Abbrechen
-  if (onCancel) layer.querySelector('.backdrop').addEventListener('click', onCancel);
+  if (onCancel) modal.previousElementSibling.addEventListener('click', onCancel);
 }
 
 let toastTimer = 0;

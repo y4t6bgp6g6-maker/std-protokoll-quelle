@@ -142,9 +142,9 @@ function nettoMonat(brutto, opts) {
   const r2 = (v) => Math.round(v * 100) / 100;
 
   // Entgeltumwandlung (Betriebsrente) mindert das steuer- und beitragspflichtige Brutto bis zu den Grenzen
-  // (steuer- bzw. beitragsfreie Bezüge zählen zum Brutto, aber nicht mit)
-  const steuerBrutto = brutto - Math.min(bav, c.bavSteuerfrei) - Math.max(0, Number(opts.stFrei) || 0);
-  const svBrutto = brutto - Math.min(bav, c.bavSvFrei) - Math.max(0, Number(opts.svFrei) || 0);
+  // (steuer- bzw. beitragsfreie Bezüge zählen zum Brutto, aber nicht mit); nie unter 0
+  const steuerBrutto = Math.max(0, brutto - Math.min(bav, c.bavSteuerfrei) - Math.max(0, Number(opts.stFrei) || 0));
+  const svBrutto = Math.max(0, brutto - Math.min(bav, c.bavSvFrei) - Math.max(0, Number(opts.svFrei) || 0));
 
   // Sozialversicherung, Arbeitnehmeranteil
   const pvSatz = c.pv + (kinder === 0 ? c.pvKinderlos : -c.pvAbschlag * Math.max(0, Math.min(kinder, 5) - 1));
