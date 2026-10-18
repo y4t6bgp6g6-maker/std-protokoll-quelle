@@ -1163,6 +1163,18 @@ html.no-warn .suggest-wrap.missing .txt { padding-right: 0; }
 .ps-checks { list-style: none; margin: 10px 4px 0; padding: 0; font-size: 14px; line-height: 1.6; }
 .ps-checks .ok { color: var(--success); }
 .ps-checks .bad { color: var(--danger); }
+/* Einlesen: Prüfungen im Fenster, nach jedem Durchgang neu */
+.ps-live { text-align: left; margin: 12px 0 0; }
+.ps-live:empty { display: none; }
+.ps-done.ok { color: var(--success); }
+.ps-done.bad { color: var(--danger); }
+.ps-sum { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin: 14px 0 4px; text-align: left; font-size: 15px; }
+.ps-sum b { font-variant-numeric: tabular-nums; }
+.ps-sum b.ps-unsure { color: var(--warning); }
+.ps-tip { margin: 12px 0 0; text-align: left; font-size: 14px; color: var(--muted); }
+.alert-buttons .ps-again { padding: 12px; color: var(--accent); font-weight: 600; text-align: center; cursor: pointer; }
+/* Werte, die nicht gelesen, sondern aus den übrigen ergänzt wurden */
+.field.ps-guess input { color: var(--warning); }
 .ps-delete { margin-top: 18px; width: 100%; }
 .ps-progress { padding: 22px 20px; text-align: center; }
 .ps-bar { height: 8px; margin: 16px 0 10px; border-radius: 4px; background: var(--fill); overflow: hidden; }

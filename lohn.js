@@ -129,7 +129,8 @@ function tarif56(zzx, c = LOHN_2026) {
 /**
  * Netto für einen Monat.
  * brutto: steuer- und beitragspflichtiger Bruttolohn (Grundlohn, Überstunden, Zulagen)
- * opts: { klasse 1–6, kirche, kinder, zusatz (KV-Zusatzbeitrag %), bav (Entgeltumwandlung € je Monat), year, month }
+ * opts: { klasse 1–6, kirche, kinder, zusatz (KV-Zusatzbeitrag %), bav (Entgeltumwandlung € je Monat), year, month,
+ *         stFrei / svFrei: steuer- bzw. beitragsfreie Teile des Bruttos (z. B. Inflationsausgleichsprämie) }
  * Ergebnis: { brutto, lohnsteuer, soli, kirchensteuer, kv, rv, av, pv, bav, netto }
  */
 function nettoMonat(brutto, opts) {
@@ -141,8 +142,9 @@ function nettoMonat(brutto, opts) {
   const r2 = (v) => Math.round(v * 100) / 100;
 
   // Entgeltumwandlung (Betriebsrente) mindert das steuer- und beitragspflichtige Brutto bis zu den Grenzen
-  const steuerBrutto = brutto - Math.min(bav, c.bavSteuerfrei);
-  const svBrutto = brutto - Math.min(bav, c.bavSvFrei);
+  // (steuer- bzw. beitragsfreie Bezüge zählen zum Brutto, aber nicht mit)
+  const steuerBrutto = brutto - Math.min(bav, c.bavSteuerfrei) - Math.max(0, Number(opts.stFrei) || 0);
+  const svBrutto = brutto - Math.min(bav, c.bavSvFrei) - Math.max(0, Number(opts.svFrei) || 0);
 
   // Sozialversicherung, Arbeitnehmeranteil
   const pvSatz = c.pv + (kinder === 0 ? c.pvKinderlos : -c.pvAbschlag * Math.max(0, Math.min(kinder, 5) - 1));

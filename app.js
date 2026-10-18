@@ -463,10 +463,12 @@ function monthHoursSplit(year, month) {
 function payWithSlipHours(p) {
   const rate = p.rate || monthValue(p.year, p.month, 'rate', parseNum(settings.wage));
   const h = p.hours;
-  const brutto =
-    cents(h.arbeit * rate) + cents(h.urlaub * rate) + cents(h.feiertag * rate) + cents(h.krank * rate) +
-    cents((h.sonst || 0) * rate) + cents(h.ueber * rate * otFactor()) + (p.zulage || 0);
-  return nettoMonat(cents(brutto), lohnOpts(p.bav || 0, p.year, p.month, p.kvZusatz, p.tarif));
+  // Je gelesener Zeile mit ihrem Prozentsatz (Überstunden 25 % und 50 %); ältere Abrechnungen je Art
+  const brutto = p.lines?.length
+    ? p.lines.reduce((t, x) => t + cents(x.hours * rate * x.f), 0) + (p.zulage || 0)
+    : cents(h.arbeit * rate) + cents(h.urlaub * rate) + cents(h.feiertag * rate) + cents(h.krank * rate) +
+      cents((h.sonst || 0) * rate) + cents(h.ueber * rate * otFactor()) + (p.zulage || 0);
+  return nettoMonat(cents(brutto), { ...lohnOpts(p.bav || 0, p.year, p.month, p.kvZusatz, p.tarif), stFrei: p.stFrei, svFrei: p.svFrei });
 }
 
 /** Vergleich einer Abrechnung mit den Zetteln und der Lohnrechnung der App */
@@ -562,14 +564,15 @@ function payslipCompareHTML(p) {
 }
 
 /** Eingabefeld für einen Wert der Abrechnung (Zahl mit Komma) */
-function psField(label, path, value, unit, signed = false) {
+function psField(label, path, value, unit, signed = false, guess = false) {
   const v = value == null ? '' : String(Math.round(value * 100) / 100).replace('.', ',');
-  // Mit Vorzeichen: Zahlentastatur ohne Minus reicht nicht
-  return `<label class="field"><span>${label}</span><input data-ps="${path}" inputmode="${signed ? 'text' : 'decimal'}" value="${v}" placeholder="–" enterkeyhint="done"><span class="unit">${unit}</span></label>`;
+  // Mit Vorzeichen: Zahlentastatur ohne Minus reicht nicht. guess: nicht gelesen, sondern ergänzt (orange)
+  return `<label class="field${guess ? ' ps-guess' : ''}"><span>${label}</span><input data-ps="${path}" inputmode="${signed ? 'text' : 'decimal'}" value="${v}" placeholder="–" enterkeyhint="done"><span class="unit">${unit}</span></label>`;
 }
 
 function renderPayslip(key) {
   const p = payslips[key];
+  const guess = (k) => (p?.fixed || []).includes(k);
   if (!p) {
     const [y, m] = key.split('-').map(Number);
     if (y > 2000 && m >= 1 && m <= 12) renderMonthNoSlip(y, m);
@@ -600,16 +603,16 @@ function renderPayslip(key) {
         )
         .join('')}</select></label>
       ${psField('Stundenlohn', 'rate', p.rate, '€')}
-      ${HOUR_KINDS.map(([k, label]) => psField(k === 'krank' ? 'Krankheit (Entgeltfortzahlung)' : label, `hours.${k}`, p.hours[k], 'h')).join('')}
-      ${psField('Zulagen', 'zulage', p.zulage, '€')}
-      ${psField('Gesamt-Brutto', 'brutto', p.brutto, '€')}
-      ${psField('Steuern', 'steuer', p.steuer, '€')}
-      ${psField('Sozialabgaben', 'sv', p.sv, '€')}
-      ${psField('Netto-Verdienst', 'netto', p.netto, '€')}
+      ${HOUR_KINDS.map(([k, label]) => psField(k === 'krank' ? 'Krankheit (Entgeltfortzahlung)' : label, `hours.${k}`, p.hours[k], 'h', false, guess(`hours.${k}`))).join('')}
+      ${psField('Zulagen', 'zulage', p.zulage, '€', false, guess('zulage'))}
+      ${psField('Gesamt-Brutto', 'brutto', p.brutto, '€', false, guess('brutto'))}
+      ${psField('Steuern', 'steuer', p.steuer, '€', false, guess('steuer'))}
+      ${psField('Sozialabgaben', 'sv', p.sv, '€', false, guess('sv'))}
+      ${psField('Netto-Verdienst', 'netto', p.netto, '€', false, guess('netto'))}
       ${psField('Abschlag (bereits erhalten)', 'abschlag', p.abschlag, '€')}
       ${psField('Betriebsrente', 'bav', p.bav, '€')}
-      ${psField('Weitere Netto-Be-/Abzüge (+/−)', 'nettoSonst', p.nettoSonst || 0, '€', true)}
-      ${psField('Auszahlung', 'auszahlung', p.auszahlung, '€')}
+      ${psField('Weitere Netto-Be-/Abzüge (+/−)', 'nettoSonst', p.nettoSonst || 0, '€', true, guess('nettoSonst'))}
+      ${psField('Auszahlung', 'auszahlung', p.auszahlung, '€', false, guess('auszahlung'))}
       ${psField('Zusatzbeitrag Krankenkasse', 'kvZusatz', p.kvZusatz, '%')}
     </div>
     <ul class="ps-checks" id="ps-checks">${psChecksHTML(p)}</ul>
@@ -809,22 +812,20 @@ function updatePayslipField(input) {
   else p[path] = v;
   // Von Hand eingetragen: gilt nicht mehr als ergänzt
   if (p.fixed) p.fixed = p.fixed.filter((k) => k !== path);
+  input.closest('.field')?.classList.remove('ps-guess');
   savePayslips();
   document.getElementById('ps-compare').innerHTML = payslipCompareHTML(p);
   fitPsTables();
   document.getElementById('ps-checks').innerHTML = psChecksHTML(p);
 }
 
-/** Prüfungen der Abrechnung (jedes Wort für die Übersetzung ein eigener Textknoten) */
+/** Abrechnung des Vormonats (für die Prüfung der Jahressumme) */
+const prevPayslip = (p) => (p && p.year && p.month ? payslips[payKey(p.month === 1 ? p.year - 1 : p.year, p.month === 1 ? 12 : p.month - 1)] || null : null);
+/** Prüfungen der Abrechnung als Liste (✓ grün, ✕ rot) */
 function psChecksHTML(p) {
-  const chk = payslipChecks(p);
-  const mark = (ok, html) => `<li class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✕'} ${html}</li>`;
-  const t = (x) => `<span>${x}</span>`;
-  return (
-    mark(chk.brutto, t('Lohnarten ergeben das Gesamt-Brutto')) +
-    mark(chk.netto, `${t('Brutto')} − ${t('Steuern')} − ${t('Sozialabgaben')} = ${t('Netto-Verdienst')}`) +
-    mark(chk.auszahlung, `${t('Netto − Abschlag − Betriebsrente')}${p.nettoSonst ? ` ${t('± weitere Be-/Abzüge')}` : ''} = ${t('Auszahlung')}`)
-  );
+  return payslipChecks(p, prevPayslip(p))
+    .map((c) => `<li class="${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '✕'} <span>${escapeHtml(c.text)}</span></li>`)
+    .join('');
 }
 
 /** Foto einer Lohnabrechnung einlesen (Kamera oder Mediathek) */
@@ -832,12 +833,15 @@ async function importPayslip(input) {
   const file = input.files && input.files[0];
   input.value = '';
   if (!file) return;
+  // Fenster lässt sich nicht wegtippen: das Einlesen liefe sonst unsichtbar weiter
   const modal = openModal(
-    `<div class="ps-progress"><b>Lohnabrechnung wird gelesen …</b><div class="ps-bar"><i style="width:3%"></i></div><p class="muted" id="ps-step">Texterkennung wird geladen</p></div>`,
-    'alert ps-modal'
+    `<div class="ps-progress"><b>Lohnabrechnung wird gelesen …</b><div class="ps-bar"><i style="width:3%"></i></div><p class="muted" id="ps-step">Texterkennung wird geladen</p><ul class="ps-checks ps-live" id="ps-live"></ul></div>`,
+    'alert ps-modal',
+    false
   );
   const bar = modal.querySelector('.ps-bar i');
   const step = modal.querySelector('#ps-step');
+  const live = modal.querySelector('#ps-live');
   // Bekannte Werte als Gegenprobe: Stundenlöhne, Betriebsrente, Abschlag der letzten Abrechnung
   const known = Object.values(payslips).filter((x) => x && x.year);
   const latest = known.sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month))[0];
@@ -852,77 +856,115 @@ async function importPayslip(input) {
     const first = Object.assign(parsePayslipText(text, opts), when);
     // Ohne bekannten Tarif des Jahres keine Gegenprobe über nachgerechnete Steuern (würde falsche Werte bevorzugen)
     if (!first.year || !lohnJahrBekannt(first.year)) return first;
-    // Steuern und Sozialabgaben zum Vergleich nachrechnen (Tarif des Jahres, Zusatzbeitrag von der Abrechnung)
-    const calc = (brutto, zusatz) => {
-      const n = nettoMonat(brutto, lohnOpts(first.bav, first.year, first.month, zusatz ?? undefined));
+    // Steuern und Sozialabgaben zum Vergleich nachrechnen (Tarif des Jahres, Zusatzbeitrag von der Abrechnung,
+    // steuer- und beitragsfreie Bezüge wie gelesen)
+    const calc = (brutto, zusatz, r) => {
+      const n = nettoMonat(brutto, { ...lohnOpts(first.bav, first.year, first.month, zusatz ?? undefined), stFrei: r.stFrei, svFrei: r.svFrei });
       // „Steuern“ der Abrechnung sind alle steuerrechtlichen Abzüge
       return { lohnsteuer: cents(n.lohnsteuer + n.soli + n.kirchensteuer), sv: cents(n.kv + n.rv + n.av + n.pv) };
     };
     return Object.assign(parsePayslipText(text, { ...opts, calc }), when);
   };
+  let reader = null;
+  let text = '';
+  let p = null;
   try {
-    // Erster Durchgang; bleibt etwas unsicher, liest ein zweiter mit anderer Bildaufbereitung nach
-    // (beide Texte zusammen bestätigen mehr Zahlen)
-    let text = await recognizePayslip(file, 1, (v) => {
-      bar.style.width = `${Math.round(5 + v * 60)}%`;
-      step.textContent = `Text wird erkannt: ${Math.round(v * 100)} %`;
-    });
-    let p = parse(text);
-    const unsure = (x) => !x.year || !x.month || !x.rate || x.brutto == null || x.fixed.some((k) => ['brutto', 'steuer', 'sv', 'netto'].includes(k) || k.startsWith('hours.'));
-    if (unsure(p)) {
-      text += `\n${await recognizePayslip(file, 2, (v) => {
-        bar.style.width = `${Math.round(65 + v * 35)}%`;
-        step.textContent = `Zweiter Durchgang: ${Math.round(v * 100)} %`;
-      })}`;
+    // Drei Durchgänge mit verschiedener Bildaufbereitung; nach jedem stehen die Prüfungen im Fenster
+    reader = await payslipReader();
+    const texts = [];
+    for (let pass = 1; pass <= PAYSLIP_PASSES; pass++) {
+      texts.push(
+        await reader.read(file, pass, (v) => {
+          bar.style.width = `${Math.round(5 + ((pass - 1 + v) / PAYSLIP_PASSES) * 95)}%`;
+          step.textContent = `Durchgang ${pass} von ${PAYSLIP_PASSES}: ${Math.round(v * 100)} %`;
+        })
+      );
+      text = texts.join(PS_SEP);
       p = parse(text);
+      if (p.brutto != null || p.netto != null) live.innerHTML = psChecksHTML(p);
     }
-    if (!p.rate && !p.brutto && !p.netto) throw new Error('Auf dem Foto wurde keine Lohnabrechnung erkannt.');
-    closeModal(true);
-    p.importedAt = Date.now();
-    const store = (year, month) => {
-      // Von Hand gewählter Monat: mit dem Tarif dieses Jahres noch einmal gegenprüfen
-      if (p.year !== year || p.month !== month) p = Object.assign(parse(text, { year, month }), { importedAt: p.importedAt });
-      const key = payKey(year, month);
-      const save = () => {
-        payslips[key] = p;
-        savePayslips();
-        const done = () => {
-          const w = tarifWarning(year);
-          if (w) return infoDialog(`⚠️ ${w.title}`, w.text);
-          const chk = payslipChecks(p);
-          toast(chk.brutto && chk.netto && chk.auszahlung && !p.fixed.length ? 'Eingelesen – alle Prüfungen stimmen' : 'Eingelesen – bitte Werte prüfen', 3000);
-        };
-        const target = `#/lohn/${key}`;
-        // Seite schon offen (Monat ohne Abrechnung): selbst neu zeigen – derselbe Hash löst kein hashchange aus.
-        // Sonst erst nach dem Seitenwechsel melden (route() schließt offene Fenster)
-        if (location.hash === target) {
-          route();
-          done();
-        } else {
-          window.addEventListener('hashchange', done, { once: true });
-          location.hash = target;
-        }
-      };
-      // Schon vorhanden: ersetzen – oder den Monat selbst wählen (falls er falsch erkannt wurde)
-      if (payslips[key])
-        confirmDialog(
-          `${MONTHS[month - 1]} ${year} ersetzen?`,
-          'Für diesen Monat gibt es schon eine Lohnabrechnung. Ist es ein anderer Monat, wähle ihn selbst.',
-          'Ersetzen',
-          save,
-          false,
-          'Anderer Monat',
-          () => askPayslipMonth(month, store, year, true)
-        );
-      else save();
-    };
-    if (p.year && p.month) store(p.year, p.month);
-    else askPayslipMonth(p.month, store);
   } catch (err) {
-    if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) window.fehlerMelden?.(err, 'lohnabrechnung');
+    // Fehlendes Internet ist kein Fehler der App
+    if (!/Internet/.test(err?.message || '')) window.fehlerMelden?.(err, 'lohnabrechnung');
     closeModal(true);
     confirmDialog('Einlesen nicht möglich', escapeHtml(err.message || String(err)), 'OK', () => {});
+    return;
+  } finally {
+    reader?.close();
   }
+  if (!p.rate && !p.brutto && !p.netto) {
+    closeModal(true);
+    confirmDialog('Einlesen nicht möglich', 'Auf dem Foto wurde keine Lohnabrechnung erkannt.', 'OK', () => {});
+    return;
+  }
+  // Fertig: Ergebnis im selben Fenster – Monat, die wichtigsten Beträge, Prüfungen und was unsicher ist. Stimmt nicht
+  // alles, Empfehlung zum neuen Foto mit Knopf dafür; „Ansehen“ öffnet die Abrechnung
+  const ok = payslipAllOk(p, prevPayslip(p)) && p.month && p.year;
+  const unsure = (k) => (p.fixed || []).includes(k);
+  const sumRow = (label, k) =>
+    `<span>${label}</span><b class="${unsure(k) || p[k] == null ? 'ps-unsure' : ''}">${p[k] == null ? '?' : fmtMoney(p[k], true)}</b>`;
+  bar.style.width = '100%';
+  modal.querySelector('.ps-progress > b').textContent = p.month && p.year ? `${MONTHS[p.month - 1]} ${p.year}` : 'Monat nicht lesbar';
+  step.textContent = ok ? 'Alle Prüfungen stimmen' : 'Nicht alles sicher gelesen';
+  step.className = ok ? 'ps-done ok' : 'ps-done bad';
+  live.innerHTML = psChecksHTML(p);
+  live.insertAdjacentHTML('beforebegin', `<div class="ps-sum">${sumRow('Brutto', 'brutto')}${sumRow('Netto', 'netto')}${sumRow('Auszahlung', 'auszahlung')}</div>`);
+  if (!ok)
+    live.insertAdjacentHTML(
+      'afterend',
+      `<p class="ps-tip">Am besten neu fotografieren: ganze Seite gerade von oben, gutes Licht, ohne Schatten.</p>`
+    );
+  modal.insertAdjacentHTML(
+    'beforeend',
+    ok
+      ? '<div class="alert-buttons single"><button data-c="yes" class="strong">Ansehen</button></div>'
+      : '<div class="alert-buttons"><label class="ps-again">Neu einlesen<input type="file" accept="image/*" hidden></label><button data-c="yes">Trotzdem ansehen</button></div>'
+  );
+  const again = modal.querySelector('.ps-again input');
+  const choice = await new Promise((resolve) => {
+    modal.querySelector('[data-c="yes"]').addEventListener('click', () => resolve('show'), { once: true });
+    again?.addEventListener('change', () => again.files?.length && resolve('again'), { once: true });
+  });
+  if (choice === 'again') return importPayslip(again);
+  closeModal(true);
+  p.importedAt = Date.now();
+  const store = (year, month) => {
+    // Von Hand gewählter Monat: mit dem Tarif dieses Jahres noch einmal gegenprüfen
+    if (p.year !== year || p.month !== month) p = Object.assign(parse(text, { year, month }), { importedAt: p.importedAt });
+    const key = payKey(year, month);
+    const save = () => {
+      payslips[key] = p;
+      savePayslips();
+      const done = () => {
+        const w = tarifWarning(year);
+        if (w) infoDialog(`⚠️ ${w.title}`, w.text);
+      };
+      const target = `#/lohn/${key}`;
+      // Seite schon offen (Monat ohne Abrechnung): selbst neu zeigen – derselbe Hash löst kein hashchange aus.
+      // Sonst erst nach dem Seitenwechsel melden (route() schließt offene Fenster)
+      if (location.hash === target) {
+        route();
+        done();
+      } else {
+        window.addEventListener('hashchange', done, { once: true });
+        location.hash = target;
+      }
+    };
+    // Schon vorhanden: ersetzen – oder den Monat selbst wählen (falls er falsch erkannt wurde)
+    if (payslips[key])
+      confirmDialog(
+        `${MONTHS[month - 1]} ${year} ersetzen?`,
+        'Für diesen Monat gibt es schon eine Lohnabrechnung. Ist es ein anderer Monat, wähle ihn selbst.',
+        'Ersetzen',
+        save,
+        false,
+        'Anderer Monat',
+        () => askPayslipMonth(month, store, year, true)
+      );
+    else save();
+  };
+  if (p.year && p.month) store(p.year, p.month);
+  else askPayslipMonth(p.month, store);
 }
 
 /**
