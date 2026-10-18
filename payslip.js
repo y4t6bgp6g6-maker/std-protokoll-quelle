@@ -34,8 +34,7 @@ function loadTesseract() {
  * An 23 echten Abrechnungen getestet, dazu jede zweimal künstlich verschlechtert (schief, unscharf, Schatten, klein).
  */
 const PAYSLIP_PASSES = 3;
-async function payslipCanvas(file, pass = 1) {
-  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+async function payslipCanvas(bmp, pass = 1) {
   const x0 = pass === 3 ? Math.round(bmp.width * 0.64) : 0;
   const sw = bmp.width - x0;
   const sh = bmp.height;
@@ -46,7 +45,6 @@ async function payslipCanvas(file, pass = 1) {
   const ctx = c.getContext('2d', { willReadFrequently: pass !== 2 });
   ctx.filter = 'grayscale(1) contrast(1.15)';
   ctx.drawImage(bmp, x0, 0, sw, sh, 0, 0, c.width, c.height);
-  bmp.close && bmp.close();
   if (pass !== 2) {
     const { width: w, height: h } = c;
     const img = ctx.getImageData(0, 0, w, h);
@@ -89,20 +87,42 @@ async function payslipReader() {
     logger: (m) => m.status === 'recognizing text' && progress(m.progress),
   });
   // Seite als ein Textblock lesen: so bleiben die Zeilen der Lohnarten zusammen
-  await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' });
+  try {
+    await worker.setParameters({ tessedit_pageseg_mode: '6', preserve_interword_spaces: '1' });
+  } catch (e) {
+    worker.terminate();
+    throw e;
+  }
+  // Das Foto wird nur einmal dekodiert (bei 12–48 MP sind das 50–200 MB) und für alle Durchgänge genutzt
+  let photo = null;
   return {
     async read(file, pass, onProgress = () => {}) {
       progress = onProgress;
-      const { data } = await worker.recognize(await payslipCanvas(file, pass));
-      return data.text;
+      if (!photo || photo.file !== file) {
+        photo?.bmp.close?.();
+        photo = { file, bmp: await createImageBitmap(file, { imageOrientation: 'from-image' }) };
+      }
+      const c = await payslipCanvas(photo.bmp, pass);
+      try {
+        // nur der Text (ohne Blöcke, hOCR, TSV)
+        const { data } = await worker.recognize(c, {}, { text: true, blocks: false, hocr: false, tsv: false });
+        return data.text;
+      } finally {
+        // Zeichenfläche sofort freigeben (Safari begrenzt den Speicher aller Zeichenflächen)
+        c.width = c.height = 0;
+      }
     },
-    close: () => worker.terminate(),
+    close() {
+      photo?.bmp.close?.();
+      photo = null;
+      worker.terminate();
+    },
   };
 }
 
 /** „1.234,50“ / „500 ,00“ → 1234.5 */
 const payslipNum = (s) => parseFloat(String(s).replace(/\s+/g, '').replace(/\./g, '').replace(',', '.'));
-const psR2 = (v) => Math.round(v * 100 + (v >= 0 ? 1e-6 : -1e-6)) / 100;
+const psR2 = (v) => Math.round(v * 100 + (v >= 0 ? 1e-6 : -1e-6)) / 100 + 0; // + 0: nie „-0“
 const psNear = (a, b, tol = 0.011) => a != null && b != null && Math.abs(a - b) < tol;
 /** Euro-Beträge einer Zeile („2.345,60“, ohne Tausenderpunkt „2345,60“, auch „500 ,00-“); nie nur das Ende einer
  *  längeren Zahl („3,360,00“ ist kein Betrag 360,00) */
@@ -188,12 +208,18 @@ function payslipMonth(lines) {
 /** Lohnart einer Zeile: Schlüssel nach Nummer oder Bezeichnung (auch mit Lesefehlern) */
 const PS_CODES = { 101: 'arbeit', 118: 'ueber', 140: 'urlaub', 145: 'krank', 146: 'feiertag', 204: 'zulage' };
 function payslipLineKind(line) {
-  const code = line.match(/^\W{0,4}(\d{3})\b/);
+  // Nummer wie im Parser (auch hinter Störzeichen vom Rand des Fotos)
+  const code = line.match(PS_CODE);
   const label = line.toLowerCase();
   if (/b\s?av|betr\.?\s?av|altersv|umwandl|solidar/.test(label)) return null;
   // Einmalzahlungen (Urlaubs-, Weihnachtsgeld, Zuschuss zum Krankengeld): Betrag ohne Stunden
   if (/urlaubsg|weihn|einmal|krankengeld|zuschuss/.test(label)) return 'zulage';
-  if (/[üu]bers?t|berstd/.test(label)) return 'ueber';
+  // Zuschläge (Feiertags-, Nacht-, Überstundenzuschlag) sind Beträge ohne eigene Stunden – außer der kombinierten
+  // Lohnart „Überstdgrundv.+25% Zu.“ (Grundvergütung mit Zuschlag)
+  // Überstunden mit Prozentsatz ab 100 („Überstd.zuschl. 50% Std 4,00 … 150,00“) sind Überstunden samt Grundlohn
+  if (/zuschl/.test(label) && /[üu]berst/.test(label) && /(?<![\d.,])(?:1\d\d|200)\s?,\s?00(?!\d)/.test(line)) return 'ueber';
+  if (/zuschl/.test(label) && !/grundv/.test(label)) return 'zulage';
+  if (/[üu]berst|berstd/.test(label)) return 'ueber';
   if (/urlaub/.test(label)) return 'urlaub';
   // Entgeltfortzahlung = Lohnfortzahlung im Krankheitsfall
   if (/entgel|fortz|krank|efz/.test(label)) return 'krank';
@@ -203,14 +229,21 @@ function payslipLineKind(line) {
   return code ? PS_CODES[code[1]] || null : null;
 }
 
+/** Netto-Abzüge „bereits erhalten/ausbezahlt“ (Abschlag) und „betr. Altersvorsorge“ – nur als ganze Wörter */
+const PS_ABSCHLAG = /(?:^|[^a-zäöü])(?:bereits|erhalten|ausbezahlt|ausgezahlt)(?![a-zäöü])/i;
+const PS_BAV = /(?:^|[^a-zäöü])(?:alters\s?vorsorge|altersv|betr\.?\s?av)/i;
 /** Texte mehrerer Durchgänge werden mit einem Seitenvorschub getrennt aneinandergehängt */
 const PS_SEP = '\n\f\n';
 /** Lohnart-Nummer am Zeilenanfang („101 Stundenlohn“), auch hinter Störzeichen vom Rand des Fotos („Ir   101 …“) */
 const PS_CODE = /^(?:[^\s\d]{1,4}\s+){0,2}\W{0,4}(?:\d\s)?(\d{3})\s+(?=[^\d\s])/;
 /** Euro-Beträge mit Vorzeichen („100,00-“ ist ein Abzug) und Stelle in der Zeile */
 function moneyTokens(line) {
+  // O/o und l/I zwischen Ziffern sind Lesefehler für 0 und 1 („5O0,00“, „1.2l5,00“); gleiche Länge, Stellen bleiben
+  const norm = String(line || '').replace(/(?<![A-Za-zÄÖÜäöü])[\dOoIl](?:[\dOoIl]|[.,](?=[\dOoIl]))*(?![A-Za-zÄÖÜäöü])/g, (m) =>
+    /\d/.test(m) && /[.,]/.test(m) ? m.replace(/[Oo]/g, '0').replace(/[Il]/g, '1') : m
+  );
   // auch mit Leerzeichen als Tausendertrennung („3 360,00“)
-  return [...String(line || '').matchAll(/(?<![\d.,])((?:\d{1,3}(?:\.\d{3})+|\d{1,2} \d{3}(?=\s?,)|\d{1,6})\s?,\s?\d{2})(?!\d)(\s?-)?/g)].map((m) => ({
+  return [...norm.matchAll(/(?<![\d.,])((?:\d{1,3}(?:\.\d{3})+|\d{1,2} \d{3}(?=\s?,)|\d{1,6})\s?,\s?\d{2})(?!\d)(\s?[-–—−])?/g)].map((m) => ({
     v: payslipNum(m[1]),
     neg: !!m[2],
     i: m.index,
@@ -250,7 +283,8 @@ function psMost(values, seen) {
  * - Steuern = Summe der Spalte „Steuerrechtliche Abzüge“ (mit Nachberechnung „N … 12,34-“)
  * - SV-Abzüge = KV + RV + AV + PV; Netto = Brutto − Steuern − SV; Auszahlung = Netto ± alle Netto-Be-/Abzüge
  * - Jede Zahl, die mehrfach im Text vorkommt (auch in verschiedenen Durchgängen), gilt als bestätigt.
- * opts: { rates: bekannte Stundenlöhne, bav, abschlag (Erwartung, falls unlesbar), otFactor, calc(brutto) → { lohnsteuer, sv } }
+ * opts: { rates: bekannte Stundenlöhne, bav, abschlag (Erwartung, falls unlesbar – dann markiert), otFactor,
+ *         calc(brutto, kvZusatz, r) → { lohnsteuer, sv } oder null }
  */
 function parsePayslipText(text, opts = {}) {
   const passes = String(text)
@@ -258,13 +292,15 @@ function parsePayslipText(text, opts = {}) {
     .map((t) => t.split('\n').map((l) => l.replace(/[|]/g, ' ').trim()).filter(Boolean))
     .filter((p) => p.length);
   const lines = passes.flat();
-  const digits = lines.map((l) => l.replace(/\D/g, ''));
-  /** Wie oft der Betrag im Text steht (Ziffern ohne Punkt und Komma, mindestens vier Ziffern) */
+  // Zahlen des Textes als Ziffernfolgen (ohne Punkt und Komma; „900, 00“ ist eine Zahl)
+  const numbers = lines.flatMap((l) => [...l.matchAll(/\d(?:[\d.,']|,\s(?=\d{2}(?!\d)))*\d/g)].map((m) => m[0].replace(/\D/g, '')));
+  /** Wie oft der Betrag im Text steht: als ganze Zahl (mindestens vier Ziffern); ab fünf Ziffern auch mit einer
+   *  Störziffer davor oder dahinter – nie als Teil einer anderen Zahl („10,00“ steckt nicht in „100,00“) */
   const seen = (v) => {
     if (v == null || !(v > 0)) return 0;
     const d = String(Math.round(v * 100));
     if (d.length < 4) return 0;
-    return digits.reduce((n, l) => n + (l.split(d).length - 1), 0);
+    return numbers.filter((x) => x === d || (d.length >= 5 && x.length === d.length + 1 && (x.startsWith(d) || x.endsWith(d)))).length;
   };
   /** Betrag hinter einem Stichwort, aus jedem Durchgang (gelesene Werte, ohne null) */
   const readAll = (re, ahead = 2) => passes.map((p) => moneyAfter(p, re, ahead)).filter((v) => v != null);
@@ -295,73 +331,110 @@ function parsePayslipText(text, opts = {}) {
     fixed: [],
   };
   const fixed = new Set();
-  // Monat: aus dem Kopf jedes Durchgangs
-  const when = payslipMonth(passes.flatMap((p) => p.slice(0, 14)));
-  if (when) Object.assign(r, when);
+  // Monat: je Durchgang aus dessen Kopf, dann Abstimmung – ein Durchgang mit verlesenem Druckdatum oder Titel
+  // überstimmt die anderen nicht. Ohne Mehrheit für ein Jahr bleibt es offen (die App fragt nach)
+  const whens = passes.map((p) => payslipMonth(p.slice(0, 14))).filter(Boolean);
+  const vote = (list) => {
+    const n = new Map();
+    for (const x of list) n.set(x, (n.get(x) || 0) + 1);
+    const sorted = [...n].sort((a, b) => b[1] - a[1]);
+    return sorted.length && (sorted.length === 1 || sorted[0][1] > sorted[1][1]) ? sorted[0][0] : null;
+  };
+  const month = vote(whens.map((w) => w.month));
+  if (month) {
+    r.month = month;
+    r.year = vote(whens.filter((w) => w.month === month && w.year).map((w) => w.year));
+  }
 
   // Lohnarten: je Nummer (bzw. Art) alle Lesungen aus allen Durchgängen
   const groups = new Map();
-  let bavDeduct = null;
-  for (const line of lines) {
-    const code = line.match(PS_CODE);
-    const flags = psFlags(line);
-    if (code && code[1] === '914') bavDeduct = lastMoney(line);
-    let kind = payslipLineKind(line);
-    // Unbekannte Lohnart mit Nummer, die zum Gesamt-Brutto gehört (z. B. VWL-Zuschuss, Sachbezug): Betrag ohne Stunden
-    if (!kind && code && flags && flags.gb === 'J' && !/b\s?av|betr\.?\s?av|altersv|umwandl/i.test(line)) kind = 'zulage';
-    if (!kind) continue;
-    // Nicht Teil des Gesamt-Bruttos (GB „N“)
-    if (flags && flags.gb === 'N') continue;
-    const money = moneyTokens(line);
-    // Bezeichnung (Buchstaben der ersten Wörter) zum Wiedererkennen in anderen Durchgängen
-    const label = line.replace(PS_CODE, '').split(/\s{2,}|\d/)[0].toLowerCase().replace(/[^a-zäöüß]/g, '').slice(0, 14);
-    if (kind === 'zulage') {
-      // Ohne Nummer und ohne Spalte GB ist es keine Lohnart (Fußnoten „Beitragszuschlag …“, Solidaritätszuschlag)
-      if (!code && !flags) continue;
-      const last = money.at(-1);
-      // Schlüssel mit Art: dieselbe Nummer kann in einem anderen Durchgang als andere Art gelesen sein
-      const key = code ? `${code[1]}:${kind}` : `z:${label}`;
-      if (!groups.has(key)) groups.set(key, { kind, label, readings: [], flags: null });
-      const g = groups.get(key);
-      g.flags ||= flags;
-      // Betrag mit Minus hinten: Abzug, keine Zulage
-      g.readings.push({ amount: last && !last.neg ? last.v : null });
-      continue;
+  const bavReads = []; // Betrag der Lohnart 914 (Entgeltumwandlung) je Durchgang
+  /** Gruppe einer Zeile; steht dieselbe Nummer im selben Durchgang ein zweites Mal, ist es eine eigene Zeile */
+  const groupFor = (key, pi, init) => {
+    let k = key;
+    for (let n = 2; groups.has(k) && groups.get(k).passes.has(pi); n++) k = `${key}#${n}`;
+    if (!groups.has(k)) groups.set(k, { ...init, readings: [], passes: new Set() });
+    const g = groups.get(k);
+    g.passes.add(pi);
+    return g;
+  };
+  passes.forEach((p, pi) => {
+    for (const line of p) {
+      const code = line.match(PS_CODE);
+      const flags = psFlags(line);
+      if (code && code[1] === '914') bavReads.push(lastMoney(line));
+      let kind = payslipLineKind(line);
+      const money = moneyTokens(line);
+      const unit = line.match(/\bS[tli1]d\b\.?/);
+      // Unbekannte Lohnart mit Nummer, die zum Gesamt-Brutto gehört: mit Stunden „sonst“ (z. B. Berufsschule), sonst
+      // Betrag ohne Stunden (VWL-Zuschuss, Sachbezug, Prämie …)
+      if (!kind && code && flags && flags.gb === 'J' && !/b\s?av|betr\.?\s?av|altersv|umwandl/i.test(line)) kind = unit && money.length >= 2 ? 'sonst' : 'zulage';
+      if (!kind) continue;
+      // Nicht Teil des Gesamt-Bruttos (GB „N“)
+      if (flags && flags.gb === 'N') continue;
+      // Bezeichnung (Wörter ab 4 Buchstaben) zum Wiedererkennen in anderen Durchgängen – ohne die Nummer, auch wenn
+      // sie verlesen ist („l01“, „Z04“)
+      const label = (line.replace(PS_CODE, '').match(/[A-Za-zÄÖÜäöüß]{4,}/g) || []).join('').toLowerCase().slice(0, 16);
+      if (kind === 'zulage') {
+        // Ohne Nummer und ohne Spalte GB ist es keine Lohnart (Fußnoten „Beitragszuschlag …“, Solidaritätszuschlag)
+        if (!code && !flags) continue;
+        const last = money.at(-1);
+        // Schlüssel mit Art: dieselbe Nummer kann in einem anderen Durchgang als andere Art gelesen sein
+        const g = groupFor(code ? `${code[1]}:${kind}` : `z:${label}`, pi, { kind, label, flags: null });
+        g.flags ||= flags;
+        // Betrag mit Minus hinten: Rückrechnung, zählt negativ
+        g.readings.push({ amount: last ? (last.neg ? -last.v : last.v) : null, pi });
+        continue;
+      }
+      // Betrag mit Minus hinten ist ein Abzug (z. B. unbezahlter Urlaub): zieht Stunden und Betrag von der Arbeit ab
+      const minus = money.length && money.at(-1).neg;
+      // Zahlen hinter „Std“ (bzw. hinter der Bezeichnung): Menge, Faktor, Prozentsatz, Betrag
+      const after = unit ? line.slice(unit.index + unit[0].length) : line.replace(PS_CODE, '').replace(/^[^\d]*/, '');
+      const m2 = moneyIn(after);
+      // Menge nur hinter „Std“ oder wenn noch ein Betrag folgt (sonst ist die einzige Zahl der Betrag)
+      const hoursTok = unit || m2.length >= 2 ? after.match(/^\s*(\d{1,3}\s?,\s?\d{2})(?!\d)/) : null;
+      // Prozentsatz der Überstunden („125,00“ bzw. „150,00“); fehlt er, gilt der eingestellte
+      const pctTok = kind === 'ueber' ? after.match(/(?<![\d.,])(1[0-9]{2}|200)\s?,\s?00(?!\d)(?=.*\d\s?,\s?\d{2})/) : null;
+      const it = {
+        pct: kind === 'ueber' ? (pctTok ? Number(pctTok[1]) / 100 : otF) : 1,
+        pctRead: !!pctTok,
+        hours: hoursTok ? payslipNum(hoursTok[1]) : null,
+        amount: m2.length > (hoursTok ? 1 : 0) ? m2.at(-1) : null,
+        raw: [...after.matchAll(/\d[\d.,:;']*\d/g)].map((m) => m[0]),
+        pi,
+      };
+      // Kopfzeilen oben („Zeitlohn Std.“, „Überstd.“, „Urlaub Std.“) haben keine Lohnart-Nummer und keine Menge davor
+      it.quality = (code ? 2 : 0) + (it.hours != null ? 1 : 0) + (it.amount != null ? 1 : 0);
+      if (it.quality < 2) continue;
+      if (minus) kind = 'abzug';
+      groupFor(code ? `${code[1]}:${kind}` : `k:${kind}`, pi, { kind, label, code: code ? code[1] : null }).readings.push(it);
     }
-    // Betrag mit Minus hinten ist ein Abzug (z. B. unbezahlter Urlaub): zieht Stunden und Betrag von der Arbeit ab
-    const minus = money.length && money.at(-1).neg;
-    // Zahlen hinter „Std“ (bzw. hinter der Bezeichnung): Menge, Faktor, Prozentsatz, Betrag
-    const unit = line.match(/\bS[tli1]d\b\.?/);
-    const after = unit ? line.slice(unit.index + unit[0].length) : line.replace(PS_CODE, '').replace(/^[^\d]*/, '');
-    const m2 = moneyIn(after);
-    const hoursTok = after.match(/^\s*(\d{1,3}\s?,\s?\d{2})(?!\d)/);
-    // Prozentsatz der Überstunden („125,00“ bzw. „150,00“), sonst der eingestellte
-    const pctTok = kind === 'ueber' ? after.match(/(?<![\d.,])(1[0-9]{2}|200)\s?,\s?00(?!\d)(?=.*\d\s?,\s?\d{2})/) : null;
-    const it = {
-      pct: kind === 'ueber' ? (pctTok ? Number(pctTok[1]) / 100 : otF) : 1,
-      hours: hoursTok ? payslipNum(hoursTok[1]) : null,
-      amount: m2.length > (hoursTok ? 1 : 0) ? m2.at(-1) : null,
-      raw: [...after.matchAll(/\d[\d.,:;']*\d/g)].map((m) => m[0]),
-    };
-    // Kopfzeilen oben („Zeitlohn Std.“, „Überstd.“, „Urlaub Std.“) haben keine Lohnart-Nummer und keine Menge davor
-    it.quality = (code ? 2 : 0) + (it.hours != null ? 1 : 0) + (it.amount != null ? 1 : 0);
-    if (it.quality < 2) continue;
-    if (minus) kind = 'abzug';
-    const key = code ? `${code[1]}:${kind}` : `k:${kind}`;
-    if (!groups.has(key)) groups.set(key, { kind, label, readings: [] });
-    groups.get(key).readings.push(it);
+  });
+  const bavDeduct = psMost(bavReads, seen);
+  const disjoint = (ga, gb) => ![...ga.passes].some((pi) => gb.passes.has(pi));
+  const nearLabel = (ga, gb) => !ga.label || !gb.label || editDistance(ga.label, gb.label) <= Math.max(2, Math.floor(Math.min(ga.label.length, gb.label.length) / 4));
+  // Ein Minus hinten nur in einem Teil der Durchgänge (höchstens so vielen wie ohne) ist ein Lesefehler: die Zeile gilt
+  // wie in den übrigen
+  for (const [k, g] of [...groups]) {
+    if (g.kind !== 'abzug') continue;
+    const other = [...groups.values()].find((h) => h !== g && h.kind !== 'abzug' && h.kind !== 'zulage' && disjoint(g, h) && ((g.code && h.code === g.code) || nearLabel(g, h)));
+    if (other && other.passes.size >= g.passes.size) groups.delete(k);
+  }
+  // Zeile ohne Nummer, deren Art im selben Durchgang schon mit Nummer steht: keine Lohnart, sondern z. B. das
+  // Urlaubskonto („Urlaub Anspruch 30,00 genommen 12,00 …“) oder eine Kopfzeile
+  for (const [k, g] of [...groups]) {
+    if (k.startsWith('k:') && [...groups.values()].some((h) => h.code && h.kind === g.kind && !disjoint(g, h))) groups.delete(k);
   }
   // Dieselbe Lohnart aus verschiedenen Durchgängen mit verlesener Nummer (oder ohne): gleiche Art und ähnliche
-  // Bezeichnung → zusammenlegen
+  // Bezeichnung → zusammenlegen. Gruppen aus demselben Durchgang sind verschiedene Zeilen und bleiben getrennt
   const keys = [...groups.keys()];
   for (let a = 0; a < keys.length; a++)
     for (let b = a + 1; b < keys.length; b++) {
       const ga = groups.get(keys[a]);
       const gb = groups.get(keys[b]);
-      if (!ga || !gb || ga.kind !== gb.kind) continue;
-      const near = !ga.label || !gb.label || editDistance(ga.label, gb.label) <= Math.max(2, Math.floor(Math.min(ga.label.length, gb.label.length) / 4));
-      if (!near) continue;
+      if (!ga || !gb || ga.kind !== gb.kind || !disjoint(ga, gb) || !nearLabel(ga, gb)) continue;
       ga.readings.push(...gb.readings);
+      gb.passes.forEach((pi) => ga.passes.add(pi));
       ga.flags ||= gb.flags;
       groups.delete(keys[b]);
     }
@@ -404,7 +477,14 @@ function parsePayslipText(text, opts = {}) {
     // Lesungen nach Güte; die erste, deren Stunden und Betrag zusammenpassen, gilt
     const rs = [...g.readings].sort((a, b) => b.quality - a.quality);
     let done = null;
-    const pct = psMost(rs.map((it) => it.pct), () => 0);
+    // Prozentsatz: der, mit dem die meisten Lesungen aufgehen; sonst der am häufigsten gelesene, sonst der eingestellte
+    const readPcts = rs.filter((it) => it.pctRead).map((it) => it.pct);
+    let pct = psMost(readPcts, () => 0) ?? rs[0].pct;
+    if (r.rate && g.kind === 'ueber') {
+      const fits = (c) => rs.filter((it) => it.hours && it.amount && psNear(psR2(it.hours * r.rate * c), it.amount)).length;
+      const bestPct = [...new Set([...readPcts, otF])].sort((x, y) => fits(y) - fits(x))[0];
+      if (fits(bestPct) > fits(pct)) pct = bestPct;
+    }
     if (r.rate) {
       const f = r.rate * pct;
       const clean = (it) => (it.amount != null && it.amount < 100 && likeRate(String(it.amount.toFixed(2)), r.rate) ? { ...it, amount: null } : it);
@@ -412,9 +492,15 @@ function parsePayslipText(text, opts = {}) {
       done =
         list.find((it) => it.hours && it.amount && psNear(psR2(it.hours * f), it.amount)) ||
         (() => {
-          // Betrag aus mehreren Lesungen, der eine glatte Stundenzahl ergibt; sonst Stunden × Stundenlohn
+          // Betrag aus mehreren Lesungen, der eine glatte Stundenzahl ergibt
           const am = psMost(list.filter((it) => it.amount && quarter(it.amount / f)).map((it) => it.amount), seen);
           if (am != null) return { hours: Math.round((am / f) * 4) / 4, amount: am };
+          // Eigener Satz der Zeile (Urlaub mit Durchschnittslohn, Montage): Stunden und Betrag in mehreren Durchgängen
+          // gleich gelesen
+          const both = list.filter((it) => it.hours && it.amount && it.amount / it.hours >= 5 && it.amount / it.hours <= 100);
+          const own = both.find((it) => both.filter((x) => x !== it && x.pi !== it.pi && psNear(x.hours, it.hours) && psNear(x.amount, it.amount)).length);
+          if (own) return { hours: own.hours, amount: own.amount, own: true };
+          // sonst Stunden × Stundenlohn
           const h = psMost(list.filter((it) => it.hours && it.hours < 300).map((it) => it.hours), () => 0);
           return h != null ? { hours: h, amount: psR2(h * f) } : null;
         })();
@@ -426,7 +512,9 @@ function parsePayslipText(text, opts = {}) {
     if (done.hours == null && done.amount == null) continue;
     const sign = g.kind === 'abzug' ? -1 : 1;
     const kind = g.kind === 'abzug' ? 'arbeit' : g.kind;
-    r.lines.push({ kind, hours: sign * (done.hours || 0), f: pct, amount: sign * (done.amount || 0) });
+    // Faktor der Zeile (bei eigenem Satz: Betrag ÷ Stunden ÷ Stundenlohn), damit die Prüfung je Zeile aufgeht
+    const f = done.own && r.rate ? done.amount / (done.hours * r.rate) : pct;
+    r.lines.push({ kind, hours: sign * (done.hours || 0), f, amount: sign * (done.amount || 0) });
     r.hours[kind] += sign * (done.hours || 0);
     r.pay[kind] = psR2(r.pay[kind] + sign * (done.amount || 0));
   }
@@ -453,14 +541,17 @@ function parsePayslipText(text, opts = {}) {
       // Kopf „Netto-Bezüge/Netto-Abzüge“ (nicht der Titel „Brutto/Netto-Bezüge“)
       let start = p.findIndex((l) => /N\S{2,3}o.?Bez\S*\s?\/\s?N|N\S{2,3}o.?Abz/i.test(l));
       // Kopf unlesbar: ab der ersten Zeile mit Nr. 9xxx bzw. „bereits erhalten“
-      if (start < 0) start = p.findIndex((l, k) => k > 10 && /(?:^|\s)9\d{3}\s+\S|bereits\s+erh/i.test(l)) - 1;
+      if (start < 0) start = p.findIndex((l, k) => k > 10 && /(?:^|\s)9\d{3}\s+\S|bereits\s+(?:erh|ausb|ausg)/i.test(l)) - 1;
       if (start < 0) return null;
       const t = { abschlag: 0, bav: 0, sonst: 0, n: 0, items: 0 };
       for (let k = start + 1; k < Math.min(p.length, start + 14); k++) {
         const l = p[k];
         if (/Betrag\s+erh|Auszahlungs|SV.?AG|Gesamtkosten/i.test(l)) break;
-        const tok = moneyTokens(l).at(-1);
-        // Netto-Posten stehen am Zeilenende; folgt noch Text, ist es ein Wert der Verdienstbescheinigung links
+        // Netto-Posten stehen am Zeilenende; folgt noch Text, ist es ein Wert der Verdienstbescheinigung links.
+        // Abzug mit Punkt statt Komma gelesen („500.00-“): ebenfalls ein Betrag
+        let tok = moneyTokens(l).at(-1);
+        const dot = l.match(/(?<![\d.,])(\d{1,6})\.(\d{2})\s?-\s*$/);
+        if (dot && (!tok || tok.end <= dot.index)) tok = { v: Number(`${dot[1]}.${dot[2]}`), neg: true, i: dot.index, end: l.length };
         if (!tok || /[A-Za-zÄÖÜäöü]{2}/.test(l.slice(tok.end))) continue;
         // Bezeichnung: der Text vor dem Betrag, hinter der letzten Zahl der Verdienstbescheinigung (links daneben)
         // bzw. hinter der Nr. 9xxx; Datumsteile wie „01/2025“ gehören zur Bezeichnung
@@ -473,24 +564,37 @@ function parsePayslipText(text, opts = {}) {
           else continue;
           cut = m.index + m[0].length;
         }
-        const label = pre.slice(cut).trim().toLowerCase();
+        // Ziffern mitten im Wort sind Lesefehler („bere1ts“, „Alters0rge“)
+        const label = pre.slice(cut).trim().toLowerCase().replace(/(?<=[a-zäöü])1(?=[a-zäöü])/g, 'i').replace(/(?<=[a-zäöü])0(?=[a-zäöü])/g, 'o');
+        // 0,00 ist kein Posten (meist ein Lesefehler wie „5O0,00“)
+        if (!(tok.v > 0)) continue;
+        // Abzug ohne lesbare Bezeichnung (Zeilen verrutscht): nur für die Umbuchung unten merken
+        if (!nr && tok.neg && !/[a-zäöü]{2}/.test(label)) {
+          t.unlabeled = psR2((t.unlabeled || 0) + tok.v);
+          continue;
+        }
         // Bezeichnung auch mit Lesefehlern („Altersvorsrge“, „erhalfen“)
         const like = (...ws) => label.split(/[^a-zäöü]+/).some((x) => x.length >= 4 && ws.some((w) => editDistance(x, w) <= (w.length >= 7 ? 2 : 1) || (x.length >= 5 && w.endsWith(x))));
         if (!nr && (!/[a-zäöü]{2}/.test(label) || /^betrag$/.test(label))) continue;
         // Wert der Verdienstbescheinigung mit Komma gelesen („AV-Beitrag 123,45“, „Steuerfreie Bezüge 1.000,00“)
         if (!nr && like('beitrag', 'brutto', 'gesamt', 'steuer', 'lohnsteuer', 'kirchensteuer', 'bezüge', 'bezug', 'steuerfreie', 'auszahlung', 'pfändung', 'darlehen', 'solidaritätszuschlag')) continue;
         t.items++;
-        if (nr === '9001' || /bereits|erhalt|ausbez|ausgez/.test(label) || like('bereits', 'erhalten', 'ausbezahlt')) t.abschlag = psR2(t.abschlag + tok.v);
-        else if (nr === '9010' || /alter|vorsor|betr\.?\s?av/.test(label) || like('altersvorsorge', 'vorsorge') || (tok.neg && psNear(tok.v, bavDeduct)))
+        // Nr. 9001/9010 zählt vor der Bezeichnung; Stichwörter nur als ganze Wörter (nicht „Unterhalt“, „Gesundheitsvorsorge“)
+        const other = nr && nr !== '9001' && nr !== '9010';
+        if (nr === '9001' || (!other && (PS_ABSCHLAG.test(label) || like('bereits', 'erhalten', 'ausbezahlt')))) t.abschlag = psR2(t.abschlag + tok.v);
+        else if (nr === '9010' || (!other && (PS_BAV.test(label) || like('altersvorsorge'))))
           t.bav = psR2(t.bav + tok.v);
+        // Ohne Nr. und ohne lesbare Bezeichnung, aber genau der Betrag der Lohnart 914: die Betriebsrente
+        else if (!nr && tok.neg && psNear(tok.v, bavDeduct) && !t.bav && !/[a-zäöü]{4}/.test(label)) t.bav = psR2(t.bav + tok.v);
         else {
           t.sonst = psR2(t.sonst + (tok.neg ? -tok.v : tok.v));
           t.n++;
         }
       }
-      // Betriebsrente steht sicher in der Lohnart 914: was die Netto-Zeilen (verrutscht) anders zuordnen, ist Abschlag
-      if (bavDeduct && t.bav && !psNear(t.bav, bavDeduct) && t.bav > bavDeduct) {
-        t.abschlag = psR2(t.abschlag + t.bav - bavDeduct);
+      // Betriebsrente steht sicher in der Lohnart 914: ist kein Abschlag gefunden und die Betriebsrente zu groß, sind
+      // die Beträge eine Zeile verrutscht – der Überschuss ist der Abschlag
+      if (bavDeduct && !t.abschlag && t.bav && !psNear(t.bav, bavDeduct) && t.bav + (t.unlabeled || 0) > bavDeduct) {
+        t.abschlag = psR2(t.bav + (t.unlabeled || 0) - bavDeduct);
         t.bav = bavDeduct;
       }
       return t.items ? t : null;
@@ -505,9 +609,18 @@ function parsePayslipText(text, opts = {}) {
   let sonstCount = fewest ? fewest.n : 0;
   // Entgeltumwandlung (Betriebsrente): 914 „Betr.AV.AN lfd.Geh.Ver 100,00-“ bzw. Netto-Abzug „betr. Altersvorsorge“
   const bavLine = nettoPasses.length ? most('bav') || null : null;
-  r.bav = bavLine || moneyAfter(lines, /betr\.?\s?Alters|Altersvorsorge/i, 0) || bavDeduct || (/Alters|Betr\.?\s?AV/i.test(text) ? opts.bav || 0 : 0);
-  if (abschlag == null) abschlag = moneyAfter(lines, /bereits\s+erh/i, 0);
-  r.abschlag = abschlag != null ? abschlag : /bereits/i.test(text) ? opts.abschlag || 0 : 0;
+  r.bav = bavLine || psMost(readAll(/betr\.?\s?Alters|Altersvorsorge/i, 0), seen) || bavDeduct || 0;
+  // Nicht gelesen, aber vorhanden: Wert der letzten Abrechnung als Erwartung – markiert (unsicher)
+  if (!r.bav && /Alters|Betr\.?\s?AV/i.test(text) && opts.bav) {
+    r.bav = opts.bav;
+    fixed.add('bav');
+  }
+  if (abschlag == null) abschlag = psMost(readAll(/bereits\s+(?:erh|ausb|ausg)/i, 0), seen);
+  r.abschlag = abschlag ?? 0;
+  if (abschlag == null && /bereits/i.test(text) && opts.abschlag) {
+    r.abschlag = opts.abschlag;
+    fixed.add('abschlag');
+  }
 
   // Stunden oben rechts („Zeitlohn Std. | Überstd. | Bez. Std.“: 152,00 10,00 162,00) – zur Kontrolle; die Zahlen
   // stehen in der Zeile unter dem Kopf (oder in derselben)
@@ -555,7 +668,6 @@ function parsePayslipText(text, opts = {}) {
     }
   }
   if (svDs.size) svD = [...svDs].sort((a, b) => b[1] - a[1])[0][0];
-  const svLine = svLines.find((x) => x.d === svD)?.l || null;
   const svBruttoRead = svD ? Number(svD) / 100 : null;
   if (svBruttoRead) addB(svBruttoRead + r.bav + r.svFrei, 1);
   const counts = new Map();
@@ -599,7 +711,7 @@ function parsePayslipText(text, opts = {}) {
 
   // Steuern und Sozialabgaben: gelesene Werte, die mehrfach im Text stehen, sonst berechnet
   const svRead = readAll(/(?<!Steuer)(SV|5V|sv)\W{0,2}\S{0,4}ch?t?l\S*\s+Abz/);
-  const svBrutto = svBruttoRead || (brutto != null ? psR2(brutto - r.bav - r.svFrei) : null);
+  const svBrutto = svBruttoRead;
   // Beiträge: Zahlen hinter dem letzten der vier Brutto-Werte (ohne „Z“ für den Kinderlosen-Zuschlag), aus jedem
   // Durchgang (auch mit einer verlesenen Ziffer im Brutto-Wert)
   const partsCand = [];
@@ -616,15 +728,25 @@ function parsePayslipText(text, opts = {}) {
     const parts = rest.slice(0, 4);
     const sum = psR2(parts.reduce((a, b) => a + b, 0));
     if (rest.length <= 5) svRead.push(sum);
-    partsCand.push({ parts, sum, ok: rest.length >= 5 && psNear(rest[4], sum) });
+    // Zusatzbeitrag der Krankenkasse aus dem KV-Beitrag (KV = SV-Brutto × (7,3 % + Zusatz/2))
+    const z = psR2(((rest[0] / svBrutto) * 100 - 7.3) * 2);
+    const zOk = z > 0 && z < 5 && psNear(psR2((svBrutto * (7.3 + z / 2)) / 100), rest[0], 0.02);
+    partsCand.push({ parts, sum, ok: rest.length >= 5 && psNear(rest[4], sum), z: zOk ? z : null });
     // Störzahl vor den Beiträgen: auch spätere Vierergruppen
     for (let k = 1; k + 4 <= rest.length; k++) {
       const p4 = rest.slice(k, k + 4);
       partsCand.push({ parts: p4, sum: psR2(p4.reduce((a, b) => a + b, 0)), ok: false, late: true });
     }
-    const z = psR2(((rest[0] / svBrutto) * 100 - 7.3) * 2);
-    if (r.kvZusatz == null && z > 0 && z < 5 && psNear(psR2((svBrutto * (7.3 + z / 2)) / 100), rest[0], 0.02)) r.kvZusatz = z;
   }
+  // Vorläufig (für die Nachrechnung): aus einer in sich stimmigen Zeile oder von mindestens zwei Durchgängen gleich
+  const zOf = (list) => {
+    const zs = list.filter((c) => !c.late && c.z != null);
+    const sure = zs.find((c) => c.ok);
+    if (sure) return sure.z;
+    const z = psMost(zs.map((c) => c.z), () => 0);
+    return zs.filter((c) => psNear(c.z, z, 0.001)).length >= 2 ? z : null;
+  };
+  r.kvZusatz = zOf(partsCand);
   // Mit dem Zusatzbeitrag aus der SV-Zeile rechnen (er ändert sich von Jahr zu Jahr)
   const calc = brutto != null && opts.calc ? opts.calc(brutto, r.kvZusatz, r) : null;
   // 0 ist ein gültiger Wert (kleiner Lohn, Azubi, Steuerklasse III)
@@ -685,7 +807,11 @@ function parsePayslipText(text, opts = {}) {
     // waren die Beiträge nicht lesbar
     if (pc && !psNear(pc.sum, r.sv)) pc = partsCand.find((c) => c.ok) || null;
   }
-  if (pc) r.svParts = pc.parts;
+  if (pc) {
+    r.svParts = pc.parts;
+    // Zusatzbeitrag aus den Beiträgen, die die Sozialabgaben ergeben
+    if (pc.z != null) r.kvZusatz = pc.z;
+  }
 
   // Netto und Auszahlung folgen aus den Summen; gelesene Werte bestätigen sie
   if (r.brutto != null && r.steuer != null && r.sv != null) {
@@ -695,7 +821,9 @@ function parsePayslipText(text, opts = {}) {
       .map((t) => ({ t, a: psR2(r.netto - t.abschlag - (t.bav || r.bav) + t.sonst) }))
       .map((x) => ({ ...x, votes: auszReads.filter((v) => psNear(v, x.a)).length + (seen(x.a) ? 0.5 : 0) }))
       .filter((x) => x.votes >= 1 && (!x.t.bav || psNear(x.t.bav, r.bav)))
-      .sort((x, y) => y.votes - x.votes)[0];
+      // bei Gleichstand der Durchgang mit den wenigsten „weiteren“ Posten (ein verlesenes Etikett macht aus dem Abschlag
+      // einen weiteren Abzug)
+      .sort((x, y) => y.votes - x.votes || x.t.n - y.t.n)[0];
     if (fit) {
       r.abschlag = fit.t.abschlag;
       sonst = fit.t.sonst;
@@ -705,14 +833,16 @@ function parsePayslipText(text, opts = {}) {
     r.auszahlung = psR2(r.netto - r.abschlag - r.bav + sonst);
     // Gelesene Auszahlung weicht ab: fehlt ein Netto-Be-/Abzug, ist der Unterschied dieser – wenn die Auszahlung in
     // mehreren Durchgängen gleich gelesen wurde oder der Unterschied selbst im Text steht
-    const ausz = psMost(auszReads, seen);
+    // Hat ein Durchgang genau die berechnete Auszahlung gelesen, gilt sie (ein anderer hat sich verlesen)
+    const ausz = auszReads.some((v) => psNear(v, r.auszahlung)) ? null : psMost(auszReads, seen);
     if (ausz != null && !psNear(ausz, r.auszahlung)) {
       const extra = psR2(ausz - r.auszahlung);
-      const sure = auszReads.filter((v) => psNear(v, ausz)).length >= 2 || seen(Math.abs(extra));
-      if (sure && Math.abs(extra) < r.netto) {
+      const agreed = auszReads.filter((v) => psNear(v, ausz)).length >= 2;
+      if ((agreed || seen(Math.abs(extra))) && Math.abs(extra) < r.netto) {
         r.nettoSonst = psR2(sonst + extra);
         r.auszahlung = ausz;
-        if ((!seen(Math.abs(extra)) || sonstCount) && !psNear(r.nettoSonst, 0)) fixed.add('nettoSonst');
+        // Nur einmal gelesen oder zu fehlenden Posten: unsicher
+        if ((!agreed || sonstCount) && !psNear(r.nettoSonst, 0)) fixed.add('nettoSonst');
       }
     }
     if (!nettoReads.some((v) => psNear(v, r.netto)) && !seen(r.netto)) fixed.add('netto');
@@ -765,10 +895,11 @@ const PS_FIELD_NAMES = {
   'hours.krank': 'Krankheit',
   'hours.feiertag': 'Feiertage',
   zulage: 'Zulagen',
-  brutto: 'Gesamt-Brutto',
   steuer: 'Steuern',
   sv: 'Sozialabgaben',
   netto: 'Netto-Verdienst',
+  abschlag: 'Abschlag',
+  bav: 'Betriebsrente',
   nettoSonst: 'Weitere Netto-Be-/Abzüge',
   auszahlung: 'Auszahlung',
 };

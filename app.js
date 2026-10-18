@@ -381,7 +381,12 @@ const payKey = (year, month) => `${year}-${pad(month)}`;
 // Früher eingelesene Abrechnungen: falsch gelesene Summen nachträglich aus den übrigen Werten ergänzen
 {
   const before = JSON.stringify(payslips);
-  Object.values(payslips).forEach((p) => p && p.pay && repairPayslip(p));
+  Object.values(payslips).forEach((p) => {
+    if (!p || !p.pay) return;
+    repairPayslip(p);
+    // vor v109 eingelesen: Überstunden-Faktor aus den Einstellungen (für die Prüfung „Stunden × Stundenlohn“)
+    if (p.otFactor == null) p.otFactor = otFactor();
+  });
   if (JSON.stringify(payslips) !== before) savePayslips();
 }
 const HOUR_KINDS = [
@@ -394,6 +399,9 @@ const HOUR_KINDS = [
 const cents = (v) => Math.round(v * 100 + 1e-6) / 100;
 /** Angaben für die Netto-Rechnung eines Monats (Steuertarif des Jahres, Zusatzbeitrag wie auf der Abrechnung) */
 const lohnOpts = (bav, year, month, zusatz, tarif) => ({
+  // Steuer- und beitragsfreie Bezüge (z. B. Inflationsprämie) wie auf der Abrechnung des Monats
+  stFrei: (year && payslips[payKey(year, month)]?.stFrei) || 0,
+  svFrei: (year && payslips[payKey(year, month)]?.svFrei) || 0,
   klasse: parseNum(settings.taxClass) || 1,
   kirche: !!settings.church,
   kinder: parseNum(settings.children),
@@ -468,7 +476,7 @@ function payWithSlipHours(p) {
     ? p.lines.reduce((t, x) => t + cents(x.hours * rate * x.f), 0) + (p.zulage || 0)
     : cents(h.arbeit * rate) + cents(h.urlaub * rate) + cents(h.feiertag * rate) + cents(h.krank * rate) +
       cents((h.sonst || 0) * rate) + cents(h.ueber * rate * otFactor()) + (p.zulage || 0);
-  return nettoMonat(cents(brutto), { ...lohnOpts(p.bav || 0, p.year, p.month, p.kvZusatz, p.tarif), stFrei: p.stFrei, svFrei: p.svFrei });
+  return nettoMonat(cents(brutto), lohnOpts(p.bav || 0, p.year, p.month, p.kvZusatz, p.tarif));
 }
 
 /** Vergleich einer Abrechnung mit den Zetteln und der Lohnrechnung der App */
@@ -605,12 +613,12 @@ function renderPayslip(key) {
       ${psField('Stundenlohn', 'rate', p.rate, '€')}
       ${HOUR_KINDS.map(([k, label]) => psField(k === 'krank' ? 'Krankheit (Entgeltfortzahlung)' : label, `hours.${k}`, p.hours[k], 'h', false, guess(`hours.${k}`))).join('')}
       ${psField('Zulagen', 'zulage', p.zulage, '€', false, guess('zulage'))}
-      ${psField('Gesamt-Brutto', 'brutto', p.brutto, '€', false, guess('brutto'))}
+      ${psField('Gesamt-Brutto', 'brutto', p.brutto, '€')}
       ${psField('Steuern', 'steuer', p.steuer, '€', false, guess('steuer'))}
       ${psField('Sozialabgaben', 'sv', p.sv, '€', false, guess('sv'))}
       ${psField('Netto-Verdienst', 'netto', p.netto, '€', false, guess('netto'))}
-      ${psField('Abschlag (bereits erhalten)', 'abschlag', p.abschlag, '€')}
-      ${psField('Betriebsrente', 'bav', p.bav, '€')}
+      ${psField('Abschlag (bereits erhalten)', 'abschlag', p.abschlag, '€', false, guess('abschlag'))}
+      ${psField('Betriebsrente', 'bav', p.bav, '€', false, guess('bav'))}
       ${psField('Weitere Netto-Be-/Abzüge (+/−)', 'nettoSonst', p.nettoSonst || 0, '€', true, guess('nettoSonst'))}
       ${psField('Auszahlung', 'auszahlung', p.auszahlung, '€', false, guess('auszahlung'))}
       ${psField('Zusatzbeitrag Krankenkasse', 'kvZusatz', p.kvZusatz, '%')}
@@ -810,6 +818,15 @@ function updatePayslipField(input) {
   }
   if (path.startsWith('hours.')) p.hours[path.slice(6)] = v || 0;
   else p[path] = v;
+  // Stunden oder Stundenlohn von Hand: Beträge und Zeilen der Lohnarten daraus neu (sonst rechneten Vergleich und
+  // Prüfung mit den eingelesenen Werten weiter)
+  if ((path.startsWith('hours.') || path === 'rate') && p.rate && p.pay) {
+    const f = (k) => (k === 'ueber' ? p.lines?.find((x) => x.kind === 'ueber')?.f || p.otFactor || otFactor() : 1);
+    p.lines = HOUR_KINDS.map(([k]) => k)
+      .filter((k) => p.hours[k])
+      .map((k) => ({ kind: k, hours: p.hours[k], f: f(k), amount: cents(p.hours[k] * p.rate * f(k)) }));
+    for (const [k] of HOUR_KINDS) p.pay[k] = p.lines.find((x) => x.kind === k)?.amount || 0;
+  }
   // Von Hand eingetragen: gilt nicht mehr als ergänzt
   if (p.fixed) p.fixed = p.fixed.filter((k) => k !== path);
   input.closest('.field')?.classList.remove('ps-guess');
@@ -851,50 +868,76 @@ async function importPayslip(input) {
     abschlag: latest ? latest.abschlag : 0,
     otFactor: otFactor(),
   };
-  // when: Monat und Jahr, falls von Hand gewählt
+  // when: Monat und Jahr, falls von Hand gewählt. Steuern und Sozialabgaben werden zum Vergleich nachgerechnet
+  // (Tarif des Jahres, Zusatzbeitrag von der Abrechnung, steuer- und beitragsfreie Bezüge wie gelesen) – ohne bekannten
+  // Tarif des Jahres nicht (würde falsche Werte bevorzugen)
   const parse = (text, when = null) => {
-    const first = Object.assign(parsePayslipText(text, opts), when);
-    // Ohne bekannten Tarif des Jahres keine Gegenprobe über nachgerechnete Steuern (würde falsche Werte bevorzugen)
-    if (!first.year || !lohnJahrBekannt(first.year)) return first;
-    // Steuern und Sozialabgaben zum Vergleich nachrechnen (Tarif des Jahres, Zusatzbeitrag von der Abrechnung,
-    // steuer- und beitragsfreie Bezüge wie gelesen)
     const calc = (brutto, zusatz, r) => {
-      const n = nettoMonat(brutto, { ...lohnOpts(first.bav, first.year, first.month, zusatz ?? undefined), stFrei: r.stFrei, svFrei: r.svFrei });
+      const { year, month } = when || r;
+      if (!year || !lohnJahrBekannt(year)) return null;
+      const n = nettoMonat(brutto, { ...lohnOpts(r.bav, year, month, zusatz ?? undefined), stFrei: r.stFrei, svFrei: r.svFrei });
       // „Steuern“ der Abrechnung sind alle steuerrechtlichen Abzüge
       return { lohnsteuer: cents(n.lohnsteuer + n.soli + n.kirchensteuer), sv: cents(n.kv + n.rv + n.av + n.pv) };
     };
     return Object.assign(parsePayslipText(text, { ...opts, calc }), when);
   };
+  // Abbrechen beendet die Texterkennung; Laden und jeder Durchgang haben ein Zeitlimit
+  const CANCEL = {};
+  let cancel;
+  const cancelled = new Promise((resolve) => (cancel = resolve)).then(() => Promise.reject(CANCEL));
+  cancelled.catch(() => {});
+  modal.insertAdjacentHTML('beforeend', '<div class="alert-buttons single ps-cancel"><button data-c="cancel">Abbrechen</button></div>');
+  modal.querySelector('[data-c="cancel"]').addEventListener('click', () => cancel(), { once: true });
+  const guard = (promise, ms, message) => {
+    // Ein abgebrochener Auftrag scheitert später noch einmal – das ist dann kein Fehler mehr
+    promise.catch(() => {});
+    return Promise.race([promise, cancelled, new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
+  };
   let reader = null;
   let text = '';
   let p = null;
   try {
-    // Drei Durchgänge mit verschiedener Bildaufbereitung; nach jedem stehen die Prüfungen im Fenster
-    reader = await payslipReader();
+    reader = await guard(payslipReader(), 120000, 'Texterkennung konnte nicht geladen werden (Internet?)');
+    // Drei Durchgänge mit verschiedener Bildaufbereitung; nach jedem stehen die Prüfungen im Fenster. Scheitert ein
+    // späterer Durchgang, gilt das Ergebnis der früheren
     const texts = [];
     for (let pass = 1; pass <= PAYSLIP_PASSES; pass++) {
-      texts.push(
-        await reader.read(file, pass, (v) => {
-          bar.style.width = `${Math.round(5 + ((pass - 1 + v) / PAYSLIP_PASSES) * 95)}%`;
-          step.textContent = `Durchgang ${pass} von ${PAYSLIP_PASSES}: ${Math.round(v * 100)} %`;
-        })
-      );
+      try {
+        texts.push(
+          await guard(
+            reader.read(file, pass, (v) => {
+              bar.style.width = `${Math.round(5 + ((pass - 1 + v) / PAYSLIP_PASSES) * 95)}%`;
+              step.textContent = `Durchgang ${pass} von ${PAYSLIP_PASSES}: ${Math.round(v * 100)} %`;
+            }),
+            180000,
+            'Texterkennung dauert zu lange'
+          )
+        );
+      } catch (err) {
+        if (err === CANCEL || !texts.length) throw err;
+        window.fehlerMelden?.(err, 'lohnabrechnung');
+        break;
+      }
       text = texts.join(PS_SEP);
       p = parse(text);
       if (p.brutto != null || p.netto != null) live.innerHTML = psChecksHTML(p);
     }
   } catch (err) {
-    // Fehlendes Internet ist kein Fehler der App
-    if (!/Internet/.test(err?.message || '')) window.fehlerMelden?.(err, 'lohnabrechnung');
     closeModal(true);
-    confirmDialog('Einlesen nicht möglich', escapeHtml(err.message || String(err)), 'OK', () => {});
+    if (err === CANCEL) return;
+    // Netzfehler (auch als Text von Tesseract) sind kein Fehler der App
+    const msg = typeof err === 'string' ? err : err?.message || String(err);
+    const net = typeof err === 'string' || /Internet|network|load failed|fetch/i.test(msg);
+    if (!net) window.fehlerMelden?.(err, 'lohnabrechnung');
+    infoDialog('Einlesen nicht möglich', escapeHtml(net ? 'Texterkennung konnte nicht geladen werden (Internet?)' : msg));
     return;
   } finally {
     reader?.close();
   }
+  modal.querySelector('.ps-cancel')?.remove();
   if (!p.rate && !p.brutto && !p.netto) {
     closeModal(true);
-    confirmDialog('Einlesen nicht möglich', 'Auf dem Foto wurde keine Lohnabrechnung erkannt.', 'OK', () => {});
+    infoDialog('Einlesen nicht möglich', 'Auf dem Foto wurde keine Lohnabrechnung erkannt.');
     return;
   }
   // Fertig: Ergebnis im selben Fenster – Monat, die wichtigsten Beträge, Prüfungen und was unsicher ist. Stimmt nicht
@@ -987,7 +1030,9 @@ function askPayslipMonth(month, done, year = null, chosen = false) {
         <select id="ps-y">${years.map((k) => `<option ${k === y ? 'selected' : ''}>${k}</option>`).join('')}</select>
       </div></div>
     <div class="alert-buttons"><button data-c="no">Abbrechen</button><button data-c="yes" class="strong">Übernehmen</button></div>`,
-    'alert'
+    'alert',
+    // nicht wegtippbar: das Eingelesene ginge sonst ohne Rückfrage verloren
+    false
   );
   modal.addEventListener('click', (e) => {
     const b = e.target.closest('[data-c]');
