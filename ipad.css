@@ -84,8 +84,11 @@ html.ipad-quer #suggest-bar { left: var(--ipad-side-w); }
 html.ipad-quer #toast { left: calc(50% + var(--ipad-side-w) / 2); }
 
 /* Hoch: Seitenleiste nur als eingeblendete Zettel-Liste */
-html.ipad-hoch #ipad-side { width: 360px; transform: translateX(-102%); visibility: hidden; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s 0.28s; }
-html.ipad-hoch.ipad-side-open #ipad-side { transform: none; visibility: visible; transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 0 40px rgba(0, 0, 0, 0.25); }
+/* Bewegung nur beim Öffnen/Schließen (ipad.js setzt ipad-side-anim kurz), nicht beim Drehen */
+html.ipad-hoch #ipad-side { width: 360px; transform: translateX(-102%); visibility: hidden; }
+html.ipad-hoch.ipad-side-anim #ipad-side { transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s 0.28s; }
+html.ipad-hoch.ipad-side-open #ipad-side { transform: none; visibility: visible; box-shadow: 0 0 40px rgba(0, 0, 0, 0.25); }
+html.ipad-hoch.ipad-side-anim.ipad-side-open #ipad-side { transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
 html.ipad-hoch .ipad-side-nav, html.ipad-hoch .ipad-side-sep { display: none; }
 #ipad-scrim { display: none; }
 html.ipad-hoch.ipad-side-open #ipad-scrim { display: block; position: fixed; inset: 0; z-index: 29; background: var(--backdrop); }
@@ -148,3 +151,87 @@ html.ipad .tm-z-row { grid-template-columns: repeat(var(--n), calc((100cqw - 64p
   html.mac[data-theme='dark'] :is(.nav-btn, .pill, .time, .status, .modal-wide, .alert-buttons button):hover { filter: brightness(1.15); }
   html.mac [data-ovc]:hover { box-shadow: 0 0 0 1.5px var(--accent-soft), var(--shadow); }
 }
+
+/* ───────── Mac: Zettel als Tabelle (dieselben Tageskarten, anders angeordnet; Kopfzeile .mac-th setzt ipad.js) ─────────
+   Spalten: Tag | Beginn – Ende ⚠ | Baustelle | Art der Arbeit | Std. ✕ | Gesamt */
+html.mac { --mt-day: 150px; --mt-sum: 190px; --mt-row: 84px 12px 84px 22px minmax(0, 1.25fr) minmax(0, 1fr) 56px 28px; }
+html.ipad.mac[data-view='editor'] #days { display: block; max-width: 1500px; margin: 0 auto; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+html.mac[data-view='editor'] .mac-th { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--sep); }
+html.mac[data-view='editor'] .mac-th > span { padding: 12px 14px 8px; }
+html.mac[data-view='editor'] .mac-th > div { display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; padding: 12px 10px 8px; }
+html.mac[data-view='editor'] .mac-th > span:last-child { text-align: right; }
+.mac-th { display: none; }
+html.mac[data-view='editor'] #days .day { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); margin: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--ipad-line); }
+html.mac[data-view='editor'] #days .day:last-child { border-bottom: 0; }
+html.mac[data-view='editor'] #days .day::before { border-radius: 0; }
+html.mac[data-view='editor'] #days .day.unsaved { box-shadow: inset 0 0 0 2px var(--text); }
+html.mac[data-view='editor'] #days .day-head { grid-column: 1; grid-row: 1 / span 40; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 8px; padding: 12px 10px 12px 16px; border-bottom: 0; border-right: 0.5px solid var(--sep); }
+html.mac[data-view='editor'] #days .day-when { flex-wrap: wrap; white-space: normal; }
+html.mac[data-view='editor'] #days .day-when b { display: block; width: 100%; }
+html.mac[data-view='editor'] #days .row { grid-column: 2; display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; align-items: center; padding: 3px 10px; position: relative; }
+html.mac[data-view='editor'] #days .row-times { display: contents; }
+html.mac[data-view='editor'] #days .row > * , html.mac[data-view='editor'] #days .row-times > * { grid-row: 1; }
+html.mac[data-view='editor'] #days .time { grid-column: 1; min-width: 0; padding: 6px 4px; }
+html.mac[data-view='editor'] #days .arrow { grid-column: 2; text-align: center; }
+html.mac[data-view='editor'] #days .time[data-which='end'] { grid-column: 3; }
+html.mac[data-view='editor'] #days .time-warn { grid-column: 4; }
+html.mac[data-view='editor'] #days .row > .suggest-wrap:has([data-f='site']) { grid-column: 5; }
+html.mac[data-view='editor'] #days .row > .suggest-wrap:has([data-f='work']) { grid-column: 6; }
+html.mac[data-view='editor'] #days .row-hours { grid-column: 7; flex: none; }
+html.mac[data-view='editor'] #days .row-del, html.mac[data-view='editor'] #days .row-del-space { grid-column: 8; position: static; display: grid; width: 28px; height: 28px; }
+html.mac[data-view='editor'] #days .row-del-space { visibility: hidden; }
+html.mac[data-view='editor'] #days .row .typo-hint { grid-row: 2; grid-column: 5 / 7; }
+html.mac[data-view='editor'] #days .field-icon { display: none; }
+html.mac[data-view='editor'] #days .txt { padding: 7px 0 5px; border-bottom-color: transparent; font-size: 15px; }
+html.mac[data-view='editor'] #days .txt:focus { border-bottom-color: var(--accent); }
+html.mac[data-view='editor'] #days .txt::placeholder { opacity: 0.45; }
+html.mac[data-view='editor'] #days .day-foot { grid-column: 3; grid-row: 1 / span 40; flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 8px; padding: 12px 14px; border-left: 0.5px solid var(--sep); }
+html.mac[data-view='editor'] #days .day-total { order: -1; margin-left: 0; font-size: 16px; }
+html.mac[data-view='editor'] #days .day-save-btn { margin-left: 0; }
+html.mac[data-view='editor'] #days .expand-btn { grid-column: 2; align-self: center; padding: 12px 10px; }
+html.mac[data-view='editor'] #days .status-day .status-head { grid-column: 1 / -1; grid-row: auto; flex-direction: row; align-items: center; justify-content: space-between; border-right: 0; }
+html.mac[data-view='editor'] #days .status-day.has-work .status-head { border-bottom: 0.5px solid var(--sep); }
+html.mac[data-view='editor'] #days .status-day.has-work .row, html.mac[data-view='editor'] #days .status-day.has-work .day-foot { grid-row: auto; }
+html.mac[data-view='editor'] #days .other-month { margin: 0; border-radius: 0; border-bottom: 1px solid var(--ipad-line); }
+/* Uhrzeit tippen (ipad.js): Tastatur-Fokus und laufende Eingabe sichtbar */
+html.mac #days .time:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 1px; }
+html.mac #days .time.typing { background: var(--card); color: var(--text); box-shadow: inset 0 0 0 2px var(--accent-fill); }
+
+/* ───────── iPad: Woche links (quer genau bildschirmhoch), gewählter Tag rechts groß (ipad.js) ───────── */
+html.ipad:not(.mac)[data-view='editor'] { --wk-top: calc(var(--nav-h, 56px) + 6px); }
+html.ipad-hoch:not(.mac)[data-view='editor'] { --wk-top: calc(var(--nav-h, 56px) + env(safe-area-inset-top) + 56px + 6px); }
+html.ipad:not(.mac)[data-view='editor'] #app { display: grid; grid-template-columns: 300px minmax(0, 1fr); column-gap: 20px; align-items: start; max-width: 1100px; }
+html.ipad-hoch:not(.mac)[data-view='editor'] #app { grid-template-columns: 250px minmax(0, 1fr); column-gap: 14px; }
+html.ipad:not(.mac)[data-view='editor'] #app > :not(#ipad-week):not(.nav) { grid-column: 2; }
+#ipad-week { grid-column: 1; grid-row: 1 / span 20; position: sticky; top: var(--wk-top); height: calc(100dvh - var(--wk-top) - 16px - env(safe-area-inset-bottom)); }
+.wk-list { height: 100%; display: flex; flex-direction: column; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+.wk-day { flex: 1 1 0; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-content: center; column-gap: 10px; row-gap: 3px; padding: 6px 14px 6px 18px; text-align: left; border-bottom: 0.5px solid var(--sep); }
+.wk-day::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--wd); }
+.wk-day.sel { background: var(--accent-soft); }
+.wk-day.off { opacity: 0.4; }
+.wk-day.we .wk-name b, .wk-day.we .wk-h { color: var(--muted); }
+.wk-name { grid-column: 1; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-name span { color: var(--muted); font-size: 14px; }
+.wk-warn { font-style: normal; font-size: 14px; }
+.wk-dirty { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--text); vertical-align: 2px; margin-left: 2px; }
+.wk-what { grid-column: 1; font-size: 13.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wk-h { grid-column: 2; grid-row: 1 / span 2; align-self: center; font-weight: 700; font-size: 17px; font-variant-numeric: tabular-nums; }
+.wk-sum { flex: none; display: flex; justify-content: space-between; padding: 14px 16px; font-weight: 700; border-top: 1px solid var(--sep); }
+/* rechts nur der gewählte Tag, groß */
+html.ipad:not(.mac)[data-view='editor'] #days[data-sel] { display: block; max-width: none; margin: 0; }
+html.ipad:not(.mac)[data-view='editor'] #days[data-sel] .day { margin-top: 0; }
+#days[data-sel] .other-month { display: none; }
+#days[data-sel='0'] .day:not([data-day='0']), #days[data-sel='1'] .day:not([data-day='1']), #days[data-sel='2'] .day:not([data-day='2']),
+#days[data-sel='3'] .day:not([data-day='3']), #days[data-sel='4'] .day:not([data-day='4']), #days[data-sel='5'] .day:not([data-day='5']),
+#days[data-sel='6'] .day:not([data-day='6']) { display: none; }
+html.ipad:not(.mac) #days[data-sel] .day-head { padding: 16px 18px 12px; }
+html.ipad:not(.mac) #days[data-sel] .day-when b { font-size: 24px; }
+html.ipad:not(.mac) #days[data-sel] .day-when .muted { font-size: 18px; }
+html.ipad:not(.mac) #days[data-sel] .row { padding: 14px 16px 14px 20px; }
+html.ipad:not(.mac) #days[data-sel] .time { font-size: 19px; padding: 9px 14px; min-width: 88px; }
+html.ipad:not(.mac) #days[data-sel] .row-hours { font-size: 16px; }
+html.ipad:not(.mac) #days[data-sel] textarea.txt { font-size: 18px; padding-top: 10px; }
+html.ipad:not(.mac) #days[data-sel] .field-icon { top: 13px; }
+html.ipad:not(.mac) #days[data-sel] .day-foot { padding: 14px 18px 16px; }
+html.ipad:not(.mac) #days[data-sel] .day-total { font-size: 17px; }
+html.ipad:not(.mac)[data-view='editor'] .sum-bar { width: 100%; max-width: none; }
