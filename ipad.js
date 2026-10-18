@@ -1,12 +1,14 @@
-// Std-Protokoll – Ansicht auf dem iPad (Stile: ipad.css). Auf dem iPhone und dem Mac tut diese Datei nichts.
+// Std-Protokoll – Ansicht auf dem iPad und dem Mac (Stile: ipad.css). Auf dem iPhone tut diese Datei nichts.
+// Mac: immer wie das iPad quer (Seitenleiste, auch bei schmalem Fenster), dazu Maus und Tastatur (unten).
 // Quer (breit genug): Seitenleiste links mit den Bereichen und der Zettel-Liste statt der Leiste unten, Plus oben rechts;
 // „Zettel“ öffnet gleich den neuesten Zettel (die Liste steht ja links).
 // Hoch: Leiste oben in der Mitte, Plus oben rechts; im Zettel blendet der Knopf oben links die Zettel-Liste ein.
 // Im Zettel stehen die Tage nebeneinander, wenn zwei Spalten Platz haben. Schmales Fenster (Split View): wie auf dem iPhone.
 
 const IPAD_MIN_W = 700;
-const ipadOn = () => deviceKind() === 'iPad' && innerWidth >= IPAD_MIN_W;
-const ipadQuer = () => ipadOn() && innerWidth > innerHeight && innerWidth >= 1000;
+const ipadMac = () => deviceKind() === 'Mac';
+const ipadOn = () => ipadMac() || (deviceKind() === 'iPad' && innerWidth >= IPAD_MIN_W);
+const ipadQuer = () => ipadOn() && (ipadMac() || (innerWidth > innerHeight && innerWidth >= 1000));
 const IPAD_SIDE_ICON = svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>', 22);
 
 document.body.insertAdjacentHTML(
@@ -47,14 +49,16 @@ function ipadSync() {
   root.classList.toggle('ipad', on);
   root.classList.toggle('ipad-quer', quer);
   root.classList.toggle('ipad-hoch', on && !quer);
+  root.classList.toggle('mac', on && ipadMac());
   if (!on) {
     root.classList.remove('ipad-side-open');
     delete root.dataset.view;
     return;
   }
   root.dataset.view = currentView;
-  // zwei Spalten im Zettel, wenn je Tag mindestens so viel Platz bleibt wie auf einem großen iPhone
-  root.classList.toggle('ipad-cols', innerWidth - (quer ? 320 : 0) - 40 >= 760);
+  // zwei Spalten im Zettel, wenn je Tag mindestens so viel Platz bleibt wie auf einem großen iPhone (drei am Mac abgelehnt)
+  const room = innerWidth - (quer ? ipadSide.offsetWidth : 0) - 40;
+  root.classList.toggle('ipad-cols', room >= 760);
   const tab = TABS.find((t) => t && t[3].includes(currentView));
   document.querySelectorAll('[data-ipad-tab]').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.ipadTab === tab[0]));
   // quer: Liste links nur im Bereich „Zettel“ und nicht, wenn die Liste selbst die Seite ist
@@ -131,3 +135,37 @@ window.addEventListener('resize', () => {
   ipadSync();
 });
 ipadSync();
+
+// ───────── Mac: Rechtsklick und Tastatur ─────────
+const ipadIsMac = () => document.documentElement.classList.contains('mac');
+// Rechtsklick wie langes Drücken bzw. Wischen (nur, was man auch sieht: Kartenauswahl, Löschen in Listen, Personen auf
+// der Server-Seite); in Eingabefeldern bleibt das normale Menü
+document.addEventListener('contextmenu', (e) => {
+  if (!ipadIsMac() || e.target.closest('input, textarea, [contenteditable="true"]') || layer.classList.contains('open')) return;
+  const card = e.target.closest('[data-ovc]');
+  const person = e.target.closest('[data-fb-hold]');
+  const del = e.target.closest('.swipe')?.querySelector('.swipe-del');
+  if (card) ovcPick(card.dataset.ovc);
+  else if (person) adminPersonMenu(person);
+  else if (del) del.click();
+  else return;
+  e.preventDefault();
+});
+// ⌘N neuer Zettel, Esc schließt ein Fenster (wie Tippen daneben), Enter bestätigt (nie beim Löschen)
+document.addEventListener('keydown', (e) => {
+  if (!ipadIsMac() || e.isComposing) return;
+  const open = layer.classList.contains('open');
+  if (e.key === 'n' && e.metaKey && !e.shiftKey && !e.altKey) {
+    e.preventDefault();
+    if (!open) document.getElementById('ipad-plus').click();
+  } else if (e.key === 'Escape' && open) {
+    e.preventDefault();
+    layer.querySelector('.backdrop')?.click();
+  } else if (e.key === 'Enter' && open && !e.target.closest?.('textarea')) {
+    const ok = layer.querySelector('.alert-buttons button.strong:not(.destructive)');
+    if (ok && !e.target.closest?.('input')) {
+      e.preventDefault();
+      ok.click();
+    }
+  }
+});

@@ -1,4 +1,4 @@
-/* iPad (ipad.js setzt die Klassen am <html>, nie auf dem iPhone):
+/* iPad und Mac (ipad.js setzt die Klassen am <html>, nie auf dem iPhone; Mac = immer wie quer, Klasse mac):
    ipad-quer – Seitenleiste links mit Bereichen und Zettel-Liste, Plus oben rechts
    ipad-hoch – Leiste oben in der Mitte mit Plus rechts, Zettel-Liste im Zettel einblendbar
    Im Zettel stehen die Tage bei genug Breite in zwei Spalten. */
@@ -137,3 +137,14 @@ html.ipad:not(.ipad-cols)[data-view='editor'] #days { max-width: 680px; margin: 
 
 /* ───────── Team: Zettel so groß wie auf dem iPhone (dort drei je Karte), hier fünf nebeneinander ───────── */
 html.ipad .tm-z-row { grid-template-columns: repeat(var(--n), calc((100cqw - 64px) / 5)); }
+
+
+/* ───────── Mac: Maus ───────── */
+@media (hover: hover) and (pointer: fine) {
+  html.mac :is(a, button, [role='button'], [data-act], [data-ipad-tab], [data-ovc]) { cursor: pointer; }
+  html.mac :is(.list-row, .ipad-side-row:not(.on), .action, button.field, a.field):hover { background: var(--fill); }
+  html.mac .ipad-side-list .list-row.sel:hover { background: var(--accent-soft); }
+  html.mac :is(.nav-btn, .pill, .time, .status, #ipad-plus, .modal-wide, .alert-buttons button):hover { filter: brightness(0.94); }
+  html.mac[data-theme='dark'] :is(.nav-btn, .pill, .time, .status, .modal-wide, .alert-buttons button):hover { filter: brightness(1.15); }
+  html.mac [data-ovc]:hover { box-shadow: 0 0 0 1.5px var(--accent-soft), var(--shadow); }
+}
