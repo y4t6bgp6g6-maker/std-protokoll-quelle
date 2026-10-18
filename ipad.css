@@ -128,6 +128,8 @@ html.ipad-hoch .edge-fade.top { height: calc(env(safe-area-inset-top) + 64px); }
 /* ───────── Zettel: Tage nebeneinander ───────── */
 html.ipad[data-view='editor'] #app { max-width: none; padding-left: 20px; padding-right: 20px; }
 html.ipad[data-view='editor'] .nav { max-width: none; }
+/* Tagesleiste (Mo–So mit Stunden) braucht es nicht: alle Tage stehen sichtbar nebeneinander */
+html.ipad[data-view='editor'] .daybar { display: none; }
 html.ipad[data-view='editor'] .sum-bar,
 html.ipad[data-view='editor'] .pdf-thumb { max-width: 640px; margin-left: auto; margin-right: auto; }
 html.ipad.ipad-cols[data-view='editor'] #days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
