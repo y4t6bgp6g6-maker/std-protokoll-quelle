@@ -579,7 +579,7 @@ async function accountFetchReports() {
       reportStore.items = reportStore.items.filter((x) => x.src !== row.id);
       if (!row.deleted) {
         try {
-          n += addReports(serverReportItems(JSON.parse(row.data), out.names || {}));
+          n += addReports(serverReportItems(JSON.parse(row.data), out.names || {}), true);
         } catch {
           // unbekanntes Format – übergehen
         }

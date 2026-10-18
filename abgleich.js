@@ -1,5 +1,6 @@
 // Std-Protokoll – Abgleich mehrerer Geräte (nur Konten mit Abgleich, Schalter auf der Server-Seite; Plan:
-// Ideen/Plan-Abgleich-mehrere-Geraete.md). Zettel und Einstellungen gehen je Datensatz verschlüsselt an den Team-Server
+// Ideen/Plan-Abgleich-mehrere-Geraete.md). Zettel, Einstellungen, Reisekostenabrechnungen, Lohnabrechnungen und
+// Arbeitsscheine gehen je Datensatz verschlüsselt an den Team-Server
 // (POST /sync, cloudflare/team-worker.js) und von dort auf die anderen Geräte desselben Kontos.
 //
 // Eigener Speicher je Gerät (nie abgeglichen, nicht in der Sicherung) stdprotokoll.sync.v1:
@@ -15,13 +16,17 @@
 //              twin: anderer Zettel derselben Woche (auf zwei Geräten neu angelegt)
 //   hold: höchste App-Fassung, die schon gesendet hat; ist sie neuer als diese, sendet dieses Gerät nichts mehr
 //   devs: Geräte-ID → Name (für das Fenster)
-// Zettel: Konflikt-Fenster. Einstellungen: die zuletzt gesendete gilt (ohne SYNC_SET_SKIP, die bleiben je Gerät).
+// Arten: sheet (Zettel), set (Einstellung), trip (Abrechnung, ohne leere), pay (Lohnabrechnung, id = Monat „2026-08“),
+// report (Arbeitsschein, id = Schein-id).
+// Zettel, Abrechnung, Lohn: Konflikt-Fenster. Einstellungen, Arbeitsscheine: die zuletzt gesendete gilt (ohne
+// SYNC_SET_SKIP, die bleiben je Gerät). Arbeitsscheine holt jedes Gerät weiter selbst ab (Server/Google); ein auf einem
+// anderen Gerät gelöschter Schein kommt dabei nicht wieder (syncGone in addReports).
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 119;
+const SYNC_F = 120;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
-const SYNC_KINDS_HERE = ['sheet', 'set'];
+const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
 const SYNC_SET_SKIP = new Set(['theme', 'listMode', 'ovCards', 'encryptBackup', 'target', 'hoursPerDay', 'minuteStep', 'state']);
 const SYNC_PUSH_N = 40; // Worker: höchstens 40 Datensätze je Senden
@@ -72,8 +77,9 @@ function syncHash(s) {
   return `${(a >>> 0).toString(36)}.${(b >>> 0).toString(36)}.${s.length.toString(36)}`;
 }
 const syncH = (v) => (v == null ? 'del' : syncHash(syncCanon(v)));
-/** Zum Vergleich des Inhalts: ohne „zuletzt geändert“ */
-const syncBareH = (k, v) => (v == null ? 'del' : k === 'sheet' ? syncH({ ...v, updatedAt: 0 }) : syncH(v));
+/** Zum Vergleich des Inhalts: ohne „zuletzt geändert“, eingelesen um, angezeigte Tage der Abrechnung */
+const syncBareH = (k, v) =>
+  v == null ? 'del' : k === 'sheet' ? syncH({ ...v, updatedAt: 0 }) : k === 'trip' ? syncH({ ...v, updatedAt: 0, from: 0, to: 0 }) : k === 'pay' ? syncH({ ...v, importedAt: 0, updatedAt: 0 }) : syncH(v);
 /** Fingerabdruck nach dem automatischen Nachtragen beim Start (nur Zettel) */
 function syncAutoH(k, v) {
   if (k !== 'sheet' || v == null) return undefined;
@@ -96,14 +102,27 @@ function syncLocal() {
   const m = new Map();
   for (const s of savedSheets()) m.set(syncKeyOf('sheet', s.id), { k: 'sheet', id: s.id, v: s });
   for (const [n, v] of Object.entries(settings)) if (!SYNC_SET_SKIP.has(n) && v !== undefined) m.set(syncKeyOf('set', n), { k: 'set', id: n, v: { v } });
+  // leere Abrechnung (noch kein Tag): entsteht beim Öffnen und verschwindet beim Verlassen wieder
+  for (const t of trips) if (t.dates.length) m.set(syncKeyOf('trip', t.id), { k: 'trip', id: t.id, v: t });
+  for (const [n, p] of Object.entries(payslips)) if (p) m.set(syncKeyOf('pay', n), { k: 'pay', id: n, v: p });
+  for (const r of reports()) m.set(syncKeyOf('report', r.id), { k: 'report', id: r.id, v: r });
   return m;
 }
 /** Ein Datensatz dieses Geräts (null = gibt es nicht) */
 function syncLocalOne(k, id) {
   if (k === 'sheet') return savedSheet(findSheet(id)) || null;
   if (k === 'set') return !SYNC_SET_SKIP.has(id) && settings[id] !== undefined ? { v: settings[id] } : null;
+  if (k === 'trip') return trips.find((t) => t.id === id && t.dates.length) || null;
+  if (k === 'pay') return payslips[id] || null;
+  if (k === 'report') return reports().find((r) => r.id === id) || null;
   return null;
 }
+/** Auf einem anderen Gerät gelöscht (Arbeitsschein beim Abholen nicht wieder aufnehmen) */
+const syncGone = (k, id) => {
+  if (!(account && account.sync)) return false;
+  const e = syncState().recs[syncKeyOf(k, id)];
+  return !!e && e.h === 'del';
+};
 
 /** Was zu senden ist: [{ key, k, id, base, del, v, h }] – ohne Datensätze mit offenem Konflikt */
 function syncChanges(local = syncLocal()) {
@@ -311,10 +330,19 @@ async function syncApply(records) {
         window.fehlerMelden?.(e, 'abgleich');
         continue;
       }
-    if (r.k === 'sheet' && v && !(v.id === r.id && v.weekStart && Array.isArray(v.days) && v.days.length === 7)) continue;
+    if (v && !syncValid(r.k, r.id, v)) continue;
     syncIncoming({ k: r.k, id: r.id, rev: r.rev, del: !!r.del, v, dev: r.dev, updated: r.updated }, ch);
   }
   syncAfter(ch);
+}
+
+/** Eingehende Fassung passt zur Art (sonst übergehen) */
+function syncValid(k, id, v) {
+  if (k === 'sheet') return v.id === id && !!v.weekStart && Array.isArray(v.days) && v.days.length === 7;
+  if (k === 'trip') return v.id === id && Array.isArray(v.dates) && !!v.over && typeof v.over === 'object';
+  if (k === 'pay') return v.year > 2000 && v.month >= 1 && v.month <= 12 && payKey(v.year, v.month) === id && !!v.hours;
+  if (k === 'report') return v.id === id && !!v.date;
+  return true;
 }
 
 /** Ein eingehender Datensatz: gleich → nur merken; hier unverändert → übernehmen; hier auch geändert → Einstellung:
@@ -355,7 +383,7 @@ function syncIncoming(srv, ch) {
     st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
     return;
   }
-  if (srv.k === 'set') {
+  if (srv.k === 'set' || srv.k === 'report') {
     // schon einmal abgeglichen und hier geändert: die eigene gewinnt (auf die Fassung des Servers senden);
     // zum ersten Mal (neues Gerät): die des Servers
     if (e) st.recs[key] = { rev: srv.rev, h: e.h };
@@ -388,6 +416,23 @@ function syncPut(srv, ch) {
     if (srv.del) delete settings[srv.id];
     else settings[srv.id] = srv.v.v;
     ch.settings.push(srv.id);
+  } else if (srv.k === 'trip') {
+    const t = trips.find((x) => x.id === srv.id);
+    if (srv.del) trips = trips.filter((x) => x !== t);
+    // dasselbe Objekt behalten: offene Fenster der Abrechnung (Uhrzeit, Unterschrift) schreiben sonst ins Leere
+    else if (t) {
+      for (const n of Object.keys(t)) delete t[n];
+      Object.assign(t, structuredClone(srv.v));
+    } else trips.push(structuredClone(srv.v));
+    ch.trips = true;
+  } else if (srv.k === 'pay') {
+    if (srv.del) delete payslips[srv.id];
+    else payslips[srv.id] = structuredClone(srv.v);
+    ch.pays = true;
+  } else if (srv.k === 'report') {
+    reportStore.items = reportStore.items.filter((r) => r.id !== srv.id);
+    if (!srv.del) reportStore.items.push(structuredClone(srv.v));
+    ch.reports = true;
   }
 }
 /** Zettel twin weicht dem gleichen Zettel keep (andere ID): Abrechnungen hängen danach an keep */
@@ -406,7 +451,10 @@ function syncDropTwin(twin, keep, ch) {
 
 /** Nach dem Übernehmen: speichern (ohne erneut zu senden – die Fingerabdrücke stimmen schon) und neu zeichnen */
 function syncAfter(ch) {
-  if (!ch.sheets && !ch.settings.length) return;
+  if (ch.trips) saveTrips();
+  if (ch.pays) savePayslips();
+  if (ch.reports) saveReports();
+  if (!ch.sheets && !ch.settings.length && !ch.trips && !ch.pays && !ch.reports) return;
   if (ch.settings.length) {
     settings.hiddenSuggestions = { site: [], work: [], ...settings.hiddenSuggestions };
     saveSettings();
@@ -434,6 +482,8 @@ function syncRerender() {
     if (!currentSheet()) return goBack();
     return refreshAll();
   }
+  // Abrechnung auf einem anderen Gerät gelöscht
+  if (currentView === 'trip' && !currentTrip()) return goBack();
   importRerender();
 }
 
@@ -452,11 +502,22 @@ function syncRetryHeld() {
 
 /** Name eines Geräts für das Fenster */
 const syncDevName = (dev) => (syncState().devs || {})[dev] || 'Anderes Gerät';
-/** „Zettel 13.–17.10.“ bzw. „Zettel 29.09.–03.10.“ */
-function syncTitle(s) {
-  const a = sheetFirstDate(s);
-  const b = sheetLastDate(s);
-  return `Zettel ${a.getMonth() === b.getMonth() ? `${pad(a.getDate())}.` : fmtDayMonth(a)}–${fmtDayMonth(b)}`;
+/** „13.–17.10.“ bzw. „29.09.–03.10.“ */
+const syncRange = (a, b) => (+a === +b ? fmtDayMonth(a) : `${a.getMonth() === b.getMonth() ? `${pad(a.getDate())}.` : fmtDayMonth(a)}–${fmtDayMonth(b)}`);
+/** Titel im Fenster: „Zettel 13.–17.10.“, „Abrechnung 13.–15.10.“, „Lohn August 2026“ */
+function syncTitle(k, x) {
+  if (k === 'trip') {
+    const d = [...x.dates].sort();
+    return `Abrechnung ${syncRange(parseDate(d[0]), parseDate(d.at(-1)))}`;
+  }
+  if (k === 'pay') return `Lohn ${MONTHS[x.month - 1]} ${x.year}`;
+  return `Zettel ${syncRange(sheetFirstDate(x), sheetLastDate(x))}`;
+}
+/** Summe oben in der Karte: Stunden, Verpflegung, Auszahlung */
+function syncTotal(k, x) {
+  if (k === 'trip') return fmtEuro(tripTotal(tripRows(x)));
+  if (k === 'pay') return x.auszahlung == null ? '' : fmtMoney(x.auszahlung, true);
+  return fmtH(sheetTotal(x));
 }
 /** Eigener Name im Fenster („iPhone“) */
 const syncMyName = () => ((accountDevs || []).find((d) => d.me) || {}).name || (syncState().devs || {})[deviceInfo().id] || deviceKind();
@@ -473,6 +534,43 @@ function syncSheetDiff(mine, theirs) {
   if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: mine.sentAt ? 'gesendet' : 'offen', theirs: theirs.sentAt ? 'gesendet' : 'offen' });
   return out;
 }
+
+/** Unterschiede zweier Fassungen einer Abrechnung: Tage, Ort/Datum (tripDiff), dazu Name, Unterschrift, gesendet */
+function syncTripDiff(mine, theirs) {
+  const out = tripDiff(mine, theirs);
+  if ((mine.name || '') !== (theirs.name || '')) out.push({ label: 'Name', mine: mine.name || '–', theirs: theirs.name || '–' });
+  if ((mine.signature || '') !== (theirs.signature || ''))
+    out.push({ label: 'Unterschrift', mine: mine.signature ? 'vorhanden' : '–', theirs: theirs.signature ? (mine.signature ? 'andere' : 'vorhanden') : '–' });
+  if (!!mine.sentAt !== !!theirs.sentAt) out.push({ label: 'Status', mine: mine.sentAt ? 'gesendet' : 'offen', theirs: theirs.sentAt ? 'gesendet' : 'offen' });
+  return out;
+}
+/** Felder der Lohnabrechnung im Fenster (wie auf ihrer Seite; Funktion: HOUR_KINDS steht erst in app.js) */
+const syncPayFields = () => [
+  ['tarif', 'Steuertarif', 'y'],
+  ['rate', 'Stundenlohn', '€'],
+  ...HOUR_KINDS.map(([k, label]) => [`hours.${k}`, label, 'h']),
+  ['zulage', 'Zulagen', '€'],
+  ['brutto', 'Gesamt-Brutto', '€'],
+  ['steuer', 'Steuern', '€'],
+  ['sv', 'Sozialabgaben', '€'],
+  ['netto', 'Netto-Verdienst', '€'],
+  ['abschlag', 'Abschlag', '€'],
+  ['bav', 'Betriebsrente', '€'],
+  ['nettoSonst', 'Weitere Netto-Be-/Abzüge', '€'],
+  ['auszahlung', 'Auszahlung', '€'],
+  ['kvZusatz', 'Zusatzbeitrag', '%'],
+  ['ytd', 'Gesamt-Brutto im Jahr', '€'],
+];
+/** Unterschiede zweier Fassungen einer Lohnabrechnung: je abweichendes Feld */
+function syncPayDiff(mine, theirs) {
+  const get = (p, path) => path.split('.').reduce((o, n) => (o == null ? o : o[n]), p);
+  const fmt = (v, unit, p) =>
+    unit === 'y' ? String(v || p.year) : v == null || v === '' ? '–' : unit === '€' ? fmtMoney(v, true) : unit === 'h' ? fmtH(v * 60) : `${fmtDec(v * 60)} %`;
+  return syncPayFields().map(([path, label, unit]) => ({ label, mine: fmt(get(mine, path), unit, mine), theirs: fmt(get(theirs, path), unit, theirs) })).filter(
+    (d) => d.mine !== d.theirs
+  );
+}
+const syncDiff = (k, mine, theirs) => (k === 'trip' ? syncTripDiff(mine, theirs) : k === 'pay' ? syncPayDiff(mine, theirs) : syncSheetDiff(mine, theirs));
 
 /** Wartende Konflikte nacheinander zeigen – nicht unter einem anderen Fenster und nicht, solange der betroffene Zettel
  *  ungespeicherte Tage hat */
@@ -540,20 +638,20 @@ function syncAskConflict(c, mine, remaining) {
   return new Promise((resolve) => {
     const theirs = c.srv.del ? null : c.srv.v;
     const known = c.srv.dev in (syncState().devs || {});
-    const diffs = mine && theirs ? syncSheetDiff(mine, theirs).map((d) => ({ ...d, w: wordDiffHTML(d.mine, d.theirs) })) : [];
+    const diffs = mine && theirs ? syncDiff(c.k, mine, theirs).map((d) => ({ ...d, w: wordDiffHTML(d.mine, d.theirs) })) : [];
     const card = (side, x, name, ms, cls, own) => `
       <div class="cf-card" data-c="${side}" role="button">
-        <div class="cf-card-head"><span class="cf-tag ${cls}"${own || known ? ' translate="no"' : ''}>${escapeHtml(name)}</span><b>${x ? fmtH(sheetTotal(x)) : ''}</b></div>
+        <div class="cf-card-head"><span class="cf-tag ${cls}"${own || known ? ' translate="no"' : ''}>${escapeHtml(name)}</span><b>${x ? syncTotal(c.k, x) : ''}</b></div>
         <div class="cf-card-when">${x ? '' : 'gelöscht '}${ms ? fmtStamp(ms) : ''}</div>
         ${diffs.map((d) => `<div class="cf-card-day"><b>${d.label}</b><span class="cf-txt" translate="no">${side === 'mine' ? d.w.mine : d.w.theirs}</span></div>`).join('')}
         <span class="cf-card-go">${side === 'mine' ? (x ? 'Behalten' : 'Gelöscht lassen') : x ? 'Übernehmen' : 'Löschen'}</span>
       </div>`;
     const modal = openModal(
       `<div class="alert-body cf">
-        <b>${syncTitle(mine || theirs)} auf zwei Geräten geändert</b>
+        <b>${syncTitle(c.k, mine || theirs)} auf zwei Geräten geändert</b>
         <div class="cf-scroll"><div class="alert-msg">
           <p class="cf-intro">Welche Fassung soll gelten?</p>
-          <div class="cf-cards">${card('mine', mine, syncMyName(), mine && mine.updatedAt, 'app', true)}${card('theirs', theirs, syncDevName(c.srv.dev), c.srv.updated, 'new', false)}</div>
+          <div class="cf-cards">${card('mine', mine, syncMyName(), mine && (mine.updatedAt || mine.importedAt), 'app', true)}${card('theirs', theirs, syncDevName(c.srv.dev), c.srv.updated, 'new', false)}</div>
         </div><div class="cf-bar"><i></i></div></div>
       </div>
       ${remaining > 1 ? `<label class="cf-all"><span>Für alle ${remaining} gleich entscheiden</span><input type="checkbox" class="cf-switch"></label>` : ''}`,

@@ -393,6 +393,7 @@ function savePayslips() {
     window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
+  syncSoon();
 }
 const payKey = (year, month) => `${year}-${pad(month)}`;
 // Früher eingelesene Abrechnungen: falsch gelesene Summen einmal nachträglich aus den übrigen Werten ergänzen (danach
@@ -825,6 +826,8 @@ function updatePayslipField(input) {
   const key = location.hash.replace('#/lohn/', '');
   const p = payslips[key];
   if (!p) return;
+  // zuletzt geändert (Konflikt-Fenster beim Abgleich)
+  p.updatedAt = Date.now();
   const path = input.dataset.ps;
   const v = path === 'month' ? Number(input.value) : input.value.trim() === '' ? null : parseNum(input.value);
   if (path === 'tarif') {
@@ -1319,10 +1322,13 @@ function saveReports() {
     window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
+  syncSoon();
 }
 /** Neue Scheine übernehmen, gleiche Nummer ersetzt den alten (nachträglich geänderter Schein) mit allen Teilen –
- *  die Zahl der Zeitzeilen und damit die IDs („123“, „123#1“ …) kann sich ändern; Rückgabe: Anzahl neue */
-function addReports(list) {
+ *  die Zahl der Zeitzeilen und damit die IDs („123“, „123#1“ …) kann sich ändern; Rückgabe: Anzahl neue.
+ *  fetched: automatisch abgeholt – auf einem anderen Gerät gelöschte Scheine nicht wieder aufnehmen (Abgleich) */
+function addReports(list, fetched = false) {
+  if (fetched) list = list.filter((r) => !syncGone('report', r.id));
   let n = 0;
   const nos = new Set(list.map((r) => r.no).filter(Boolean));
   const ids = new Set(list.map((r) => r.id));
@@ -1466,7 +1472,7 @@ async function fetchReports(manual = false) {
     if (data.error) throw new Error(data.error === 'key' ? 'Schlüssel in der Abholadresse falsch' : data.error);
     for (const f of data.files || []) {
       try {
-        n += addReports(parseWorkReport(f.meta, f.content));
+        n += addReports(parseWorkReport(f.meta, f.content), true);
       } catch {
         // keine Arbeitsschein-Datei – übergehen
       }
@@ -2137,7 +2143,7 @@ function route() {
   }
   if (currentView !== 'editor') editorSaved = null;
   // Editor verlassen: zurückgehaltene Fassungen und wartende Konflikte (Abgleich) jetzt
-  if (prevView === 'editor' && currentView !== 'editor') syncSoon(0);
+  if ((prevView === 'editor' || prevView === 'trip') && currentView !== prevView) syncSoon(0);
   updateTopButton();
   updateTabbar();
   pageAnim(prevView, currentView);
@@ -3611,6 +3617,8 @@ function saveTrips(changed) {
     window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen!');
   }
+  // gespeichert wird bei jedem Tastendruck: erst nach einer Pause senden (beim Verlassen sofort)
+  syncSoon(2000);
 }
 const findTrip = (id) => trips.find((t) => t.id === id);
 const currentTrip = () => findTrip(tripId);

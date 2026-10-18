@@ -280,6 +280,7 @@ if (LANG === 'ru') {
       'Auf allen Geräten verlassen?': 'Выйти на всех устройствах?',
       // ── Abgleich: Konflikt-Fenster, neuere Fassung ──
       'Welche Fassung soll gelten?': 'Какой вариант оставить?', Behalten: 'Оставить', 'Gelöscht lassen': 'Оставить удалённым',
+      Zusatzbeitrag: 'Доп. взнос',
       gelöscht: 'удалён', 'Anderes Gerät': 'Другое устройство', 'Bitte App neu öffnen': 'Откройте приложение заново',
       'Auf einem anderen Gerät läuft schon eine neuere Fassung.': 'На другом устройстве уже работает более новая версия.',
     },
@@ -311,6 +312,8 @@ if (LANG === 'ru') {
       [/^Konto: (.+)$/, 'Аккаунт: $1'],
       [/^Schon (\d) Geräte$/, 'Уже $1 устройства'],
       [/^Zettel (.+) auf zwei Geräten geändert$/, 'Табель $1 изменён на двух устройствах'],
+      [/^Abrechnung (.+) auf zwei Geräten geändert$/, 'Отчёт о командировке $1 изменён на двух устройствах'],
+      [/^Lohn (\S+) (\d{4}) auf zwei Geräten geändert$/, (m, mo, y) => `Расчётный лист за ${tr(mo).toLowerCase()} ${y} изменён на двух устройствах`],
       [/^gelöscht (.+)$/, 'удалён $1'],
       [/^„(.+)“ abmelden\?$/, 'Отключить «$1»?'],
       [/^· seit (\d+\.\d+\.)$/, '· с $1'],
