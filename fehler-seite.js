@@ -31,7 +31,7 @@ let adminPing = null;
  *  ({ day, requests, read, write, ai }, je [verbraucht, Grenze]; neu ab 0 Uhr UTC) */
 let adminDict = null;
 let adminUsage = null;
-/** Konten: [{ user, name, fullname, last, bytes }] (letzte Sicherung, Größe aller Sicherungen) */
+/** Konten: [{ user, name, fullname, last, bytes, sync, devices }] (letzte Sicherung, Größe aller Sicherungen, Abgleich mit Geräten) */
 let adminAccounts = null;
 /** Arbeitsscheine: Namen ohne eindeutiges Konto [{ key, name, n, last }] */
 let adminOpen = null;
@@ -149,8 +149,9 @@ function adminServerHTML() {
 const adminVer = (v) => Number(String(v || '').split('-v')[1]) || 0;
 
 /** Team diesen Monat mit den Konten: je Person App-Version (veraltete gelb) und letzter Upload, darunter Benutzername
- *  und letzte Sicherung bzw. „ohne Konto“ (orange); Konten ohne Eintrag in diesem Monat unten („nicht im Team“).
- *  Lang drücken → Menü: aus dem Team entfernen (z. B. doppelt nach Neuinstallation) bzw. Konto löschen */
+ *  und letzte Sicherung bzw. „ohne Konto“ (orange), bei Konten mit Abgleich je Gerät eine Zeile (zuletzt gesehen);
+ *  Konten ohne Eintrag in diesem Monat unten („nicht im Team“).
+ *  Lang drücken → Menü: aus dem Team entfernen (z. B. doppelt nach Neuinstallation), Abgleich ein/aus, Konto löschen */
 function adminTeamHTML(tm, accounts) {
   if (!tm) return '';
   const people = tm.people || [];
@@ -163,20 +164,25 @@ function adminTeamHTML(tm, accounts) {
   const cleanup = y && m ? fmtDayMonth(new Date(y, m + 1, 1)) : '';
   const sub = (a) =>
     a
-      ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>`
+      ? `<span class="fb-sub"><span translate="no">${escapeHtml(a.user)}</span> · ${a.last ? `Sicherung ${teamAgo(a.last)}` : 'keine Sicherung'}</span>${
+          a.sync
+            ? (a.devices || []).map((d) => `<span class="fb-sub">⇄ <span translate="no">${escapeHtml(d.name || 'Gerät')}</span> · <span>${d.state === 'left' ? 'nicht im Team' : d.seen ? teamAgo(d.seen) : '–'}</span></span>`).join('') ||
+              '<span class="fb-sub">⇄ <span>Abgleich ohne Gerät</span></span>'
+            : ''
+        }`
       : '<span class="fb-sub fb-noacc">ohne Konto</span>';
   const rows = people
     .map((p) => {
       const v = adminVer(p.version);
       const a = byMember.get(p.member);
-      return `<div class="fb-person" data-fb-hold data-member="${escapeHtml(p.member || '')}" data-user="${escapeHtml(a ? a.user : '')}"><span><b>${escapeHtml(p.name || '?')}</b>${sub(a)}</span><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
+      return `<div class="fb-person" data-fb-hold data-member="${escapeHtml(p.member || '')}" data-user="${escapeHtml(a ? a.user : '')}" data-sync="${a && a.sync ? 1 : ''}"><span><b>${escapeHtml(p.name || '?')}</b>${sub(a)}</span><span class="${v && v >= newest ? 'muted' : 'fb-old'}">${v ? `v${v}` : 'Version ?'}</span><span class="muted">${p.updated ? teamAgo(p.updated) : ''}</span></div>`;
     })
     .join('');
   const loose = list
     .filter((a) => !people.some((p) => p.member && p.member === a.member))
     .map(
       (a) =>
-        `<div class="fb-person" data-fb-hold data-user="${escapeHtml(a.user)}"><span><b translate="no">${escapeHtml(a.name || a.fullname || a.user)}</b>${sub(a)}</span><span></span><span class="muted">nicht im Team</span></div>`
+        `<div class="fb-person" data-fb-hold data-user="${escapeHtml(a.user)}" data-sync="${a.sync ? 1 : ''}"><span><b translate="no">${escapeHtml(a.name || a.fullname || a.user)}</b>${sub(a)}</span><span></span><span class="muted">nicht im Team</span></div>`
     )
     .join('');
   return `<div class="card fb-store">
@@ -197,6 +203,13 @@ function adminPersonMenu(el) {
       destructive: true,
       run: () => confirmDialog('Aus dem Team entfernen?', 'Wird die App dort noch benutzt, kommt der Eintrag zurück.', 'Entfernen', () => adminPersonDelete(member), true),
     });
+  // Abgleich mehrerer Geräte (bis zu drei je Konto); aus: nur das zuletzt benutzte Gerät bleibt im Team
+  if (user)
+    actions.push(
+      el.dataset.sync
+        ? { label: 'Abgleich ausschalten', run: () => confirmDialog('Abgleich ausschalten?', 'Nur das zuletzt benutzte Gerät bleibt im Team.', 'Ausschalten', () => adminSyncSwitch(user, false), true) }
+        : { label: 'Abgleich einschalten', run: () => adminSyncSwitch(user, true) }
+    );
   if (user)
     actions.push({
       label: 'Konto löschen',
@@ -286,6 +299,21 @@ function adminOpenAssign(key) {
   ]);
 }
 
+/** Abgleich für ein Konto ein- oder ausschalten, danach neu laden (Geräte-Liste) */
+async function adminSyncSwitch(user, on) {
+  if (!user || adminBusy) return;
+  adminBusy = true;
+  try {
+    await adminRequest('PUT', '/sync-switch', { user, on });
+    haptic();
+    toast(on ? 'Abgleich eingeschaltet' : 'Abgleich ausgeschaltet');
+  } catch {
+    toast('Keine Verbindung');
+  }
+  adminBusy = false;
+  adminLoad();
+}
+
 async function adminAccountDelete(user) {
   if (!user || adminBusy) return;
   adminBusy = true;
@@ -311,7 +339,9 @@ function adminStorageHTML(s) {
     ['Teammeeting', s.posts, 'var(--success)'],
     ['Fehlerberichte', s.errors, 'var(--danger)'],
     ['Sicherungen', s.backups || 0, 'var(--warning)'],
-    ['Datenbank', Math.max(0, s.total - s.sheets - s.posts - s.errors - (s.backups || 0)), 'var(--muted)'],
+    // Abgleich mehrerer Geräte: erst sichtbar, wenn ein Konto ihn nutzt
+    ...(s.sync ? [['Abgleich', s.sync, '#af52de']] : []),
+    ['Datenbank', Math.max(0, s.total - s.sheets - s.posts - s.errors - (s.backups || 0) - (s.sync || 0)), 'var(--muted)'],
   ];
   const legend = `<div class="fb-legend">${parts.map(([n, v, c]) => `<span><i style="background:${c}"></i>${n}<b>${adminBytes(v)}</b></span>`).join('')}</div>`;
   // Balken bis zum Limit; jeder belegte Teil mindestens 3 px breit, damit man ihn sieht

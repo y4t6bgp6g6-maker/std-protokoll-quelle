@@ -266,6 +266,10 @@ if (LANG === 'ru') {
       'Alle müssen danach den neuen Code eingeben.': 'Потом всем нужно ввести новый код.', 'Mindestens 6 Zeichen: a–z, 0–9, Punkt, Strich': 'Минимум 6 символов: a–z, 0–9, точка, дефис',
       'Das ist der Admin-Code': 'Это код администратора', statt: 'вместо', 'ohne Konto': 'без аккаунта', 'nicht im Team': 'не в команде', 'keine Sicherung': 'нет копии',
       'Aus dem Team entfernen': 'Удалить из команды', 'Ins Wörterbuch': 'В словарь', Ändern: 'Изменить',
+      Abgleich: 'Синхронизация', 'Abgleich einschalten': 'Включить синхронизацию', 'Abgleich ausschalten': 'Выключить синхронизацию',
+      'Abgleich ausschalten?': 'Выключить синхронизацию?', Ausschalten: 'Выключить', 'Nur das zuletzt benutzte Gerät bleibt im Team.': 'В команде останется только последнее устройство.',
+      'Abgleich eingeschaltet': 'Синхронизация включена', 'Abgleich ausgeschaltet': 'Синхронизация выключена', Gerät: 'Устройство',
+      'Abgleich ohne Gerät': 'Синхронизация без устройства',
     },
 
     patterns: [

@@ -46,6 +46,18 @@
 //                  ← { action: 'delete', user, auth }                    Konto und Sicherungen löschen
 //   PUT    /backup  Header X-User, X-Auth; Inhalt = verschlüsselte Sicherung (Text)  → { at }
 //                    Behalten: die drei neuesten und je Tag (deutsche Zeit) die letzte der vergangenen BACKUP_DAYS Tage
+// Abgleich mehrerer Geräte (nur Konten mit Schalter accounts.sync; Plan: Ideen/Plan-Abgleich-mehrere-Geraete.md):
+//   Bei diesen Konten brauchen alle Anfragen mit Passwort zusätzlich das Token eines Geräts des Kontos (Header X-Token
+//   bzw. token im Inhalt), sonst 403 'device'; abgemeldete Geräte bekommen 'removed', nach „Team verlassen“ auf einem
+//   Gerät alle anderen 'left'. join braucht device (Geräte-ID) und deviceName; mehr als SYNC_DEVICES → 409 'devices'.
+//   Anfrage mit dem vorigen Passwort → 403 'pwchanged' (kein Fehlversuch).
+//   POST   /sync    ← { code, user, auth, token, device, action, … } (alles im Inhalt, Content-Type text/plain)
+//                    head                      → { rev, kg, f }
+//                    pull { since }            → { records: [{ k, id, rev, updated, dev, del, f, kg, data }], devices, rev, more }
+//                    push { f, kg, records: [{ k, id, base, del, data }] } → { accepted: [{ k, id, rev }], rejected: [Fassung des Servers], rev }
+//                         angenommen nur, wenn auf dem Server noch die Fassung base liegt (0 = neu); data verschlüsselt
+//                    devices / device-name { device, name } / device-remove { device } → { devices }
+//   POST   /account ← { action: 'device-remove', user, auth, device }  Gerät abmelden ohne eigenes Token (beim Anmelden voll)
 // Arbeitsscheine aus einer Arbeitsschein-App (ohne Team-Code, Header X-Report-Key = Secret REPORT_KEY, jede Herkunft):
 //   POST   /reports ← Schein (Format „arbeitsschein/1“, siehe checkReport) → { ok, empfaenger, offen }
 //                    Empfänger: Verfasser und alle Mitarbeiter, zugeordnet über den echten Namen (voller Name aus den
@@ -64,6 +76,7 @@
 //   PUT    /alias  ← { key, user }                             wartenden Namen einem Konto zuordnen (wird gemerkt, Scheine zugestellt)
 //   DELETE /alias  ← { key }                                   wartenden Namen verwerfen (z. B. Aushilfe ohne Konto)
 //   PUT    /code   ← { code }                                  neuer Team-Code (gilt sofort; alle müssen ihn neu eingeben) → { code }
+//   PUT    /sync-switch ← { user, on }                         Abgleich für ein Konto ein/aus
 //   DELETE /member ← { member }                                Person aus dem Team entfernen (z. B. doppelt nach Neuinstallation;
 //                                                              benutzt sie die App noch, erscheint sie beim nächsten Upload wieder)
 //   PUT    /push   ← { endpoint, keys: { p256dh, auth } }      Gerät für Mitteilungen anmelden
@@ -311,7 +324,7 @@ function cors(req) {
     ? {
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code, X-Admin-Code, X-User, X-Auth',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Team-Code, X-Admin-Code, X-User, X-Auth, X-Token',
         'Access-Control-Max-Age': '86400',
         Vary: 'Origin',
       }
@@ -448,7 +461,11 @@ async function checkAccount(db, user, auth, ip = '') {
   }
   if ((own && own.fails >= AUTH_FAILS && now - own.failed < wait) || (row.fails >= AUTH_FAILS_ALL && now - (row.failed || 0) < wait))
     return { error: 'wait', status: 429 };
-  if (!sameCode(await sha256(auth), row.auth)) {
+  const authHash = await sha256(auth);
+  if (!sameCode(authHash, row.auth)) {
+    // vorheriges Passwort (auf einem anderen Gerät geändert): kein Fehlversuch – sonst sperrten die anderen Geräte
+    // mit ihren regelmäßigen Anfragen das ganze Konto
+    if (row.old_auth && sameCode(authHash, row.old_auth)) return { error: 'pwchanged', status: 403 };
     await db.batch([
       db.prepare(AUTH_FAILS_TABLE),
       db.prepare('INSERT INTO auth_fails (key, fails, failed) VALUES (?, 1, ?) ON CONFLICT(key) DO UPDATE SET fails = CASE WHEN ? - failed > ? THEN 1 ELSE fails + 1 END, failed = ?')
@@ -496,7 +513,7 @@ async function accountRequest(db, body, h, ip = '') {
     // mitgeschickter Eintrag: gehört er wirklich diesem iPhone? (Token der Zeile in members bzw. beim Konto gemerkt;
     // sonst ließe sich ein Kollege aus dem Team drängen – auch zum Monatsanfang, wenn members leer ist)
     const sent = await db.prepare('SELECT token FROM members WHERE member = ?').bind(body.member).first();
-    const sentOwn = await memberOwned(db, body.member, token);
+    const sentOwn = !(await ownsMember(db, body.member, token));
     const exists = await db.prepare('SELECT user FROM accounts WHERE user = ?').bind(user).first();
     if (!exists) {
       if (body.mode !== 'create') return json({ error: 'unknown' }, 404, h);
@@ -514,6 +531,35 @@ async function accountRequest(db, body, h, ip = '') {
     // Konto ohne Eintrag: den mitgeschickten nur, wenn er diesem iPhone gehört (sonst gäbe es einen fremden her)
     if (!validId(row.member) && !sentOwn) return json({ error: 'token' }, 403, h);
     const member = validId(row.member) ? row.member : body.member;
+    const now = Date.now();
+    // Konto mit Abgleich: Gerät eintragen (gleiche Geräte-ID = derselbe Platz mit neuem Token), die anderen Geräte
+    // bleiben angemeldet; höchstens SYNC_DEVICES
+    if (row.sync) {
+      if (!validId(body.device)) return json({ error: 'device' }, 403, h);
+      const devs = (await db.prepare('SELECT device, token, name, created, state FROM devices WHERE user = ?').bind(user).all()).results;
+      const mine = devs.find((d) => d.device === body.device) || devs.find((d) => d.token === token);
+      if (mine && mine.state === 'removed') return json({ error: 'removed' }, 403, h);
+      const others = devs.filter((d) => d !== mine && d.state !== 'removed');
+      if (others.length >= SYNC_DEVICES)
+        return json({ error: 'devices', devices: others.map(({ device, name, created }) => ({ device, name, created })) }, 409, h);
+      const devName = String(body.deviceName ?? '').trim().slice(0, 40) || 'Gerät';
+      const ops = [];
+      // Platzhalter vom Einschalten (Geräte-ID noch unbekannt): durch die echte ersetzen
+      if (mine && mine.device !== body.device) ops.push(db.prepare('DELETE FROM devices WHERE user = ? AND device = ?').bind(user, mine.device));
+      ops.push(
+        db
+          .prepare(
+            "INSERT INTO devices (user, device, token, name, created, seen, state, changed) VALUES (?, ?, ?, ?, ?, ?, 'active', ?) " +
+              "ON CONFLICT(user, device) DO UPDATE SET token = excluded.token, seen = excluded.seen, state = 'active', changed = excluded.changed"
+          )
+          .bind(user, body.device, token, mine ? mine.name || devName : devName, mine ? mine.created : now, now, now),
+        db.prepare('UPDATE accounts SET member = NULL, token = NULL WHERE member = ? AND user <> ?').bind(member, user),
+        db.prepare('UPDATE accounts SET member = ?, token = ?, name = COALESCE(NULLIF(?, \'\'), name), fullname = COALESCE(NULLIF(?, \'\'), fullname) WHERE user = ?').bind(member, token, name, fullname, user)
+      );
+      if (member !== body.member && sent && sentOwn) ops.push(db.prepare('DELETE FROM members WHERE member = ?').bind(body.member));
+      await db.batch(ops);
+      return json({ member, backups: await backupList(db, user), sync: true }, 200, h);
+    }
     const ops = [
       db.prepare('UPDATE accounts SET member = NULL, token = NULL WHERE member = ? AND user <> ?').bind(member, user),
       db.prepare('UPDATE accounts SET member = ?, token = ?, name = COALESCE(NULLIF(?, \'\'), name), fullname = COALESCE(NULLIF(?, \'\'), fullname) WHERE user = ?').bind(member, token, name, fullname, user),
@@ -524,8 +570,17 @@ async function accountRequest(db, body, h, ip = '') {
     await db.batch(ops);
     return json({ member, backups: await backupList(db, user) }, 200, h);
   }
+  await ensureSync(db);
   const row = await checkAccount(db, user, body.auth, ip);
   if (row.error) return json({ error: row.error }, row.status, h);
+  // Schon SYNC_DEVICES Geräte beim Anmelden: eins abmelden (Passwort reicht, das neue Gerät hat noch kein Token)
+  if (body.action === 'device-remove') {
+    if (!row.sync || !validId(body.device)) return json({ error: 'device' }, 400, h);
+    await deviceRemove(db, user, body.device);
+    return json({ devices: await deviceList(db, user) }, 200, h);
+  }
+  const devErr = await deviceError(db, row, body.token);
+  if (devErr) return json({ error: devErr }, 403, h);
   if (body.action === 'list') return json({ backups: await backupList(db, user) }, 200, h);
   if (body.action === 'reports') {
     await reportTables(db);
@@ -554,15 +609,18 @@ async function accountRequest(db, body, h, ip = '') {
   }
   if (body.action === 'password') {
     if (!validAuth(body.newAuth)) return json({ error: 'id' }, 400, h);
-    // alte Sicherungen sind mit dem alten Passwort verschlüsselt – mit dem neuen ließen sie sich nicht öffnen
+    // Mit Abgleich müssten alle Datensätze neu verschlüsselt werden – kommt in einer späteren Etappe (E6)
+    if (row.sync) return json({ error: 'sync' }, 409, h);
+    // alte Sicherungen sind mit dem alten Passwort verschlüsselt – mit dem neuen ließen sie sich nicht öffnen.
+    // Der alte Prüfwert bleibt als old_auth: andere Geräte mit dem alten Passwort sind dann kein Fehlversuch
     await db.batch([
-      db.prepare('UPDATE accounts SET auth = ? WHERE user = ?').bind(await sha256(body.newAuth), user),
+      db.prepare('UPDATE accounts SET auth = ?, old_auth = auth, kg = kg + 1 WHERE user = ?').bind(await sha256(body.newAuth), user),
       db.prepare('DELETE FROM backups WHERE user = ?').bind(user),
     ]);
     return json({ ok: true }, 200, h);
   }
   if (body.action === 'delete') {
-    await db.batch([db.prepare('DELETE FROM backups WHERE user = ?').bind(user), db.prepare('DELETE FROM accounts WHERE user = ?').bind(user)]);
+    await db.batch(accountDeleteOps(db, user));
     return json({ ok: true }, 200, h);
   }
   return json({ error: 'action' }, 400, h);
@@ -650,21 +708,234 @@ async function ensureTokenColumn(db) {
   } catch {}
   tokenColumn = true;
 }
-/** Gehört der Team-Eintrag diesem iPhone (token = SHA-256)? Mit Zeile in members deren Token, sonst das beim Konto
- *  gemerkte (Monatsanfang, nach dem Verlassen). Ohne Konto oder ohne gemerktes Token (Konto von vor v102): frei */
-async function memberOwned(db, member, token) {
+// ───────── Abgleich mehrerer Geräte (nur Konten mit Schalter accounts.sync, gesetzt auf der Server-Seite) ─────────
+// Ein Konto mit Abgleich hat bis zu SYNC_DEVICES Geräte (Tabelle devices, je Gerät eigenes Token); jedes gilt als
+// Besitzer des Team-Eintrags. Die Daten liegen je Datensatz verschlüsselt in sync (rev fortlaufend je Konto,
+// accounts.sync_rev); jede überschriebene Fassung SYNC_OLD_DAYS Tage in sync_old.
+const SYNC_DEVICES = 3;
+const SYNC_KINDS = new Set(['sheet', 'trip', 'pay', 'report', 'set', 'bh-heft', 'bh-week', 'bh-month', 'bh-profile', 'bh-img']);
+const SYNC_PUSH_MAX = 40; // Datensätze je Senden (je Datensatz drei Anweisungen in einem Rutsch)
+const SYNC_DATA_MAX = 1_900_000; // Zeichen je Datensatz (D1: höchstens 2 MB je Zeile)
+const SYNC_PULL_MAX = 3_000_000; // Zeichen je Abholen (der Rest kommt mit more)
+const SYNC_OLD_DAYS = 30;
+const SYNC_DEL_DAYS = 365; // Löschmarken: so lange erfährt auch ein lange nicht geöffnetes Gerät vom Löschen
+const SYNC_REMOVED_DAYS = 90; // abgemeldete Geräte: so lange bekommen sie noch „removed“ (und löschen ihre Daten)
+const DEVICES_TABLE =
+  'CREATE TABLE IF NOT EXISTS devices (user TEXT NOT NULL, device TEXT NOT NULL, token TEXT NOT NULL, name TEXT, created INTEGER NOT NULL, seen INTEGER, state TEXT NOT NULL, changed INTEGER, PRIMARY KEY (user, device))';
+const SYNC_TABLE =
+  'CREATE TABLE IF NOT EXISTS sync (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, updated INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL, PRIMARY KEY (user, k, id))';
+const SYNC_OLD_TABLE =
+  'CREATE TABLE IF NOT EXISTS sync_old (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, replaced INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL)';
+/** Spalten und Tabellen für den Abgleich nachrüsten; einmal je Worker-Instanz */
+let syncSchema = false;
+async function ensureSync(db) {
+  if (syncSchema) return;
+  await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
   await ensureTokenColumn(db);
-  const row = await db.prepare('SELECT token FROM members WHERE member = ?').bind(member).first();
-  if (row) return row.token === token;
-  const acc = await db.prepare('SELECT token FROM accounts WHERE member = ?').bind(member).first();
-  return !acc || !acc.token || acc.token === token;
+  // sync: Schalter; sync_rev: letzter rev; kg: Schlüssel-Generation (+1 je Passwortwechsel); old_auth: Prüfwert des
+  // vorigen Passworts (andere Geräte bekommen „pwchanged“ statt Fehlversuch); max_f: neueste App-Version, die gesendet hat
+  for (const col of ['sync INTEGER NOT NULL DEFAULT 0', 'sync_rev INTEGER NOT NULL DEFAULT 0', 'kg INTEGER NOT NULL DEFAULT 1', 'old_auth TEXT', 'max_f INTEGER NOT NULL DEFAULT 0'])
+    try {
+      await db.exec(`ALTER TABLE accounts ADD COLUMN ${col}`);
+    } catch {}
+  await db.batch([
+    db.prepare(DEVICES_TABLE),
+    db.prepare(SYNC_TABLE),
+    db.prepare('CREATE INDEX IF NOT EXISTS sync_by_rev ON sync (user, rev)'),
+    db.prepare(SYNC_OLD_TABLE),
+    db.prepare('CREATE INDEX IF NOT EXISTS sync_old_by_key ON sync_old (user, k, id, replaced)'),
+  ]);
+  syncSchema = true;
 }
 
-/** Eigener Eintrag im laufenden Monat (Token passt) mit Konto: { token, name } oder { error: 'join' | 'token' | 'konto' } */
+/** Gehört der Team-Eintrag diesem Gerät (token = SHA-256)? Ergebnis: '' = ja, sonst der Grund ('token', bei Konten mit
+ *  Abgleich auch 'left' = Team auf einem anderen Gerät verlassen, 'removed' = Gerät abgemeldet).
+ *  Konto mit Abgleich: jedes aktive Gerät des Kontos. Sonst wie bisher: Token der Zeile in members, ohne Zeile das
+ *  beim Konto gemerkte (Monatsanfang, nach dem Verlassen); ohne Konto oder ohne gemerktes Token (vor v102): frei */
+async function ownsMember(db, member, token) {
+  await ensureSync(db);
+  const acc = await db.prepare('SELECT user, token, sync FROM accounts WHERE member = ?').bind(member).first();
+  if (acc && acc.sync) {
+    const d = await db.prepare('SELECT state FROM devices WHERE user = ? AND token = ?').bind(acc.user, token).first();
+    return !d ? 'token' : d.state === 'active' ? '' : d.state;
+  }
+  const row = await db.prepare('SELECT token FROM members WHERE member = ?').bind(member).first();
+  if (row) return row.token === token ? '' : 'token';
+  return !acc || !acc.token || acc.token === token ? '' : 'token';
+}
+
+/** Konto mit Abgleich: Anfragen mit Passwort brauchen zusätzlich das Token eines Geräts des Kontos (ein abgemeldetes
+ *  Gerät kommt sonst mit dem gespeicherten Passwort weiter an die Daten). Ergebnis: '' oder 'device' | 'removed' */
+async function deviceError(db, row, raw) {
+  if (!row.sync) return '';
+  if (!validId(raw)) return 'device';
+  const d = await db.prepare('SELECT state FROM devices WHERE user = ? AND token = ?').bind(row.user, await sha256(raw)).first();
+  return !d ? 'device' : d.state === 'removed' ? 'removed' : '';
+}
+
+/** Geräte eines Kontos für die App (ohne Tokens) */
+const deviceList = async (db, user) =>
+  (await db.prepare("SELECT device, name, created, seen, state FROM devices WHERE user = ? AND state <> 'removed' ORDER BY created").bind(user).all()).results;
+
+/** Gerät abmelden: es bekommt ab jetzt „removed“ und löscht daraufhin seine Daten */
+const deviceRemove = (db, user, device) =>
+  db.prepare("UPDATE devices SET state = 'removed', changed = ? WHERE user = ? AND device = ?").bind(Date.now(), user, device).run();
+
+/** Konto ganz löschen: Sicherungen, Abgleich, Geräte */
+const accountDeleteOps = (db, user) =>
+  ['backups', 'sync', 'sync_old', 'devices', 'accounts'].map((t) => db.prepare(`DELETE FROM ${t} WHERE user = ?`).bind(user));
+
+/** Datensatz für die App */
+const syncOut = (r) => ({ k: r.k, id: r.id, rev: r.rev, updated: r.updated, dev: r.dev, del: !!r.del, f: r.f, kg: r.kg, data: r.data });
+/** Nur Verschlüsseltes annehmen (Hülle der App: {"kg":…,"iv":"…","d":"…"}) */
+const sealedRe = /^\{"kg":\d{1,6},"iv":"[A-Za-z0-9+/=]{16}","d":"[A-Za-z0-9+/=]+"\}$/;
+/** Anweisungen, die sich auf den Stand eines Datensatzes beziehen: gilt nur, solange er noch die Fassung base hat */
+const SYNC_BASE = 'COALESCE((SELECT rev FROM sync WHERE user = ? AND k = ? AND id = ?), 0) = ?';
+
+/** POST /sync – Zugang über den Inhalt (Team-Code, Benutzer, auth, Token: keine eigenen Header, damit „keepalive“ ohne
+ *  Vorab-Anfrage geht). Aktionen: head, pull, push, devices, device-name, device-remove */
+async function syncRequest(db, b, h, ip) {
+  await ensureSync(db);
+  const user = userKey(b.user);
+  const row = await checkAccount(db, user, b.auth, ip);
+  if (row.error) return json({ error: row.error }, row.status, h);
+  if (!row.sync) return json({ error: 'sync' }, 403, h);
+  if (!validId(b.token)) return json({ error: 'device' }, 403, h);
+  const dev = await db.prepare('SELECT device, seen, state FROM devices WHERE user = ? AND token = ?').bind(user, await sha256(b.token)).first();
+  if (!dev) return json({ error: 'device' }, 403, h);
+  if (dev.state !== 'active') return json({ error: dev.state }, 403, h);
+  const now = Date.now();
+  // zuletzt gesehen (höchstens einmal je Minute schreiben); Platzhalter vom Einschalten bekommt die echte Geräte-ID
+  let device = dev.device;
+  if (validId(b.device) && b.device !== device && !(await db.prepare('SELECT 1 AS x FROM devices WHERE user = ? AND device = ?').bind(user, b.device).first())) {
+    await db.prepare('UPDATE devices SET device = ?, seen = ? WHERE user = ? AND device = ?').bind(b.device, now, user, device).run();
+    device = b.device;
+  } else if (now - (dev.seen || 0) > 60000) await db.prepare('UPDATE devices SET seen = ? WHERE user = ? AND device = ?').bind(now, user, device).run();
+
+  if (b.action === 'head') return json({ rev: row.sync_rev, kg: row.kg, f: row.max_f }, 200, h);
+
+  if (b.action === 'pull') {
+    const since = Math.max(0, Math.floor(Number(b.since) || 0));
+    // erst nur die Größen: Bilder sind groß, also höchstens SYNC_PULL_MAX Zeichen auf einmal (mindestens ein Datensatz)
+    const meta = (await db.prepare('SELECT rev, LENGTH(data) AS n FROM sync WHERE user = ? AND rev > ? ORDER BY rev LIMIT 500').bind(user, since).all()).results;
+    let upto = since;
+    let size = 0;
+    let picked = 0;
+    for (const m of meta) {
+      if (picked && size + m.n > SYNC_PULL_MAX) break;
+      size += m.n;
+      upto = m.rev;
+      picked++;
+    }
+    const more = picked < meta.length || meta.length === 500;
+    const [recs, devs] = picked
+      ? await db.batch([
+          db.prepare('SELECT k, id, rev, updated, dev, del, f, kg, data FROM sync WHERE user = ? AND rev > ? AND rev <= ? ORDER BY rev').bind(user, since, upto),
+          db.prepare('SELECT device, name FROM devices WHERE user = ?').bind(user),
+        ])
+      : [{ results: [] }, { results: [] }];
+    return json(
+      {
+        records: recs.results.map(syncOut),
+        devices: Object.fromEntries(devs.results.map((d) => [d.device, d.name || ''])),
+        // fertig: Stand = Zähler des Kontos (Lücken durch überschriebene Fassungen gibt es immer)
+        rev: more ? upto : Math.max(upto, row.sync_rev),
+        more,
+        kg: row.kg,
+        f: row.max_f,
+      },
+      200,
+      h
+    );
+  }
+
+  if (b.action === 'push') {
+    const recs = Array.isArray(b.records) ? b.records : [];
+    if (!recs.length || recs.length > SYNC_PUSH_MAX) return json({ error: 'records' }, 400, h);
+    const f = Math.floor(Number(b.f) || 0);
+    if (f < 1) return json({ error: 'version' }, 400, h);
+    // ein Gerät mit älterer App sendet nicht (es könnte Neues der neueren Fassung verlieren)
+    if (f < row.max_f) return json({ error: 'version', f: row.max_f }, 409, h);
+    if (Number(b.kg) !== row.kg) return json({ error: 'kg', kg: row.kg }, 409, h);
+    const seen = new Set();
+    for (const r of recs) {
+      const key = `${r && r.k}\n${r && r.id}`;
+      const ok =
+        r && SYNC_KINDS.has(r.k) && typeof r.id === 'string' && /^[^\u0000-\u001f]{1,200}$/.test(r.id) && Number.isInteger(r.base) && r.base >= 0 &&
+        (r.del ? r.data == null || r.data === '' : typeof r.data === 'string' && r.data.length <= SYNC_DATA_MAX && sealedRe.test(r.data)) && !seen.has(key);
+      if (!ok) return json({ error: 'record', k: r && r.k, id: r && r.id }, 400, h);
+      seen.add(key);
+    }
+    const ops = [];
+    if (f > row.max_f) ops.push(db.prepare('UPDATE accounts SET max_f = ? WHERE user = ? AND max_f < ?').bind(f, user, f));
+    // je Datensatz in einem Rutsch (D1: atomar): alte Fassung aufheben, Zähler +1, neue Fassung schreiben – alles nur,
+    // wenn auf dem Server noch die Fassung base liegt (sonst hat ein anderes Gerät inzwischen geändert → Konflikt)
+    const writes = [];
+    for (const r of recs) {
+      const cond = [user, r.k, r.id, r.base];
+      if (r.base > 0)
+        ops.push(
+          db
+            .prepare('INSERT INTO sync_old (user, k, id, rev, replaced, dev, del, f, kg, data) SELECT user, k, id, rev, ?, dev, del, f, kg, data FROM sync WHERE user = ? AND k = ? AND id = ? AND rev = ?')
+            .bind(now, user, r.k, r.id, r.base)
+        );
+      ops.push(db.prepare(`UPDATE accounts SET sync_rev = sync_rev + 1 WHERE user = ? AND ${SYNC_BASE}`).bind(user, ...cond));
+      writes.push(ops.length);
+      ops.push(
+        db
+          .prepare(
+            `INSERT INTO sync (user, k, id, rev, updated, dev, del, f, kg, data) SELECT user, ?, ?, sync_rev, ?, ?, ?, ?, ?, ? FROM accounts WHERE user = ? AND ${SYNC_BASE} ` +
+              'ON CONFLICT(user, k, id) DO UPDATE SET rev = excluded.rev, updated = excluded.updated, dev = excluded.dev, del = excluded.del, f = excluded.f, kg = excluded.kg, data = excluded.data'
+          )
+          .bind(r.k, r.id, now, device, r.del ? 1 : 0, f, row.kg, r.del ? '' : r.data, user, ...cond)
+      );
+    }
+    ops.push(db.prepare('SELECT sync_rev FROM accounts WHERE user = ?').bind(user));
+    const res = await db.batch(ops);
+    const head = res[res.length - 1].results[0].sync_rev;
+    const done = recs.map((r, i) => (res[writes[i]].meta.changes || 0) > 0);
+    // angenommene haben im Rutsch aufeinanderfolgende rev bekommen, der letzte = head
+    let rev = head - done.filter(Boolean).length;
+    const accepted = [];
+    recs.forEach((r, i) => done[i] && accepted.push({ k: r.k, id: r.id, rev: ++rev }));
+    // abgelehnte: die Fassung auf dem Server mitschicken (null = gibt es nicht mehr)
+    const lost = recs.filter((r, i) => !done[i]);
+    const rejected = [];
+    if (lost.length) {
+      const cur = await db.batch(lost.map((r) => db.prepare('SELECT k, id, rev, updated, dev, del, f, kg, data FROM sync WHERE user = ? AND k = ? AND id = ?').bind(user, r.k, r.id)));
+      lost.forEach((r, i) => rejected.push(cur[i].results[0] ? syncOut(cur[i].results[0]) : { k: r.k, id: r.id, rev: 0, del: true, data: '' }));
+    }
+    // gelegentlich aufräumen
+    if (Math.random() < 0.05)
+      await db.batch([
+        db.prepare('DELETE FROM sync_old WHERE replaced < ?').bind(now - SYNC_OLD_DAYS * 86400e3),
+        db.prepare('DELETE FROM sync WHERE del = 1 AND updated < ?').bind(now - SYNC_DEL_DAYS * 86400e3),
+        db.prepare("DELETE FROM devices WHERE state = 'removed' AND changed < ?").bind(now - SYNC_REMOVED_DAYS * 86400e3),
+      ]);
+    return json({ accepted, rejected, rev: head }, 200, h);
+  }
+
+  if (b.action === 'devices') return json({ devices: (await deviceList(db, user)).map((d) => ({ ...d, me: d.device === device })) }, 200, h);
+  if (b.action === 'device-name') {
+    const name = String(b.name ?? '').trim().slice(0, 40);
+    if (!validId(b.device) || !name) return json({ error: 'name' }, 400, h);
+    await db.prepare('UPDATE devices SET name = ? WHERE user = ? AND device = ?').bind(name, user, b.device).run();
+    return json({ devices: (await deviceList(db, user)).map((d) => ({ ...d, me: d.device === device })) }, 200, h);
+  }
+  if (b.action === 'device-remove') {
+    if (!validId(b.device)) return json({ error: 'device' }, 400, h);
+    await deviceRemove(db, user, b.device);
+    return json({ devices: (await deviceList(db, user)).map((d) => ({ ...d, me: d.device === device })) }, 200, h);
+  }
+  return json({ error: 'action' }, 400, h);
+}
+
+/** Eigener Eintrag im laufenden Monat (Token passt) mit Konto: { token, name } oder { error: 'join' | 'token' | 'konto' | 'left' | 'removed' } */
 async function teamMember(db, body) {
   const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
   if (!me) return { error: 'join' };
-  if (me.token !== (await sha256(body.token))) return { error: 'token' };
+  const own = await ownsMember(db, body.member, await sha256(body.token));
+  if (own) return { error: own };
   // Konto auf der Server-Seite gelöscht: nicht mehr schreiben (Lesen geht ohne Konto ohnehin nicht)
   if (!(await db.prepare('SELECT user FROM accounts WHERE member = ?').bind(body.member).first())) return { error: 'konto' };
   return me;
@@ -741,6 +1012,8 @@ async function reportsRequest(db, req, env, h) {
 async function backupPut(db, req, h) {
   const row = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'), clientIp(req));
   if (row.error) return json({ error: row.error }, row.status, h);
+  const devErr = await deviceError(db, row, req.headers.get('X-Token'));
+  if (devErr) return json({ error: devErr }, 403, h);
   const data = await req.text();
   if (data.length > BACKUP_MAX) return json({ error: 'size' }, 413, h);
   // nur Verschlüsseltes annehmen (Format von sealBackup in app.js)
@@ -771,7 +1044,18 @@ export default {
     // Der Admin-Code gilt auch als Team-Code (der Admin tritt mit ihm bei). Nach CODE_FAILS falschen Codes von
     // derselben Adresse AUTH_WAIT Minuten Pause – auch für den richtigen (sonst ließe sich weiter durchprobieren)
     const db = env.DB;
-    const teamCode = req.headers.get('X-Team-Code');
+    const path = new URL(req.url).pathname;
+    // Abgleich: alles im Inhalt (siehe syncRequest)
+    let syncBody = null;
+    if (path === '/sync' && req.method === 'POST') {
+      try {
+        syncBody = await readBody(req);
+      } catch {
+        return json({ error: 'body' }, 400, h);
+      }
+      if (!syncBody || typeof syncBody !== 'object') return json({ error: 'body' }, 400, h);
+    }
+    const teamCode = syncBody ? String(syncBody.code ?? '') : req.headers.get('X-Team-Code');
     const codeKey = `code|${clientIp(req)}`;
     const now0 = Date.now();
     let codeFails = null;
@@ -808,8 +1092,8 @@ export default {
     ]);
     rolledMonth = month;
 
-    const path = new URL(req.url).pathname;
     try {
+      if (syncBody) return await syncRequest(db, syncBody, h, clientIp(req));
       // Antwortzeit für die Server-Seite: Team-Code und ein Weg zur Datenbank, ohne Inhalt
       if (path === '/ping' && req.method === 'GET') {
         await db.prepare('SELECT 1').first();
@@ -825,6 +1109,8 @@ export default {
         const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'), clientIp(req));
         if (acc.error === 'id') return json({ error: 'konto' }, 403, h);
         if (acc.error) return json({ error: acc.error }, acc.status, h);
+        const devErr = await deviceError(db, acc, req.headers.get('X-Token'));
+        if (devErr) return json({ error: devErr }, 403, h);
         const [cur, prev, posts] = await db.batch([
           db.prepare('SELECT member, name, updated, data FROM members WHERE month = ? ORDER BY name').bind(month),
           db.prepare('SELECT member, name, updated, data FROM history WHERE month = ? ORDER BY name').bind(prevMonth),
@@ -977,7 +1263,8 @@ export default {
         await db.prepare('DELETE FROM errors WHERE created < ?').bind(Date.now() - ERROR_DAYS * 86400000).run();
         // Mit Eintrag im laufenden Monat muss das Token passen; ohne (z. B. gleich nach dem Monatswechsel) reicht der Code
         const me = await db.prepare('SELECT token, name FROM members WHERE member = ?').bind(body.member).first();
-        if (me && me.token !== (await sha256(String(body.token ?? '')))) return json({ error: 'token' }, 403, h);
+        const own = me ? await ownsMember(db, body.member, await sha256(String(body.token ?? ''))) : '';
+        if (own) return json({ error: own }, 403, h);
         const since = Date.now() - 86400000;
         const { n } = await db.prepare('SELECT COUNT(*) AS n FROM errors WHERE member = ? AND created > ?').bind(body.member, since).first();
         const reports = body.reports.slice(0, Math.max(0, MAX_ERRORS - n));
@@ -997,7 +1284,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias' || path === '/code') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias' || path === '/code' || path === '/sync-switch') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -1011,7 +1298,8 @@ export default {
           const bytes = (cols) => cols.map((c) => `COALESCE(LENGTH(CAST(${c} AS BLOB)), 0)`).join(' + ');
           await reportTables(db);
           await ensureFullname(db);
-          const [, , , , errors, size, people, posts, dict, accounts, open] = await db.batch([
+          await ensureSync(db);
+          const [, , , , errors, size, people, posts, dict, accounts, open, devices] = await db.batch([
             ...ACCOUNT_TABLES.map((sql) => db.prepare(sql)),
             db.prepare('CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY AUTOINCREMENT, member TEXT NOT NULL, name TEXT, version TEXT, ua TEXT, view TEXT, message TEXT NOT NULL, stack TEXT, count INTEGER NOT NULL, first INTEGER, last INTEGER, created INTEGER NOT NULL)'),
             db.prepare('CREATE TABLE IF NOT EXISTS dict (key TEXT PRIMARY KEY, word TEXT NOT NULL, created INTEGER NOT NULL)'),
@@ -1021,19 +1309,23 @@ export default {
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'data'])}), 0) FROM history) AS sheets, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'month', 'text'])}), 0) FROM posts) AS posts, ` +
                 `(SELECT COALESCE(SUM(${bytes(['member', 'name', 'version', 'ua', 'view', 'message', 'stack'])}), 0) FROM errors) AS errors, ` +
-                `(SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups) AS backups`
+                `(SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups) AS backups, ` +
+                `(SELECT COALESCE(SUM(LENGTH(data)), 0) FROM sync) + (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM sync_old) AS sync`
             ),
             // Team diesen Monat: je Person App-Version, letzter Upload, Zahl der Zettel
             db.prepare('SELECT member, name, version, updated, json_array_length(data) AS sheets FROM members WHERE month = ? ORDER BY name').bind(month),
             db.prepare('SELECT COUNT(*) AS n FROM posts WHERE month = ?').bind(month),
             db.prepare('SELECT word FROM dict ORDER BY word COLLATE NOCASE'),
             // Konten: Name, letzte Sicherung, Größe aller Sicherungen
-            db.prepare('SELECT a.user, a.member, a.name, a.fullname, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
+            db.prepare('SELECT a.user, a.member, a.name, a.fullname, a.sync, (SELECT MAX(at) FROM backups b WHERE b.user = a.user) AS last, (SELECT COALESCE(SUM(LENGTH(data)), 0) FROM backups b WHERE b.user = a.user) AS bytes FROM accounts a ORDER BY a.user'),
             // Arbeitsscheine: Namen, die noch keinem Konto zugeordnet sind (je Name, Zahl der Scheine)
             db.prepare('SELECT key, MAX(name) AS name, COUNT(*) AS n, MAX(changed) AS last FROM report_open GROUP BY key ORDER BY last DESC'),
+            // Geräte der Konten mit Abgleich
+            db.prepare("SELECT user, device, name, seen, state FROM devices WHERE state <> 'removed' ORDER BY created"),
           ]);
           const s = size.results[0];
-          const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors, backups: s.backups };
+          const storage = { total: size.meta.size_after || 0, limit: STORAGE_LIMIT, sheets: s.sheets, posts: s.posts, errors: s.errors, backups: s.backups, sync: s.sync };
+          for (const a of accounts.results) a.devices = devices.results.filter((d) => d.user === a.user).map(({ device, name, seen, state }) => ({ device, name, seen, state }));
           const team = { month, people: people.results, posts: posts.results[0].n };
           return json({ errors: errors.results, storage, team, dict: dict.results.map((d) => d.word), accounts: accounts.results, open: open.results, code: await currentTeamCode(env), usage: await usage }, 200, h);
         }
@@ -1076,8 +1368,36 @@ export default {
         if (path === '/account' && req.method === 'DELETE') {
           const user = userKey((await readBody(req)).user);
           if (!user) return json({ error: 'id' }, 400, h);
-          await db.batch([db.prepare('DELETE FROM backups WHERE user = ?').bind(user), db.prepare('DELETE FROM accounts WHERE user = ?').bind(user)]);
+          await ensureSync(db);
+          await db.batch(accountDeleteOps(db, user));
           return json({ ok: true }, 200, h);
+        }
+        if (path === '/sync-switch' && req.method === 'PUT') {
+          const body = await readBody(req);
+          const user = userKey(body.user);
+          await ensureSync(db);
+          const acc = user && (await db.prepare('SELECT user, member, token, sync FROM accounts WHERE user = ?').bind(user).first());
+          if (!acc) return json({ error: 'user' }, 400, h);
+          const now = Date.now();
+          if (body.on && !acc.sync) {
+            // Das bisherige Gerät wird Gerät 1 (Geräte-ID noch unbekannt: Platzhalter, ersetzt beim ersten Abgleich)
+            const ops = [db.prepare('UPDATE accounts SET sync = 1 WHERE user = ?').bind(user)];
+            if (acc.token)
+              ops.push(
+                db
+                  .prepare("INSERT OR IGNORE INTO devices (user, device, token, name, created, seen, state, changed) VALUES (?, ?, ?, 'Gerät', ?, ?, 'active', ?)")
+                  .bind(user, `alt-${crypto.randomUUID()}`, acc.token, now, now, now)
+              );
+            await db.batch(ops);
+          } else if (!body.on && acc.sync) {
+            // Aus: nur das zuletzt gesehene Gerät bleibt Besitzer des Team-Eintrags; die anderen bekommen „token“ wie früher
+            const last = await db.prepare("SELECT token FROM devices WHERE user = ? AND state = 'active' ORDER BY seen DESC LIMIT 1").bind(user).first();
+            const ops = [db.prepare('UPDATE accounts SET sync = 0, token = COALESCE(?, token) WHERE user = ?').bind(last ? last.token : null, user)];
+            if (last && acc.member) ops.push(db.prepare('UPDATE members SET token = ? WHERE member = ?').bind(last.token, acc.member));
+            ops.push(db.prepare('DELETE FROM devices WHERE user = ?').bind(user));
+            await db.batch(ops);
+          }
+          return json({ ok: true, sync: !!body.on }, 200, h);
         }
         if (path === '/member' && req.method === 'DELETE') {
           const body = await readBody(req);
@@ -1119,17 +1439,23 @@ export default {
         if (!validId(body.member) || !validId(body.token)) return json({ error: 'id' }, 400, h);
         const token = await sha256(body.token);
         // Eintrag dieses iPhones? Auch ohne Zeile in members (Monatsanfang, nach dem Verlassen) über das Konto geprüft
-        if (!(await memberOwned(db, body.member, token))) return json({ error: 'token' }, 403, h);
+        const own = await ownsMember(db, body.member, token);
+        if (own) return json({ error: own }, 403, h);
         // Zettel nur von Einträgen, die zu einem Konto gehören (seit dem Konto Pflicht; alte Apps mit gespeichertem
         // Team-Code legten sonst eigene Einträge ohne Konto an). Verlassen geht immer
-        const acc = await db.prepare('SELECT user, token FROM accounts WHERE member = ?').bind(body.member).first();
+        const acc = await db.prepare('SELECT user, token, sync FROM accounts WHERE member = ?').bind(body.member).first();
         if (req.method === 'PUT' && !acc) return json({ error: 'konto' }, 403, h);
         // Konto von vor v102: Gerätenachweis beim ersten passenden Upload merken
         if (acc && acc.token !== token) await db.prepare('UPDATE accounts SET token = ? WHERE member = ?').bind(token, body.member).run();
 
         if (req.method === 'DELETE') {
-          // Verlassen: auch der Vormonat verschwindet für das Team
-          await db.batch([db.prepare('DELETE FROM members WHERE member = ?').bind(body.member), db.prepare('DELETE FROM history WHERE member = ?').bind(body.member)]);
+          // Verlassen: auch der Vormonat verschwindet für das Team. Mit Abgleich gilt es für alle Geräte des Kontos
+          // (sonst legten die anderen den Eintrag gleich wieder an): sie bekommen ab jetzt „left“
+          await db.batch([
+            db.prepare('DELETE FROM members WHERE member = ?').bind(body.member),
+            db.prepare('DELETE FROM history WHERE member = ?').bind(body.member),
+            ...(acc && acc.sync ? [db.prepare("UPDATE devices SET state = 'left', changed = ? WHERE user = ? AND state = 'active'").bind(Date.now(), acc.user)] : []),
+          ]);
           return json({ ok: true }, 200, h);
         }
         // Zettel eines anderen Monats (Uhr des iPhones geht falsch, Monatswechsel) nicht speichern
