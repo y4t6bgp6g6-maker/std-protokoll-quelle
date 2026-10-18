@@ -824,7 +824,7 @@ const prevPayslip = (p) => (p && p.year && p.month ? payslips[payKey(p.month ===
 /** Prüfungen der Abrechnung als Liste (✓ grün, ✕ rot) */
 function psChecksHTML(p) {
   return payslipChecks(p, prevPayslip(p))
-    .map((c) => `<li class="${c.ok ? 'ok' : 'bad'}">${c.ok ? '✓' : '✕'} <span>${escapeHtml(c.text)}</span></li>`)
+    .map((c) => `<li class="${c.ok ? 'ok' : c.ok === null ? 'skip' : 'bad'}">${c.ok ? '✓' : c.ok === null ? '–' : '✕'} <span>${escapeHtml(c.text)}</span></li>`)
     .join('');
 }
 
