@@ -77,7 +77,7 @@ if (LANG === 'ru') {
       Arbeitsbeginn: 'Начало работы', Arbeitsende: 'Конец работы', Arbeitsanfang: 'Начало работы', Arbeitsstunden: 'Рабочие часы',
       Material: 'Материал', 'Durchgeführte Arbeiten': 'Выполненные работы', Mitarbeiter: 'Сотрудник', Unterschrift: 'Подпись',
       'Unterschrift löschen': 'Удалить подпись',
-      'Mit dem Finger unterschreiben': 'Подпишите пальцем', 'Neu unterschreiben': 'Подписать заново',
+      'Mit dem Finger unterschreiben': 'Подпишите пальцем', 'Bitte hochkant halten': 'Держите телефон вертикально', 'Neu unterschreiben': 'Подписать заново',
       'Neu unterschreiben …': 'Подписать заново …',
       // ── Übersicht, Karten ──
       Überstunden: 'Переработка', 'Überstd.': 'Перераб.', Stunden: 'Часы', 'Stunden Gesamt': 'Всего часов', Saldo: 'Сальдо',

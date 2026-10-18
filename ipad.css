@@ -132,3 +132,6 @@ html.ipad[data-view='editor'] .sum-bar,
 html.ipad[data-view='editor'] .pdf-thumb { max-width: 640px; margin-left: auto; margin-right: auto; }
 html.ipad.ipad-cols[data-view='editor'] #days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; align-items: start; }
 html.ipad:not(.ipad-cols)[data-view='editor'] #days { max-width: 680px; margin: 0 auto; }
+
+/* ───────── Team: Zettel so groß wie auf dem iPhone (dort drei je Karte), hier fünf nebeneinander ───────── */
+html.ipad .tm-z-row { grid-template-columns: repeat(var(--n), calc((100cqw - 64px) / 5)); }
