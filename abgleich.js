@@ -28,7 +28,7 @@
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 121;
+const SYNC_F = 122;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
 const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report', 'bh-profile', 'bh-heft', 'bh-img', 'bh-week', 'bh-month'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
@@ -469,8 +469,10 @@ function syncIncoming(srv, ch) {
   }
   if (srv.k === 'set' || srv.k === 'report') {
     // schon einmal abgeglichen und hier geändert: die eigene gewinnt (auf die Fassung des Servers senden);
-    // zum ersten Mal (neues Gerät): die des Servers
+    // zum ersten Mal (neues Gerät): die des Servers – außer der Server hat nur die Vorgabe und hier ist etwas
+    // eingestellt (ein frisch angemeldetes Gerät war schneller als das bisherige, 18.10.: Name und Lohn wären weg)
     if (e) st.recs[key] = { rev: srv.rev, h: e.h };
+    else if (srv.k === 'set' && syncSetDefault(srv.id, srv.v && srv.v.v) && !syncSetDefault(srv.id, local && local.v)) st.recs[key] = { rev: srv.rev, h: '!' };
     else {
       syncPut(srv, ch);
       st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
@@ -493,6 +495,9 @@ function syncBhDirty(hid) {
     }
   return out;
 }
+
+/** Einstellung hat den Wert der Vorgabe (bzw. ist leer, wenn es keine Vorgabe gibt) */
+const syncSetDefault = (id, v) => (id in DEFAULT_SETTINGS ? syncCanon(v) === syncCanon(DEFAULT_SETTINGS[id]) : v == null || v === '' || v === false);
 
 /** Gleicher Inhalt zweier Zettel derselben Woche (Tage, Name, gesendet) */
 const syncSameSheet = (a, b) => !sheetDiff(a, b).length && !!a.sentAt === !!b.sentAt && (a.name || '') === (b.name || '');

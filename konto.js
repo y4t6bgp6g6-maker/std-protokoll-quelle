@@ -476,6 +476,9 @@ async function accountBackup(force = false) {
   }
   // erst die Zeit prüfen: die Sicherung zusammenzustellen kostet bei vielen Bildern spürbar
   if (!force && Date.now() - (account.at || 0) < ACCOUNT_BACKUP_GAP) return false;
+  // Abgleich: nur mit aktuellem Stand sichern – ein frisch angemeldetes, noch leeres Gerät schöbe sonst eine leere
+  // Sicherung vor die guten (der Server behält nur die neuesten)
+  if (account.sync && !syncCurrent()) return false;
   const plain = backupJson();
   const hash = textHash(plain.replace(/"exportedAt":"[^"]*",/, ''));
   if (!force && hash === account.hash) return false;
