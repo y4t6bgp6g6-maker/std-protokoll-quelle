@@ -128,7 +128,8 @@ function moneyAfter(lines, re, ahead = 2) {
  * rechts („02.03.2026“, gedruckt im Folgemonat). Nicht sicher erkannt → null (die App fragt dann nach).
  */
 function payslipMonth(lines) {
-  const head = lines.slice(0, 10);
+  // Kopf (der Aufrufer gibt die obersten Zeilen jedes Durchgangs)
+  const head = lines;
   const hits = [];
   head.forEach((line, li) => {
     const title = /Abrech|Bez[üu]ge|f[üu]r/i.test(line);
@@ -295,7 +296,7 @@ function parsePayslipText(text, opts = {}) {
   };
   const fixed = new Set();
   // Monat: aus dem Kopf jedes Durchgangs
-  const when = payslipMonth(passes.flatMap((p) => p.slice(0, 10)));
+  const when = payslipMonth(passes.flatMap((p) => p.slice(0, 14)));
   if (when) Object.assign(r, when);
 
   // Lohnarten: je Nummer (bzw. Art) alle Lesungen aus allen Durchgängen
@@ -780,6 +781,8 @@ function payslipChecks(p, prev = null) {
     if (p.month === 1) add('jahr', near(p.ytd, p.brutto), 'Jahressumme = Gesamt-Brutto');
     else if (prev && prev.ytd != null) add('jahr', near(p.ytd, psR2(prev.ytd + p.brutto)), 'Jahressumme passt zum Vormonat');
   }
+  // Monat unlesbar (nur beim Einlesen – danach wird er abgefragt)
+  if (!p.month || !p.year) add('monat', false, 'Monat nicht lesbar – wird gleich abgefragt');
   const fixed = (p.fixed || []).filter((k) => PS_FIELD_NAMES[k]);
   add('gelesen', !fixed.length, fixed.length ? `Berechnet statt gelesen: ${fixed.map((k) => PS_FIELD_NAMES[k]).join(', ')}` : 'Alle Werte gelesen');
   return out;
