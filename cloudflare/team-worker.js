@@ -50,13 +50,26 @@
 //   Bei diesen Konten brauchen alle Anfragen mit Passwort zusätzlich das Token eines Geräts des Kontos (Header X-Token
 //   bzw. token im Inhalt), sonst 403 'device'; abgemeldete Geräte bekommen 'removed', nach „Team verlassen“ auf einem
 //   Gerät alle anderen 'left'. join braucht device (Geräte-ID) und deviceName; mehr als SYNC_DEVICES → 409 'devices'.
-//   Anfrage mit dem vorigen Passwort → 403 'pwchanged' (kein Fehlversuch).
+//   Anfrage mit dem vorigen Passwort → 403 'pwchanged' (kein Fehlversuch). Passwort ändern geht auch mit Abgleich:
+//   kg + 1, accounts.rekey = 1, bis ein Gerät, das den alten Schlüssel kennt, alles neu verschlüsselt hat (rekey).
 //   POST   /sync    ← { code, user, auth, token, device, action, … } (alles im Inhalt, Content-Type text/plain)
-//                    head                      → { rev, kg, f }
+//                    head                      → { rev, kg, f, rekey }   rekey: nach einem Passwortwechsel liegen noch
+//                                                Datensätze mit älterem Schlüssel da
+//                    rekey { kgs }             → { records, left } Datensätze mit diesen älteren Schlüssel-Generationen
+//                                                (Teile à SYNC_PUSH_MAX); das Gerät verschlüsselt sie neu und sendet sie
+//                                                per push zurück; left = 0 → fertig (accounts.rekey = 0, kg_at = jetzt)
 //                    pull { since }            → { records: [{ k, id, rev, updated, dev, del, f, kg, data }], devices, rev, more }
 //                    push { f, kg, records: [{ k, id, base, del, data }] } → { accepted: [{ k, id, rev }], rejected: [Fassung des Servers], rev }
 //                         angenommen nur, wenn auf dem Server noch die Fassung base liegt (0 = neu); data verschlüsselt
 //                    devices / device-name { device, name } / device-remove { device } → { devices }
+//                    restore-days              → { from, days: { 'JJJJ-MM-TT': Änderungen }, undo } Tage (deutsche Zeit),
+//                                                deren Stand sich wiederherstellen lässt (ab from: 30 Tage, frühestens ab
+//                                                dem ersten Hochladen bzw. dem letzten Passwortwechsel); undo: Zeitpunkt
+//                                                der letzten Wiederherstellung (deren Stand davor ist auch wählbar)
+//                    restore { at, first }     → { changed, more, rev } jeden Datensatz auf die Fassung zum Zeitpunkt at
+//                                                (aus sync + sync_old) – als neue Fassung, damit alle Geräte sie abholen;
+//                                                nur verschlüsselte Daten werden kopiert. Je Aufruf SYNC_PUSH_MAX, bis more
+//                                                false ist; schon wiederhergestellte bleiben (gleiche Daten)
 //   POST   /account ← { action: 'device-remove', user, auth, device }  Gerät abmelden ohne eigenes Token (beim Anmelden voll)
 // Arbeitsscheine aus einer Arbeitsschein-App (ohne Team-Code, Header X-Report-Key = Secret REPORT_KEY, jede Herkunft):
 //   POST   /reports ← Schein (Format „arbeitsschein/1“, siehe checkReport) → { ok, empfaenger, offen }
@@ -609,15 +622,15 @@ async function accountRequest(db, body, h, ip = '') {
   }
   if (body.action === 'password') {
     if (!validAuth(body.newAuth)) return json({ error: 'id' }, 400, h);
-    // Mit Abgleich müssten alle Datensätze neu verschlüsselt werden – kommt in einer späteren Etappe (E6)
-    if (row.sync) return json({ error: 'sync' }, 409, h);
     // alte Sicherungen sind mit dem alten Passwort verschlüsselt – mit dem neuen ließen sie sich nicht öffnen.
-    // Der alte Prüfwert bleibt als old_auth: andere Geräte mit dem alten Passwort sind dann kein Fehlversuch
-    await db.batch([
-      db.prepare('UPDATE accounts SET auth = ?, old_auth = auth, kg = kg + 1 WHERE user = ?').bind(await sha256(body.newAuth), user),
+    // Der alte Prüfwert bleibt als old_auth: andere Geräte mit dem alten Passwort sind dann kein Fehlversuch.
+    // Abgleich: die Datensätze tragen noch den alten Schlüssel (kg), rekey = 1 bis ein Gerät sie neu verschlüsselt hat
+    const [, , kg] = await db.batch([
+      db.prepare('UPDATE accounts SET auth = ?, old_auth = auth, kg = kg + 1, rekey = 1 WHERE user = ?').bind(await sha256(body.newAuth), user),
       db.prepare('DELETE FROM backups WHERE user = ?').bind(user),
+      db.prepare('SELECT kg FROM accounts WHERE user = ?').bind(user),
     ]);
-    return json({ ok: true }, 200, h);
+    return json({ ok: true, kg: kg.results[0].kg }, 200, h);
   }
   if (body.action === 'delete') {
     await db.batch(accountDeleteOps(db, user));
@@ -718,6 +731,7 @@ const SYNC_PUSH_MAX = 40; // Datensätze je Senden (je Datensatz drei Anweisunge
 const SYNC_DATA_MAX = 1_900_000; // Zeichen je Datensatz (D1: höchstens 2 MB je Zeile)
 const SYNC_PULL_MAX = 3_000_000; // Zeichen je Abholen (der Rest kommt mit more)
 const SYNC_OLD_DAYS = 30;
+const SYNC_REKEY_MAX = 780_000; // Zeichen je Teil beim Neu-Verschlüsseln (muss wieder in ein Senden passen)
 const SYNC_DEL_DAYS = 365; // Löschmarken: so lange erfährt auch ein lange nicht geöffnetes Gerät vom Löschen
 const SYNC_REMOVED_DAYS = 90; // abgemeldete Geräte: so lange bekommen sie noch „removed“ (und löschen ihre Daten)
 const DEVICES_TABLE =
@@ -725,7 +739,7 @@ const DEVICES_TABLE =
 const SYNC_TABLE =
   'CREATE TABLE IF NOT EXISTS sync (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, updated INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL, PRIMARY KEY (user, k, id))';
 const SYNC_OLD_TABLE =
-  'CREATE TABLE IF NOT EXISTS sync_old (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, replaced INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL)';
+  'CREATE TABLE IF NOT EXISTS sync_old (user TEXT NOT NULL, k TEXT NOT NULL, id TEXT NOT NULL, rev INTEGER NOT NULL, replaced INTEGER NOT NULL, dev TEXT, del INTEGER NOT NULL DEFAULT 0, f INTEGER, kg INTEGER, data TEXT NOT NULL, updated INTEGER)';
 /** Spalten und Tabellen für den Abgleich nachrüsten; einmal je Worker-Instanz */
 let syncSchema = false;
 async function ensureSync(db) {
@@ -733,8 +747,11 @@ async function ensureSync(db) {
   await db.batch(ACCOUNT_TABLES.map((sql) => db.prepare(sql)));
   await ensureTokenColumn(db);
   // sync: Schalter; sync_rev: letzter rev; kg: Schlüssel-Generation (+1 je Passwortwechsel); old_auth: Prüfwert des
-  // vorigen Passworts (andere Geräte bekommen „pwchanged“ statt Fehlversuch); max_f: neueste App-Version, die gesendet hat
-  for (const col of ['sync INTEGER NOT NULL DEFAULT 0', 'sync_rev INTEGER NOT NULL DEFAULT 0', 'kg INTEGER NOT NULL DEFAULT 1', 'old_auth TEXT', 'max_f INTEGER NOT NULL DEFAULT 0'])
+  // vorigen Passworts (andere Geräte bekommen „pwchanged“ statt Fehlversuch); max_f: neueste App-Version, die gesendet hat;
+  // rekey: nach Passwortwechsel noch nicht alles neu verschlüsselt; kg_at: seitdem fertig (früherer Stand nicht lesbar);
+  // restored_at: letzte Wiederherstellung
+  const cols = ['sync INTEGER NOT NULL DEFAULT 0', 'sync_rev INTEGER NOT NULL DEFAULT 0', 'kg INTEGER NOT NULL DEFAULT 1', 'old_auth TEXT', 'max_f INTEGER NOT NULL DEFAULT 0', 'rekey INTEGER NOT NULL DEFAULT 0', 'kg_at INTEGER', 'restored_at INTEGER'];
+  for (const col of cols)
     try {
       await db.exec(`ALTER TABLE accounts ADD COLUMN ${col}`);
     } catch {}
@@ -745,6 +762,10 @@ async function ensureSync(db) {
     db.prepare(SYNC_OLD_TABLE),
     db.prepare('CREATE INDEX IF NOT EXISTS sync_old_by_key ON sync_old (user, k, id, replaced)'),
   ]);
+  // sync_old: seit wann die Fassung galt (für „Stand vom …“; ältere Zeilen ohne)
+  try {
+    await db.exec('ALTER TABLE sync_old ADD COLUMN updated INTEGER');
+  } catch {}
   syncSchema = true;
 }
 
@@ -790,6 +811,9 @@ const syncOut = (r) => ({ k: r.k, id: r.id, rev: r.rev, updated: r.updated, dev:
 /** Nur Verschlüsseltes annehmen (Hülle der App: {"kg":…,"iv":"…","d":"…"}) */
 const sealedRe = /^\{"kg":\d{1,6},"iv":"[A-Za-z0-9+/=]{16}","d":"[A-Za-z0-9+/=]+"\}$/;
 /** Anweisungen, die sich auf den Stand eines Datensatzes beziehen: gilt nur, solange er noch die Fassung base hat */
+/** Fassung, die gleich überschrieben wird, aufheben (Werte: replaced, user, k, id, rev) */
+const SYNC_KEEP_OLD =
+  'INSERT INTO sync_old (user, k, id, rev, replaced, dev, del, f, kg, data, updated) SELECT user, k, id, rev, ?, dev, del, f, kg, data, updated FROM sync WHERE user = ? AND k = ? AND id = ? AND rev = ?';
 const SYNC_BASE = 'COALESCE((SELECT rev FROM sync WHERE user = ? AND k = ? AND id = ?), 0) = ?';
 
 /** POST /sync – Zugang über den Inhalt (Team-Code, Benutzer, auth, Token: keine eigenen Header, damit „keepalive“ ohne
@@ -812,7 +836,7 @@ async function syncRequest(db, b, h, ip) {
     device = b.device;
   } else if (now - (dev.seen || 0) > 60000) await db.prepare('UPDATE devices SET seen = ? WHERE user = ? AND device = ?').bind(now, user, device).run();
 
-  if (b.action === 'head') return json({ rev: row.sync_rev, kg: row.kg, f: row.max_f }, 200, h);
+  if (b.action === 'head') return json({ rev: row.sync_rev, kg: row.kg, f: row.max_f, rekey: !!row.rekey }, 200, h);
 
   if (b.action === 'pull') {
     const since = Math.max(0, Math.floor(Number(b.since) || 0));
@@ -876,7 +900,7 @@ async function syncRequest(db, b, h, ip) {
       if (r.base > 0)
         ops.push(
           db
-            .prepare('INSERT INTO sync_old (user, k, id, rev, replaced, dev, del, f, kg, data) SELECT user, k, id, rev, ?, dev, del, f, kg, data FROM sync WHERE user = ? AND k = ? AND id = ? AND rev = ?')
+            .prepare(SYNC_KEEP_OLD)
             .bind(now, user, r.k, r.id, r.base)
         );
       ops.push(db.prepare(`UPDATE accounts SET sync_rev = sync_rev + 1 WHERE user = ? AND ${SYNC_BASE}`).bind(user, ...cond));
@@ -913,6 +937,98 @@ async function syncRequest(db, b, h, ip) {
         db.prepare("DELETE FROM devices WHERE state = 'removed' AND changed < ?").bind(now - SYNC_REMOVED_DAYS * 86400e3),
       ]);
     return json({ accepted, rejected, rev: head }, 200, h);
+  }
+
+  // Nach einem Passwortwechsel: Datensätze mit einem älteren Schlüssel, den dieses Gerät noch kennt (kgs) – es
+  // verschlüsselt sie neu und sendet sie per push (base = rev) zurück. Nichts mehr übrig → rekey aus
+  if (b.action === 'rekey') {
+    const kgs = JSON.stringify((Array.isArray(b.kgs) ? b.kgs : []).map(Number).filter((n) => Number.isInteger(n) && n > 0 && n < row.kg).slice(0, 20));
+    const meta = (await db.prepare('SELECT rev, LENGTH(data) AS n FROM sync WHERE user = ? AND del = 0 AND kg IN (SELECT value FROM json_each(?)) ORDER BY rev LIMIT ?').bind(user, kgs, SYNC_PUSH_MAX).all()).results;
+    // höchstens so viel, wie wieder in ein Senden passt (mindestens einer)
+    let upto = 0;
+    let size = 0;
+    for (const m of meta) {
+      if (upto && size + m.n > SYNC_REKEY_MAX) break;
+      size += m.n;
+      upto = m.rev;
+    }
+    const recs = upto
+      ? (await db.prepare('SELECT k, id, rev, updated, dev, del, f, kg, data FROM sync WHERE user = ? AND del = 0 AND kg IN (SELECT value FROM json_each(?)) AND rev <= ? ORDER BY rev').bind(user, kgs, upto).all()).results
+      : [];
+    const left = (await db.prepare('SELECT COUNT(*) AS n FROM sync WHERE user = ? AND del = 0 AND kg <> ?').bind(user, row.kg).first()).n;
+    if (!left && row.rekey) await db.prepare('UPDATE accounts SET rekey = 0, kg_at = ? WHERE user = ? AND kg = ?').bind(now, user, row.kg).run();
+    return json({ records: recs.map(syncOut), left }, 200, h);
+  }
+
+  if (b.action === 'restore-days' || b.action === 'restore') {
+    // während des Neu-Verschlüsselns ließe sich ein Teil des Stands nicht lesen
+    if (row.rekey) return json({ error: 'rekey' }, 409, h);
+    // frühestens: vor 30 Tagen (so lange bleiben alte Fassungen), seit dem ersten Hochladen, seit dem letzten Passwortwechsel
+    const first = await db
+      .prepare('SELECT MIN(t) AS t FROM (SELECT MIN(updated) AS t FROM sync WHERE user = ? UNION ALL SELECT MIN(COALESCE(updated, replaced)) FROM sync_old WHERE user = ?)')
+      .bind(user, user)
+      .first();
+    const from = Math.max(now - SYNC_OLD_DAYS * 86400e3 + 3600e3, row.kg_at || 0, (first && first.t) || now);
+    if (b.action === 'restore-days') {
+      const [a, o] = await db.batch([
+        db.prepare('SELECT updated AS t FROM sync WHERE user = ? AND updated > ?').bind(user, from),
+        db.prepare('SELECT updated AS t FROM sync_old WHERE user = ? AND updated > ?').bind(user, from),
+      ]);
+      const days = {};
+      for (const r of [...a.results, ...o.results]) days[berlinDay(r.t)] = (days[berlinDay(r.t)] || 0) + 1;
+      return json({ from, days, undo: row.restored_at && row.restored_at > from ? row.restored_at : null }, 200, h);
+    }
+    const at = Math.floor(Number(b.at) || 0);
+    if (at < from || at > now) return json({ error: 'at' }, 400, h);
+    // geändert seit at: welche Fassung galt damals? (die neueste, die vor at entstand; keine = gab es noch nicht)
+    const [cur, old] = await db.batch([
+      db.prepare('SELECT k, id, rev, updated, del, f, kg, LENGTH(data) AS n FROM sync WHERE user = ? AND updated > ?').bind(user, at),
+      db.prepare('SELECT k, id, rev, updated, del, f, kg, LENGTH(data) AS n FROM sync_old WHERE user = ? AND replaced > ?').bind(user, at),
+    ]);
+    const byKey = new Map();
+    for (const o of old.results) byKey.set(`${o.k}\n${o.id}`, [...(byKey.get(`${o.k}\n${o.id}`) || []), o]);
+    let todo = [];
+    const same = [];
+    for (const c of cur.results) {
+      const vers = byKey.get(`${c.k}\n${c.id}`) || [];
+      // ältere Zeilen ohne updated: unbekannt, wann sie entstanden – nicht raten
+      if (vers.some((v) => v.updated == null)) continue;
+      const t = vers.filter((v) => v.updated <= at).sort((x, y) => y.rev - x.rev)[0] || { del: 1, kg: row.kg, f: c.f };
+      if (t.del && c.del) continue;
+      if (!t.del && t.kg !== row.kg) continue;
+      // gleiche Länge: vielleicht schon wiederhergestellt (gleiche Daten; neu verschlüsselt wären sie verschieden)
+      (!t.del && !c.del && t.n === c.n ? same : todo).push({ c, t });
+    }
+    if (same.length) {
+      const eq = await db.batch(
+        same.map(({ c, t }) =>
+          db
+            .prepare('SELECT (SELECT data FROM sync WHERE user = ? AND k = ? AND id = ?) = (SELECT data FROM sync_old WHERE user = ? AND k = ? AND id = ? AND rev = ? LIMIT 1) AS eq')
+            .bind(user, c.k, c.id, user, c.k, c.id, t.rev)
+        )
+      );
+      todo = todo.concat(same.filter((x, i) => !eq[i].results[0].eq));
+    }
+    const chunk = todo.slice(0, SYNC_PUSH_MAX);
+    const ops = [];
+    if (b.first && chunk.length) ops.push(db.prepare('UPDATE accounts SET restored_at = ? WHERE user = ?').bind(now, user));
+    // wie push: alte Fassung aufheben, Zähler +1, Fassung von damals als neue – nur, wenn sich nichts dazwischen geändert hat
+    for (const { c, t } of chunk) {
+      const cond = [user, c.k, c.id, c.rev];
+      ops.push(db.prepare(SYNC_KEEP_OLD).bind(now, ...cond));
+      ops.push(db.prepare(`UPDATE accounts SET sync_rev = sync_rev + 1 WHERE user = ? AND ${SYNC_BASE}`).bind(user, ...cond));
+      ops.push(
+        db
+          .prepare(
+            'UPDATE sync SET rev = (SELECT sync_rev FROM accounts WHERE user = ?), updated = ?, dev = ?, del = ?, f = ?, kg = ?, ' +
+              `data = ${t.del ? "''" : '(SELECT data FROM sync_old WHERE user = ? AND k = ? AND id = ? AND rev = ? LIMIT 1)'} WHERE user = ? AND k = ? AND id = ? AND rev = ?`
+          )
+          .bind(user, now, device, t.del ? 1 : 0, t.f || c.f, t.kg || row.kg, ...(t.del ? [] : [user, c.k, c.id, t.rev]), ...cond)
+      );
+    }
+    ops.push(db.prepare('SELECT sync_rev FROM accounts WHERE user = ?').bind(user));
+    const res = await db.batch(ops);
+    return json({ changed: chunk.length, more: todo.length > chunk.length, rev: res[res.length - 1].results[0].sync_rev }, 200, h);
   }
 
   if (b.action === 'devices') return json({ devices: (await deviceList(db, user)).map((d) => ({ ...d, me: d.device === device })) }, 200, h);

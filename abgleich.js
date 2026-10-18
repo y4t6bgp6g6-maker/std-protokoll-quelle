@@ -4,7 +4,7 @@
 // (POST /sync, cloudflare/team-worker.js) und von dort auf die anderen Geräte desselben Kontos.
 //
 // Eigener Speicher je Gerät (nie abgeglichen, nicht in der Sicherung) stdprotokoll.sync.v1:
-// { user, kinds, rev, kg, at, hold, recs, held, conflicts, devs }
+// { user, kinds, rev, kg, at, hold, recs, held, conflicts, devs, oldKeys }
 //   rev: bis hierher abgeholt; at: zuletzt erfolgreich abgeholt (Team-Upload nur mit frischem Stand)
 //   recs: { 'k:id': { rev, h, a } } je Datensatz der Stand auf dem Server und der Fingerabdruck der Fassung, die dieses
 //         Gerät zuletzt gesendet oder übernommen hat ('del' = gelöscht, '!' = auf jeden Fall senden). Lokal anders →
@@ -17,6 +17,12 @@
 //              twin: anderer Zettel derselben Woche (auf zwei Geräten neu angelegt)
 //   hold: höchste App-Fassung, die schon gesendet hat; ist sie neuer als diese, sendet dieses Gerät nichts mehr
 //   devs: Geräte-ID → Name (für das Fenster)
+//   oldKeys: { kg: Schlüssel } frühere Schlüssel nach einem Passwortwechsel – damit verschlüsselt dieses Gerät die noch
+//            alten Datensätze neu (syncRekey) und kann sie bis dahin lesen; weg, sobald der Server nichts Altes mehr hat
+// Passwort ändern (konto.js accountPassword): erst alles abgleichen, dann neues Passwort beim Server (kg + 1), dann neu
+// verschlüsseln in Teilen. Andere Geräte bekommen „pwchanged“, melden sich neu an und behalten dabei den alten Schlüssel.
+// Ungesendetes dort wird kein Konflikt, wenn die Server-Fassung inhaltlich die bekannte ist (syncIncoming).
+// „Stand vom … wiederherstellen“ (syncRestorePick): der Server schreibt die damaligen Fassungen als neue (rev).
 // Arten: sheet (Zettel), set (Einstellung), trip (Abrechnung, ohne leere), pay (Lohnabrechnung, id = Monat „2026-08“),
 // report (Arbeitsschein, id = Schein-id), Berichtsheft: bh-profile (id „profile“: Angaben, gespeicherte Unterschriften,
 // automatisch unterschreiben), bh-heft (Heft ohne Wochen/Monate), bh-week (id „Heft-id|Montag“, nur beschriebene),
@@ -28,7 +34,7 @@
 
 const SYNC_KEY = 'stdprotokoll.sync.v1';
 /** App-Fassung (gleiche Zahl wie CACHE in sw.js): ein Gerät mit älterer sendet nicht mehr, sobald eine neuere gesendet hat */
-const SYNC_F = 122;
+const SYNC_F = 123;
 /** Arten, die diese Fassung abgleicht (kommen neue dazu, holt das Gerät einmal alles neu ab) */
 const SYNC_KINDS_HERE = ['sheet', 'set', 'trip', 'pay', 'report', 'bh-profile', 'bh-heft', 'bh-img', 'bh-week', 'bh-month'];
 /** Einstellungen je Gerät bzw. fest vorgegeben */
@@ -49,6 +55,7 @@ function syncState() {
     } catch {}
   if (!syncSt || syncSt.user !== user) syncSt = { user, rev: 0, kg: 0, at: 0, hold: 0, recs: {}, held: [], conflicts: [], devs: {} };
   syncSt.wait ||= [];
+  syncSt.oldKeys ||= {};
   // neue Arten in dieser Fassung: einmal alles abholen (Fingerabdrücke verhindern doppelte Arbeit)
   if (String(syncSt.kinds) !== String(SYNC_KINDS_HERE)) {
     syncSt.kinds = SYNC_KINDS_HERE;
@@ -196,12 +203,11 @@ function syncChanges(local = syncLocal()) {
 
 // ───────── Verschlüsseln (Schlüssel des Kontos, wie die Sicherung) ─────────
 
-async function syncCryptKey() {
-  if (syncCryptKey.raw !== cryptStore.key) {
-    syncCryptKey.k = await crypto.subtle.importKey('raw', fromB64(cryptStore.key), 'AES-GCM', false, ['encrypt', 'decrypt']);
-    syncCryptKey.raw = cryptStore.key;
-  }
-  return syncCryptKey.k;
+/** Schlüssel des Kontos (bzw. ein früherer aus oldKeys) als CryptoKey */
+async function syncCryptKey(raw = cryptStore.key) {
+  const m = (syncCryptKey.m ||= new Map());
+  if (!m.has(raw)) m.set(raw, await crypto.subtle.importKey('raw', fromB64(raw), 'AES-GCM', false, ['encrypt', 'decrypt']));
+  return m.get(raw);
 }
 /** Hülle {"kg":…,"iv":"…","d":"…"} – der Server nimmt nur genau diese Form an. Bilder: das JPEG selbst (nicht noch
  *  einmal Base64 im JSON – so bleibt die Hülle so groß wie das Bild und passt in eine Anfrage) */
@@ -214,9 +220,9 @@ async function syncSeal(v, kg, k) {
   if (!/^\{"kg":\d+,"iv":"[A-Za-z0-9+/=]{16}","d":"[A-Za-z0-9+/=]+"\}$/.test(out)) throw new Error('plain');
   return out;
 }
-async function syncOpen(data, k) {
+async function syncOpen(data, k, raw) {
   const o = JSON.parse(data);
-  const p = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(o.iv) }, await syncCryptKey(), fromB64(o.d));
+  const p = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(o.iv) }, await syncCryptKey(raw), fromB64(o.d));
   return k === 'bh-img' ? { d: toB64(p) } : JSON.parse(new TextDecoder().decode(p));
 }
 
@@ -247,10 +253,21 @@ async function syncRequest(action, extra = {}) {
 
 let syncBusy = false;
 let syncAgain = false;
+/** Angehalten, solange das Passwort geändert bzw. ein Stand wiederhergestellt wird */
+let syncPaused = false;
+/** Abgelehnt mit einer Fassung, deren Schlüssel dieses Gerät nicht kennt (Passwortwechsel, noch nicht neu verschlüsselt):
+ *  in diesem Durchgang nicht erneut senden */
+const syncKgWait = new Set();
+/** Anzeige beim Neu-Verschlüsseln (nur auf dem Gerät, das das Passwort ändert): Funktion(Anteil 0–1) oder null */
+let syncRekeyProgress = null;
+/** Warten, bis kein Abgleich mehr läuft */
+async function syncIdle() {
+  for (let n = 0; (syncBusy || syncAgain) && n < 600; n++) await new Promise((r) => setTimeout(r, 100));
+}
 /** Abgleichen: abholen (wenn es Neues gibt), dann Eigenes senden. pushFirst (nach dem Speichern): erst senden – das
  *  geht schneller raus; was andere inzwischen geschickt haben, kommt mit der Antwort bzw. danach */
 async function syncRun(pushFirst = false) {
-  if (!syncOn() || !navigator.onLine) return;
+  if (!syncOn() || !navigator.onLine || syncPaused) return;
   if (syncBusy) {
     syncAgain = syncAgain === 'full' || !pushFirst ? 'full' : 'push';
     return;
@@ -263,17 +280,26 @@ async function syncRun(pushFirst = false) {
     await bhImagesReady;
     await bhShrinkImages();
     if (st.hold && st.hold <= SYNC_F) st.hold = 0;
+    syncKgWait.clear();
     let head = null;
     if (!pushFirst || !st.at) {
       head = await syncRequest('head');
       syncMeta(head);
+      // mit dem bisherigen Passwort angenommen: ein abgebrochener Passwortwechsel kam nicht beim Server an
+      if (account.pwNext && !syncPaused) {
+        delete account.pwNext;
+        saveAccount();
+      }
+      // nichts mehr neu zu verschlüsseln: frühere Schlüssel vergessen
+      if (!head.rekey && Object.keys(st.oldKeys).length) st.oldKeys = {};
       // Server kennt weniger als dieses Gerät (Konto gelöscht und gleichnamig neu angelegt): alles neu abgleichen
       if (head.rev < st.rev) Object.assign(st, { rev: 0, at: 0, recs: {} });
       if (head.rev !== st.rev || !st.at) await syncPull();
       else st.at = Date.now();
     }
     syncRetryHeld();
-    const top = await syncPush();
+    let top = await syncPush();
+    if (head && head.rekey) top = Math.max(top, await syncRekey(syncRekeyProgress));
     // andere Geräte haben inzwischen gesendet
     if (top > st.rev) await syncPull();
     syncSave();
@@ -336,7 +362,7 @@ async function syncPush() {
   if (st.hold > SYNC_F) return 0;
   let top = 0;
   for (let round = 0; round < 30; round++) {
-    const list = syncChanges().filter((c) => !syncTooBig.has(c.key));
+    const list = syncChanges().filter((c) => !syncTooBig.has(c.key) && !syncKgWait.has(c.key));
     if (!list.length) break;
     const batch = [];
     let size = 0;
@@ -364,6 +390,8 @@ async function syncPush() {
     top = Math.max(top, out.rev);
     const rejected = out.rejected || [];
     for (const r of rejected) {
+      // Fassung mit einem Schlüssel, den dieses Gerät nicht kennt: warten, bis sie neu verschlüsselt ist
+      if (r.rev && !r.del && r.kg !== st.kg && !st.oldKeys[r.kg]) syncKgWait.add(syncKeyOf(r.k, r.id));
       // auf dem Server gibt es den Datensatz gar nicht (mehr): neu anlegen bzw. vergessen
       if (!r.rev) {
         const key = syncKeyOf(r.k, r.id);
@@ -379,6 +407,140 @@ async function syncPush() {
   return top;
 }
 
+/** Nach einem Passwortwechsel: Datensätze mit einem früheren Schlüssel neu verschlüsseln und zurücksenden, in Teilen.
+ *  Bricht es ab (App zu, kein Netz), geht es beim nächsten Abgleich weiter – auch auf einem anderen Gerät, das den
+ *  früheren Schlüssel noch kennt. onProgress(Anteil 0–1) für die Anzeige. Ergebnis: Zähler des Servers (0 = nichts) */
+async function syncRekey(onProgress) {
+  const st = syncState();
+  const kgs = Object.keys(st.oldKeys).map(Number);
+  // ging zuletzt gar nicht (Schlüssel passt nicht): nicht bei jedem Abgleich erneut
+  if (!kgs.length || Date.now() - (st.rekeyFail || 0) < 3600e3) return 0;
+  let top = 0;
+  let total = 0;
+  for (let n = 0; n < 500; n++) {
+    const out = await syncRequest('rekey', { kgs });
+    const list = out.records || [];
+    total = Math.max(total, out.left || 0);
+    if (onProgress && total) onProgress(1 - (out.left || 0) / total);
+    if (!list.length) {
+      st.oldKeys = {};
+      break;
+    }
+    const batch = [];
+    for (const r of list)
+      try {
+        const v = await syncOpen(r.data, r.k, st.oldKeys[r.kg]);
+        batch.push({ r, data: await syncSeal(v, st.kg, r.k) });
+      } catch (e) {
+        window.fehlerMelden?.(e, 'abgleich');
+      }
+    if (!batch.length) {
+      st.rekeyFail = Date.now();
+      break;
+    }
+    const res = await syncRequest('push', { f: SYNC_F, kg: st.kg, records: batch.map(({ r, data }) => ({ k: r.k, id: r.id, base: r.rev, del: false, data })) });
+    // Inhalt unverändert: kannte dieses Gerät genau die alte Fassung, ist die neue dieselbe (nicht noch einmal abholen)
+    for (const a of res.accepted || []) {
+      const x = batch.find((b) => b.r.k === a.k && b.r.id === a.id);
+      const e = st.recs[syncKeyOf(a.k, a.id)];
+      if (x && e && e.rev === x.r.rev) e.rev = a.rev;
+    }
+    top = Math.max(top, res.rev || 0);
+    syncSave();
+  }
+  if (onProgress && total) onProgress(1);
+  return top;
+}
+
+/** Stand der Datensätze auf dem Server zu einem früheren Zeitpunkt: Auswahl (je Tag mit Änderungen der Stand am Abend;
+ *  „vor der Wiederherstellung“ kann der Server auch, ist aber nicht gewünscht), dann wiederherstellen. Vorher muss alles abgeglichen sein */
+async function syncRestorePick() {
+  if (!(await syncReady())) return;
+  let out;
+  try {
+    out = await syncRequest('restore-days');
+  } catch (e) {
+    return toast(e.message === 'rekey' ? 'Wird noch neu verschlüsselt – später noch einmal' : accountError(e));
+  }
+  const today = isoDate(new Date());
+  const days = Object.keys(out.days).sort();
+  const after = (d) => days.filter((x) => x > d).reduce((n, x) => n + out.days[x], 0);
+  // Stand am Ende des Tages – nur, wenn sich danach noch etwas geändert hat
+  const list = days
+    .filter((d) => d < today)
+    .map((d) => ({ at: +addDays(parseDate(d), 1) - 1, label: fmtDayMonth(parseDate(d)), day: d, n: after(d) }))
+    .filter((x) => x.n && x.at >= out.from)
+    .reverse();
+  if (!list.length) return toast('Noch kein früherer Stand');
+  const pick = await syncRestoreAsk(list);
+  if (pick) syncRestore(pick);
+}
+
+/** Auswahl des Stands, dann Rückfrage. Ergebnis: gewählter Eintrag oder null */
+function syncRestoreAsk(list) {
+  return new Promise((resolve) => {
+    const modal = openModal(
+      `<div class="alert-body"><b>Stand wiederherstellen</b></div>
+      <div class="alert-buttons stacked acc-pick">${list
+        .map((x, i) => `<button data-i="${i}">Stand vom ${WEEKDAYS_SHORT[(parseDate(x.day).getDay() + 6) % 7]} ${x.label}</button>`)
+        .join('')}<button data-i="">Abbrechen</button></div>`,
+      'alert'
+    );
+    modal.previousElementSibling.addEventListener('click', () => resolve(null));
+    modal.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-i]');
+      if (!b) return;
+      closeModal();
+      const x = list[b.dataset.i];
+      if (!x) return resolve(null);
+      setTimeout(
+        () =>
+          confirmDialog(
+            `Stand vom ${WEEKDAYS_SHORT[(parseDate(x.day).getDay() + 6) % 7]} ${x.label} wiederherstellen?`,
+            'Gilt auf allen Geräten.',
+            'Wiederherstellen',
+            () => resolve(x),
+            true,
+            'Abbrechen',
+            () => resolve(null)
+          ),
+        280
+      );
+    });
+  });
+}
+
+/** Erst abgleichen (sonst ginge Ungesendetes verloren bzw. würde Konflikt). Ergebnis: true = alles aktuell */
+async function syncReady() {
+  if (!navigator.onLine) return toast('Keine Verbindung'), false;
+  toast('Wird abgeglichen …', 10000);
+  await syncIdle();
+  await syncRun();
+  await syncIdle();
+  document.getElementById('toast').classList.remove('show');
+  if (syncCurrent()) return true;
+  toast(syncState().conflicts.length ? 'Erst den Konflikt klären' : 'Abgleich hat nicht geklappt – später noch einmal');
+  return false;
+}
+
+async function syncRestore(pick) {
+  syncPaused = true;
+  await syncIdle();
+  toast('Wird wiederhergestellt …', 60000);
+  let ok = false;
+  try {
+    for (let n = 0, first = true; n < 200; n++, first = false) if (!(await syncRequest('restore', { at: pick.at, first })).more) break;
+    ok = true;
+  } catch (e) {
+    toast(accountError(e));
+  } finally {
+    syncPaused = false;
+  }
+  await syncRun();
+  await syncIdle();
+  if (ok) toast(`Stand vom ${pick.label} wiederhergestellt`);
+}
+
 // ───────── Eingehendes ─────────
 
 /** Fassungen vom Server übernehmen (Abholen oder abgelehnt beim Senden) */
@@ -387,12 +549,13 @@ async function syncApply(records) {
   const ch = { sheets: false, editor: false, settings: [] };
   for (const r of records) {
     if (!SYNC_KINDS_HERE.includes(r.k)) continue;
-    // mit älterem Passwort verschlüsselt (wird gerade neu verschlüsselt, E6): später
-    if (!r.del && r.kg !== st.kg) continue;
+    // mit älterem Passwort verschlüsselt (wird gerade neu verschlüsselt): mit dem früheren Schlüssel, sonst später
+    const raw = r.kg === st.kg ? cryptStore.key : st.oldKeys[r.kg];
+    if (!r.del && !raw) continue;
     let v = null;
     if (!r.del)
       try {
-        v = await syncOpen(r.data, r.k);
+        v = await syncOpen(r.data, r.k, raw);
       } catch (e) {
         window.fehlerMelden?.(e, 'abgleich');
         continue;
@@ -434,6 +597,12 @@ function syncIncoming(srv, ch) {
   };
   if (hl === hs) {
     st.recs[key] = syncRec(srv.k, srv.v, srv.rev, hs);
+    return drop();
+  }
+  // inhaltlich die Fassung, auf der die eigene Änderung aufbaut (neu verschlüsselt nach einem Passwortwechsel): kein
+  // Konflikt, die eigene geht auf die neue Fassung
+  if (e && (hs === e.h || hs === e.a)) {
+    st.recs[key] = { ...e, rev: srv.rev };
     return drop();
   }
   // Bericht eines Hefts, das hier (noch) fehlt: warten, bis das Heft kommt

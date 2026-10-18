@@ -4,11 +4,13 @@
 // dem iPhone, liegt wie bisher in stdprotokoll.crypt.v1). Beide hängen nur von Benutzername und Passwort ab – nach einem
 // Datenverlust reicht erneutes Anmelden, um die Sicherungen vom Team-Server wieder zu öffnen.
 //
-// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error, sync, pwchanged }
+// Eigener Speicher (nicht in der Sicherung): { user, auth, mode, ok, restore, at, hash, error, sync, pwchanged, pwNext }
 // mode: 'create' (neues Konto) | 'login' (bestehendes); ok: vom Server bestätigt; restore: 'ask' = Sicherung auf dem
 // Server, Frage nach dem Einlesen noch offen (bis dahin wird nichts hochgeladen, sonst überschriebe ein leerer Stand sie);
 // sync: Abgleich mehrerer Geräte für dieses Konto eingeschaltet (Schalter auf der Server-Seite); pwchanged: Passwort auf
-// einem anderen Gerät geändert – Team-Upload und Sicherung warten, bis hier neu angemeldet ist
+// einem anderen Gerät geändert – Team-Upload und Sicherung warten, bis hier neu angemeldet ist; pwNext: { auth, key, salt }
+// neues Passwort, das gerade beim Server geändert wird (Abgleich) – kam die Antwort nicht an und meldet der Server danach
+// „pwchanged“, gilt es (accountPwAdopt), statt neu anmelden zu müssen
 
 const ACCOUNT_KEY = 'stdprotokoll.account.v1';
 /** Sicherung auf dem Team-Server: nach Änderungen höchstens einmal je Stunde */
@@ -254,11 +256,30 @@ function accountDeviceRemove(d) {
 /** Passwort auf einem anderen Gerät geändert: Lesen, Team-Upload und Sicherung warten, bis hier neu angemeldet ist
  *  (zählt beim Server nicht als Fehlversuch) */
 function accountPwChanged() {
+  // eigener Passwortwechsel, dessen Antwort nicht ankam (bzw. noch läuft): er hat geklappt
+  if (account.pwNext) return accountPwAdopt();
   account.ok = false;
   account.pwchanged = true;
   account.error = accountError({ message: 'pwchanged' });
   saveAccount();
   accountRerender();
+  // einmal Bescheid geben (danach steht es auf der Konto-Seite)
+  confirmDialog('Passwort geändert', 'Auf einem anderen Gerät. Bitte neu anmelden.', 'Anmelden', accountRelogin, false, 'Später');
+}
+
+/** Neues Passwort übernehmen (der Server hat es): Prüfwert und Schlüssel ersetzen; die alte Sicherung ist weg */
+function accountPwAdopt() {
+  const n = account.pwNext;
+  if (!n) return;
+  delete account.pwNext;
+  Object.assign(account, { auth: n.auth, at: 0, hash: '' });
+  saveAccount();
+  cryptStore = { salt: n.salt, key: n.key };
+  try {
+    localStorage.setItem(CRYPT_KEY, JSON.stringify(cryptStore));
+  } catch (e) {
+    window.fehlerMelden?.(e, 'speichern');
+  }
 }
 
 /** Mit dem neuen Passwort wieder anmelden (Konto bleibt, nur das Passwort wird neu eingegeben) */
@@ -361,6 +382,12 @@ async function accountSetup(user, pw, mode, again) {
   toast('Wird eingerichtet …', 10000);
   const { auth, key, salt } = await accountDerive(user, pw);
   const prev = account;
+  // Passwort auf einem anderen Gerät geändert: bisherigen Schlüssel behalten, bis alles neu verschlüsselt ist (abgleich.js)
+  if (prev && prev.user === user && prev.sync && cryptStore) {
+    const st = syncState();
+    if (st.kg) st.oldKeys[st.kg] = cryptStore.key;
+    syncSave();
+  }
   account = { user, auth, mode, ok: false, restore: '', at: 0, hash: '', error: '' };
   if (team) {
     try {
@@ -424,32 +451,74 @@ function accountDelete() {
   }, true);
 }
 
-/** Neues Passwort: alte Sicherungen auf dem Server werden gelöscht (sie ließen sich nicht mehr öffnen), gleich neu sichern */
+const ACCOUNT_PW_SYNC_MSG = 'Die anderen Geräte melden sich danach neu an.';
+const ACCOUNT_PW_LEFT_MSG = 'Der Rest wird beim nächsten Abgleich neu verschlüsselt.';
+/** Fortschritt beim Neu-Verschlüsseln */
+const accountRekeyShow = (p) => toast(`Wird neu verschlüsselt … ${Math.round(p * 100)} %`, 30000);
+
+/** Neues Passwort: alte Sicherungen auf dem Server werden gelöscht (sie ließen sich nicht mehr öffnen), gleich neu sichern.
+ *  Mit Abgleich: vorher alles abgleichen, danach alle Datensätze neu verschlüsseln (abgleich.js syncRekey); die anderen
+ *  Geräte melden sich neu an */
 async function accountPassword() {
   // Eine laufende Sicherung mit dem alten Passwort würde abgelehnt und meldete das Konto ab
   if (accountBusy) return toast('Sicherung läuft gerade – gleich noch einmal versuchen');
   const old = await askPassword('Bisheriges Passwort', '');
   if (old == null) return;
   if ((await accountDerive(account.user, old)).auth !== account.auth) return toast('Passwort falsch');
-  const pw = await askPassword('Neues Passwort', 'Ohne Passwort lässt sich keine Sicherung öffnen.', true);
+  const pw = await askPassword('Neues Passwort', account.sync ? ACCOUNT_PW_SYNC_MSG : 'Ohne Passwort lässt sich keine Sicherung öffnen.', true);
   if (pw == null) return;
+  const sync = account.sync;
+  if (sync && !(await syncReady())) return;
   toast('Wird geändert …', 10000);
   const next = await accountDerive(account.user, pw);
+  const salt = toB64(next.salt);
+  const key = toB64(await crypto.subtle.exportKey('raw', next.key));
+  if (sync) {
+    // während des Wechsels nichts mit dem alten Passwort senden (der Server meldete sonst „pwchanged“)
+    syncPaused = true;
+    await syncIdle();
+    const st = syncState();
+    st.oldKeys[st.kg] = cryptStore.key;
+    syncSave();
+    account.pwNext = { auth: next.auth, key, salt };
+    saveAccount();
+  }
+  let out;
   try {
-    await accountRequest('password', { newAuth: next.auth }, team.code);
+    out = await accountRequest('password', { newAuth: next.auth }, team.code);
   } catch (e) {
+    syncPaused = false;
     document.getElementById('toast').classList.remove('show');
+    // abgelehnt: bleibt beim alten; keine Verbindung: ungewiss – die nächste Antwort des Servers entscheidet (pwNext)
+    if (e.status && account.pwNext) {
+      delete account.pwNext;
+      saveAccount();
+    }
     return toast(accountError(e));
   }
-  account.auth = next.auth;
-  account.at = 0;
-  account.hash = '';
-  saveAccount();
-  await rememberKey(next.key, next.salt);
+  account.pwNext = { auth: next.auth, key, salt };
+  accountPwAdopt();
+  let left = false;
+  if (sync) {
+    syncState().kg = out.kg;
+    syncSave();
+    syncPaused = false;
+    // alles neu verschlüsseln (läuft im Abgleich; bricht es ab, geht es beim nächsten weiter)
+    syncRekeyProgress = accountRekeyShow;
+    accountRekeyShow(0);
+    try {
+      await syncRun();
+      await syncIdle();
+    } finally {
+      syncRekeyProgress = null;
+    }
+    left = !!Object.keys(syncState().oldKeys).length;
+  }
   // Der Server hat die alten Sicherungen gelöscht (mit dem neuen Passwort nicht zu öffnen): gleich die neue anlegen
-  const saved = await accountBackup(true);
+  const saved = !left && (await accountBackup(true));
   document.getElementById('toast').classList.remove('show');
-  if (saved) toast('Passwort geändert');
+  if (left) infoDialog('Passwort geändert', ACCOUNT_PW_LEFT_MSG);
+  else if (saved) toast('Passwort geändert');
   else infoDialog('Passwort geändert', 'Die neue Sicherung hat nicht geklappt. Bitte gleich „Jetzt sichern“ tippen.');
   accountRerender();
 }
@@ -734,13 +803,14 @@ function kontoPageHTML() {
       team && ok
         ? `<div class="card list">
       <button class="list-btn" data-acc="restore">Sicherung vom Team-Server einlesen …</button>
+      ${account.sync ? '<button class="list-btn" data-acc="state">Stand vom … wiederherstellen</button>' : ''}
       <button class="list-btn" data-acc="backup">Jetzt sichern</button>
     </div>
     <p class="footnote" id="account-status">${accountStatusText()}</p>`
         : `<p class="footnote" id="account-status">${accountStatusText()}</p>`
     }
     <div class="card list">
-      ${team && ok && !account.sync ? '<button class="list-btn" data-acc="password">Passwort ändern …</button>' : ''}
+      ${team && ok ? '<button class="list-btn" data-acc="password">Passwort ändern …</button>' : ''}
       <button class="list-btn destructive" data-acc="logout">Abmelden</button>
       ${team && ok ? '<button class="list-btn destructive" data-acc="delete">Konto löschen</button>' : ''}
     </div>`;
@@ -785,6 +855,9 @@ document.addEventListener('click', (e) => {
       break;
     case 'restore':
       accountPickRestore();
+      break;
+    case 'state':
+      syncRestorePick();
       break;
     case 'backup':
       toast('Sichern …');

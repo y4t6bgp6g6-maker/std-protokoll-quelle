@@ -284,9 +284,22 @@ if (LANG === 'ru') {
       Zusatzbeitrag: 'Доп. взнос',
       gelöscht: 'удалён', 'Anderes Gerät': 'Другое устройство', 'Bitte App neu öffnen': 'Откройте приложение заново',
       'Auf einem anderen Gerät läuft schon eine neuere Fassung.': 'На другом устройстве уже работает более новая версия.',
+      // ── Abgleich: Passwort ändern, Stand wiederherstellen (E6) ──
+      'Die anderen Geräte melden sich danach neu an.': 'Остальным устройствам потом нужно войти снова.',
+      'Der Rest wird beim nächsten Abgleich neu verschlüsselt.': 'Остальное будет перешифровано при следующей синхронизации.',
+      'Auf einem anderen Gerät. Bitte neu anmelden.': 'На другом устройстве. Войдите снова.', Später: 'Позже',
+      'Stand vom … wiederherstellen': 'Восстановить состояние на дату …', 'Stand wiederherstellen': 'Восстановить состояние',
+      'Gilt auf allen Geräten.': 'Действует на всех устройствах.', 'Noch kein früherer Stand': 'Более раннего состояния пока нет',
+      'Wird abgeglichen …': 'Синхронизация …', 'Wird wiederhergestellt …': 'Восстановление …', 'Erst den Konflikt klären': 'Сначала решите конфликт',
+      'Abgleich hat nicht geklappt – später noch einmal': 'Синхронизация не удалась – попробуйте позже',
+      'Wird noch neu verschlüsselt – später noch einmal': 'Ещё идёт перешифровка – попробуйте позже',
     },
 
     patterns: [
+      [/^Wird neu verschlüsselt … (\d+) %$/, 'Перешифровка … $1 %'],
+      [/^Stand vom (\S+) (\d\d\.\d\d\.)$/, (m, d, t) => `Состояние на ${tr(d)} ${t}`],
+      [/^Stand vom (\S+) (\d\d\.\d\d\.) wiederherstellen\?$/, (m, d, t) => `Восстановить состояние на ${tr(d)} ${t}?`],
+      [/^Stand vom (\d\d\.\d\d\.) wiederhergestellt$/, 'Состояние на $1 восстановлено'],
       [/^Woche Nr\. (\d+)$/, 'Неделя № $1'],
       [/^(\d+) Krankmeldung(?:en)?$/, (m, n) => `${n} ${pl(n, 'больничный', 'больничных', 'больничных')}`],
       [/^(\d{4}) \(wie Jahr\)$/, '$1 (как год)'],
