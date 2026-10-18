@@ -2007,4 +2007,6 @@ a.s-row:active { background: var(--fill); }
 .cf-card-when { margin: 3px 0 6px; font-size: 12px; color: var(--muted); }
 .cf-card-day { padding: 6px 0; border-top: 0.5px solid var(--sep); overflow-wrap: anywhere; }
 .cf-card-day b { display: block; }
+.cf-card-day .cf-txt { white-space: pre-line; }
+.cf-img { display: block; width: 100%; max-height: 90px; margin-top: 4px; border-radius: 8px; object-fit: cover; outline: 2px solid rgba(255, 159, 10, 0.6); }
 .cf-card-go { margin-top: auto; padding-top: 8px; font-size: 15px; font-weight: 600; color: var(--accent); }

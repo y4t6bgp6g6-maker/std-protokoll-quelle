@@ -2143,7 +2143,7 @@ function route() {
   }
   if (currentView !== 'editor') editorSaved = null;
   // Editor verlassen: zurückgehaltene Fassungen und wartende Konflikte (Abgleich) jetzt
-  if ((prevView === 'editor' || prevView === 'trip') && currentView !== prevView) syncSoon(0);
+  if (['editor', 'trip', 'bhWeek', 'bhMonth', 'bhInfo'].includes(prevView) && currentView !== prevView) syncSoon(0);
   updateTopButton();
   updateTabbar();
   pageAnim(prevView, currentView);

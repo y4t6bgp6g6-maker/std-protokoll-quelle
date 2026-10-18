@@ -7,12 +7,14 @@ const BH_KEY = 'stdprotokoll.berichtsheft.v1';
 // profile: Angaben fürs Deckblatt/Vorblatt (Datumsfelder als 'JJJJ-MM-TT')
 // sigs: gespeicherte Unterschriften { azubi, eltern, ausbilder } ({ ratio, strokes } wie bei signaturePad)
 // autoSign: jeder geschriebene Bericht trägt von selbst die Unterschrift des Azubis (Datum = letzte Änderung)
+// profileAt: Angaben/Unterschriften zuletzt geändert (Abgleich: Uhrzeit im Konflikt-Fenster)
 // hefte: [{ id, jahr, start, end, weeks: { Montag 'JJJJ-MM-TT': Woche }, months: { 'JJJJ-MM': Monat } }]
 // Woche: { days: [{ lines: [{ t, h }] (bis 5 Zeilen: Tätigkeit, Einzelstunden), hours (Gesamtstunden),
 //                   type (Tagesart wie im Stundenzettel: krank, urlaub, feiertag, frei; fehlt = Arbeit) }] × 6 (Mo–Sa),
 //          Mit Tagesart bleiben Zeilen und Stunden gespeichert (zurück auf Arbeit sind sie wieder da), zählen aber nicht
-//          signed: { azubi, eltern, ausbilder: 'JJJJ-MM-TT' } }
-// Monat: { taet: { text, img }, schule: { text, img }, signed } – img: { id, w, h } (Bild in IndexedDB)
+//          signed: { azubi, eltern, ausbilder: 'JJJJ-MM-TT' }, updatedAt }
+// Monat: { taet: { text, img }, schule: { text, img }, signed, updatedAt } – img: { id, w, h } (Bild in IndexedDB)
+// updatedAt: zuletzt von Hand geändert (Abgleich: Uhrzeit im Konflikt-Fenster)
 let bh = { profile: {}, sigs: {}, hefte: [] };
 try {
   Object.assign(bh, JSON.parse(localStorage.getItem(BH_KEY)) || {});
@@ -41,7 +43,12 @@ function saveBh() {
     window.fehlerMelden?.(e, 'speichern');
     toast('Speichern fehlgeschlagen – Speicher voll?');
   }
+  // gespeichert wird bei jedem Tastendruck: erst nach einer Pause senden (beim Verlassen sofort)
+  syncSoon(2000);
 }
+/** Bericht bzw. Angaben von Hand geändert (Uhrzeit für das Konflikt-Fenster beim Abgleich) */
+const bhTouch = (e) => e && (e.updatedAt = Date.now());
+const bhTouchProfile = () => (bh.profileAt = Date.now());
 
 const bhOn = () => !!settings.bhOn;
 const bhMode = () => (bhOn() && settings.listMode === 'heft' ? 'heft' : 'zettel');
@@ -78,9 +85,10 @@ const bhImagesReady = bhDb()
         req.onerror = () => resolve();
       })
   )
-  .catch(() => {})
+  .catch(() => (bhImagesBroken = true))
   .then(() => (bhImagesLoaded = true));
 let bhImagesLoaded = false; // bis dahin fehlen Fotos in Monatsbericht und PDF
+let bhImagesBroken = false; // IndexedDB geht nicht (Abgleich: fehlende Bilder sind dann nicht gelöscht)
 function bhPutImage(id, data) {
   bhImages.set(id, data);
   return bhDb()
@@ -96,17 +104,19 @@ function bhDeleteImage(id) {
     .then((db) => db.transaction('img', 'readwrite').objectStore('img').delete(id))
     .catch(() => {});
 }
-/** Foto verkleinern (längste Seite 1600 px) und als JPEG speichern */
-async function bhImportImage(file) {
-  const url = URL.createObjectURL(file);
-  try {
-    const img = await new Promise((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = reject;
-      i.src = url;
-    });
-    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+/** Höchstens so viele Zeichen (Base64) je Bild: der Abgleich schickt jedes Bild in einer Anfrage (Server: 1 MB) */
+const BH_IMG_MAX = 850_000;
+const bhLoadImage = (src) =>
+  new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = src;
+  });
+/** Als JPEG (längste Seite höchstens max px); zu groß für BH_IMG_MAX → schlechtere Qualität, dann kleiner */
+function bhEncodeImage(img, max = 1600) {
+  let k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+  for (let n = 0; ; n++) {
     const w = Math.round(img.naturalWidth * k);
     const h = Math.round(img.naturalHeight * k);
     const c = document.createElement('canvas');
@@ -116,7 +126,28 @@ async function bhImportImage(file) {
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
-    const data = c.toDataURL('image/jpeg', 0.82).split(',')[1];
+    for (const q of [0.82, 0.7, 0.58]) {
+      const data = c.toDataURL('image/jpeg', q).split(',')[1];
+      if (data.length <= BH_IMG_MAX || n >= 4) return { data, w, h };
+    }
+    k *= 0.8;
+  }
+}
+/** Ältere, zu große Bilder einmal verkleinern (ID und Seitenverhältnis bleiben) – vor dem ersten Abgleich */
+async function bhShrinkImages() {
+  for (const [id, d] of bhImages)
+    if (d.length > BH_IMG_MAX)
+      try {
+        await bhPutImage(id, bhEncodeImage(await bhLoadImage(`data:image/jpeg;base64,${d}`)).data);
+      } catch (e) {
+        window.fehlerMelden?.(e, 'bild verkleinern');
+      }
+}
+/** Foto verkleinern (längste Seite 1600 px) und als JPEG speichern */
+async function bhImportImage(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const { data, w, h } = bhEncodeImage(await bhLoadImage(url));
     const id = uid();
     await bhPutImage(id, data);
     return { id, w, h };
@@ -460,7 +491,7 @@ function heftMoreMenu() {
   actionSheet([
     ...(open.length
       ? [{ label: `Alle als Ausbilder abzeichnen (${open.length})`, run: () => withSignature('ausbilder', () => {
-          open.forEach((e) => (e.signed.ausbilder = isoDate(new Date())));
+          open.forEach((e) => ((e.signed.ausbilder = isoDate(new Date())), bhTouch(e)));
           saveBh();
           renderHeft(h);
           toast(`${open.length} ${open.length === 1 ? 'Seite' : 'Seiten'} abgezeichnet`);
@@ -592,12 +623,14 @@ function bhBreakSeal(w) {
 }
 /** Woche geändert: automatische Unterschrift nach dem neuen Stand, Abzeichnen-Karte aktualisieren */
 function bhWeekChanged(w) {
+  bhTouch(w);
   const before = JSON.stringify(w.signed || {});
   bhAutoSign(w, weekComplete(bhEntry.h, bhEntry.key, w));
   if (JSON.stringify(w.signed || {}) !== before) bhRefreshSigns();
 }
 /** Monat geändert: wie bhWeekChanged */
 function bhMonthChanged(mo) {
+  bhTouch(mo);
   const before = JSON.stringify(mo.signed || {});
   bhAutoSign(mo, monthComplete(mo));
   if (JSON.stringify(mo.signed || {}) !== before) bhRefreshSigns();
@@ -648,6 +681,7 @@ function weekFromSheets() {
       n++;
     }
     if (n) bhBreakSeal(w);
+    bhTouch(w);
     bhAutoSign(w, weekComplete(h, key, w));
     saveBh();
     renderBhWeek(h, key);
@@ -737,6 +771,7 @@ function withSignature(role, then) {
   if (bh.sigs[role]) return then();
   pickSignature(role, (sig) => {
     bh.sigs[role] = sig;
+    bhTouchProfile();
     saveBh();
     then();
   });
@@ -785,6 +820,7 @@ function signTap(role, force = false) {
         run: () => {
           delete e.signed[role];
           if (role === 'azubi') delete e.signed.frei;
+          bhTouch(e);
           saveBh();
           rerender();
         },
@@ -798,6 +834,7 @@ function signTap(role, force = false) {
     const cur = bhCurrent();
     cur.signed = { ...cur.signed, [role]: isoDate(new Date()) };
     if (role === 'azubi' && !complete) cur.signed.frei = true;
+    bhTouch(cur);
     saveBh();
     rerender();
   });
@@ -877,6 +914,7 @@ function editSignature(role) {
   const label = BH_ROLES.find((r) => r[0] === role)[1];
   const set = (sig) => {
     bh.sigs[role] = sig;
+    bhTouchProfile();
     saveBh();
     renderBhInfo();
   };
@@ -888,6 +926,7 @@ function editSignature(role) {
       destructive: true,
       run: () => {
         delete bh.sigs[role];
+        bhTouchProfile();
         saveBh();
         renderBhInfo();
       },
@@ -1116,6 +1155,7 @@ document.addEventListener('click', (e) => {
       confirmDialog('Bild entfernen?', '', 'Entfernen', () => {
         bhDeleteImage(p.img.id);
         delete p.img;
+        bhTouch(mo);
         if (mo.signed?.ausbilder) delete mo.signed.ausbilder;
         bhAutoSign(mo, monthComplete(mo));
         saveBh();
@@ -1165,6 +1205,7 @@ document.addEventListener('input', (e) => {
       bhFitField(t);
     }
     bh.profile[t.dataset.bhP] = t.value.trim();
+    bhTouchProfile();
     if (t.dataset.bhP === 'beginn' || t.dataset.bhP === 'ende') bhRecalcYears();
     saveBh();
     updatePdfThumb();
@@ -1186,14 +1227,17 @@ document.addEventListener('change', async (e) => {
     const v = t.value.trim();
     if (v && Number.isFinite(parseFloat(v.replace(',', '.')))) {
       t.value = parseNum(v).toFixed(2).replace('.', ',');
-      const d = bhCurrent().days[Number(t.dataset.bhHours ?? t.dataset.bhLh)];
+      const w = bhCurrent();
+      const d = w.days[Number(t.dataset.bhHours ?? t.dataset.bhLh)];
       if (t.dataset.bhHours != null) d.hours = t.value;
       else d.lines[Number(t.dataset.k)].h = t.value;
+      bhTouch(w);
       saveBh();
       updatePdfThumb();
     }
   } else if (t.dataset.bhAuto != null) {
     bh.autoSign = t.checked;
+    bhTouchProfile();
     // beim Einschalten bekommen alle fertigen Berichte ohne Azubi-Unterschrift sie sofort
     bhAutoSignAll(true);
     saveBh();
@@ -1205,6 +1249,7 @@ document.addEventListener('change', async (e) => {
       const img = await bhImportImage(t.files[0]);
       const mo = h.months[key] || (h.months[key] = emptyMonth());
       mo[k] = { ...mo[k], img };
+      bhTouch(mo);
       if (mo.signed?.ausbilder) delete mo.signed.ausbilder;
       bhAutoSign(mo, monthComplete(mo));
       saveBh();

@@ -308,7 +308,12 @@ async function accountJoin(code, member, token) {
   // Bestehendes Konto mit Sicherungen auf einem leeren iPhone: erst fragen, dann sichern.
   // Mit Abgleich nicht: das Gerät holt alles vom Server (abgleich.js)
   if (out.backups && out.backups.length && !account.at && !account.sync) account.restore = 'ask';
-  if (account.sync) account.restore = '';
+  if (account.sync) {
+    account.restore = '';
+    // erst abholen, dann senden (der gemerkte Stand kann von früher sein, z. B. Konto gelöscht und neu angelegt)
+    syncState().at = 0;
+    syncSave();
+  }
   saveAccount();
   syncSoon(0);
   return out;
