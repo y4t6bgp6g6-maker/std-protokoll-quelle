@@ -1,4 +1,4 @@
-// Arbeitsarten und Kunden (Übersicht): Jede Zeile bekommt nach festen Regeln eine Arbeitsart (Baustelle, Kundendienst,
+// Arbeitsarten und Kunden (Übersicht): Jede Zeile bekommt nach festen Regeln (regeln.js) eine Arbeitsart (Baustelle, Kundendienst,
 // Werkstatt, Sonstiges); Kunde = Feld „Baustelle“ (ohne Werkstatt), gleiche Baustelle trotz anderer Schreibweise wie
 // auf der Team-Seite (teamSameSite), Ketten aus gleichem Wortanfang („Muster-Pizza Nord“ / „Muster-Pizza Süd“) oder
 // von Hand (settings.kunden = { merge: { Kunde: Kette }, split: [Kunde] }, Hand geht vor Regel). Alles wird nur
@@ -14,42 +14,50 @@ const ARTEN = [
 const kdNorm = (s) => String(s ?? '').toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 /** Für die Regeln auch „ae/oe/ue“ wie ä/ö/ü: „Störung“ = „Stoerung“ = „Storung“ */
 const kdArtNorm = (s) => kdNorm(String(s ?? '').toLowerCase().replace(/([aou])e/g, '$1'));
-// Wortteile (nach kdArtNorm); was zuerst passt, gilt: Werkstatt nach der Baustelle (egal, was gemacht wurde), dann
-// Kundendienst, dann Baustelle, dann schwache Hinweise auf Kundendienst, sonst Sonstiges
-const ART_WERKSTATT = /^\W*(firma|halle|werkstatt|lager)/;
-const ART_KUNDENDIENST =
-  /storung|gestort|wartung|gewartet|repar|lecksuche|uberpruf|kontroll|getauscht|gewechselt|nachgefullt|undicht|defekt|fehler|gereinigt|geholt|geliefert|(?<!an)gebracht|wechseln|tauschen/;
-// schwächere Hinweise auf Kundendienst: zählen erst, wenn nichts für Baustelle spricht
-const ART_KD_SCHWACH = /abgesaugt|aufgefullt|gemessen|eingestellt|erneuert/;
-const ART_BAUSTELLE =
-  /montage|montiert|inbetriebnahme|in betrieb genommen|aufbau|aufgebaut|verlegt|eingebaut|vorbereitet|leitung|verkabelt|verkabelung|verdrahtet|verdrahtung|isoliert|abgebaut|gebaut|restarbeit|aufgehang|befestigt/;
+// Die Regeln selbst stehen in regeln.js (REGELN.arbeitsarten), erzeugt vom Regel-Werkzeug aus
+// „Regeln und Logiken/Arbeitsarten-und-Kunden.json“ außerhalb des Repos – dort ändern, nicht hier.
+const kdRegel = (id) => REGELN.arbeitsarten.abschnitte.find((a) => a.id === id);
 
-/** Arbeitsart einer Zeile */
-function arbeitsart(r) {
-  if (ART_WERKSTATT.test(kdNorm(r.site).trim())) return 'werkstatt';
-  const w = kdArtNorm(r.work);
-  if (ART_KUNDENDIENST.test(w)) return 'kundendienst';
-  if (ART_BAUSTELLE.test(w)) return 'baustelle';
-  return ART_KD_SCHWACH.test(w) ? 'kundendienst' : 'sonstiges';
+/**
+ * Regelliste → Funktion Zeile → { art, regel (Nummer ab 0, -1 = keine), wort }. Regeln von oben nach unten, die
+ * erste passende gilt. Wörter als Wortteil („teil“) oder am Anfang des Feldes („anfang“); Ausnahmen werden vor dem
+ * Vergleich aus dem Text genommen („angebracht“ zählt nicht als „gebracht“). Auch für das Regel-Werkzeug.
+ */
+function artMatcher(def) {
+  const rules = def.regeln.map((g) => ({
+    ...g,
+    w: g.woerter.map((x) => kdArtNorm(x).trim()).filter(Boolean),
+    x: (g.ausnahmen || []).map((x) => kdArtNorm(x).trim()).filter(Boolean),
+  }));
+  return (r) => {
+    for (let i = 0; i < rules.length; i++) {
+      const g = rules[i];
+      let t = kdArtNorm(g.feld === 'baustelle' ? r.site : r.work);
+      for (const x of g.x) t = t.split(x).join(' ');
+      const wort = g.wie === 'anfang' ? g.w.find((w) => t.replace(/^[^\p{L}\p{N}]+/u, '').startsWith(w)) : g.w.find((w) => t.includes(w));
+      if (wort) return { art: g.ziel, regel: i, wort };
+    }
+    return { art: def.sonst, regel: -1, wort: '' };
+  };
 }
+const arbeitsartGrund = artMatcher(kdRegel('arbeitsart'));
+/** Arbeitsart einer Zeile */
+const arbeitsart = (r) => arbeitsartGrund(r).art;
 
 /** Ganze Stunden mit Tausenderpunkt: „357 h“ */
 const kdHours = (min) => `${Math.round(min / 60).toLocaleString('de-DE')} h`;
 /** Schlüssel eines Namens (für settings.kunden): Wörter klein, ohne Satzzeichen */
 const kdKey = (s) => kdNorm(s).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
-// Wörter, die allein keine Kette bilden (Branche, Rechtsform, Straße …)
-const KD_GENERIC = new Set(
-  ('backerei hotel restaurant pizzeria cafe eiscafe imbiss supermarkt markt bistro grill doner kita kindergarten schule praxis ' +
-    'zahnarzt altenheim pflegeheim baustelle gaststatte gasthaus gasthof kneipe bar metzgerei fleischerei kiosk tankstelle apotheke ' +
-    'getranke eisdiele hof haus familie fam herr frau gmbh kg ag co ug ohg ek und der die das zum zur am an im in bei von alte alter neue neuer')
-    .split(' ')
-);
-const kdStreet = (w) => /(str|strasse|weg|allee|platz|ring|damm|gasse|chaussee)$/.test(w);
+// Wörter, die allein keine Kette bilden (Branche, Rechtsform, Straße …), Artikel vorne – aus regeln.js
+const kdWordSet = (id) => new Set(kdRegel(id).woerter.map((w) => kdNorm(w).replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean));
+const KD_GENERIC = kdWordSet('kettenwoerter');
+const KD_STREET_ENDS = [...kdWordSet('strassen')];
+const kdStreet = (w) => KD_STREET_ENDS.some((e) => w.endsWith(e));
 /** Kette aus diesen Wörtern möglich: mindestens ein Wort ab 3 Buchstaben, das keine Branche/Straße ist */
 const kdChainKeyOk = (words) => words.some((w) => w.length >= 3 && !KD_GENERIC.has(w) && !kdStreet(w) && !/\d/.test(w));
 /** Wörter eines Namens: Original und verglichen (ohne Satzzeichen); Komma trennt wie ein Leerzeichen */
-const KD_ARTICLE = new Set('the der die das zum zur am im bei la le il el da'.split(' '));
+const KD_ARTICLE = kdWordSet('artikel');
 function kdWords(name) {
   const orig = String(name).split(/[\s,]+/).filter(Boolean);
   const pairs = orig.map((o) => [o, kdNorm(o).replace(/[^\p{L}\p{N}]/gu, '')]).filter((p) => p[1]);
