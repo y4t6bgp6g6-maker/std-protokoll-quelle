@@ -59,8 +59,9 @@ function ipadSync() {
   // zwei Spalten im Zettel, wenn je Tag mindestens so viel Platz bleibt wie auf einem großen iPhone (drei am Mac abgelehnt)
   const room = innerWidth - (quer ? ipadSide.offsetWidth : 0) - 40;
   root.classList.toggle('ipad-cols', room >= 760);
-  // Mac: Tabelle nur, wenn alle Spalten Platz haben (sonst Tageskarten)
-  root.classList.toggle('mac-tab', ipadMac() && room >= 1050);
+  // Mac: immer Tabelle (so gewünscht); im engeren Fenster schmalere Tag-/Gesamt-Spalten und Uhrzeiten
+  root.classList.toggle('mac-tab', ipadMac());
+  root.classList.toggle('mac-eng', ipadMac() && room < 1050);
   const tab = TABS.find((t) => t && t[3].includes(currentView));
   document.querySelectorAll('[data-ipad-tab]').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.ipadTab === tab[0]));
   // quer: Liste links nur im Bereich „Zettel“ und nicht, wenn die Liste selbst die Seite ist

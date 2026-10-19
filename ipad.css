@@ -153,8 +153,13 @@ html.ipad .tm-z-row { grid-template-columns: repeat(var(--n), calc((100cqw - 64p
 }
 
 /* ───────── Mac: Zettel als Tabelle (dieselben Tageskarten, anders angeordnet; Kopfzeile .mac-th setzt ipad.js) ─────────
-   Nur bei genug Breite (mac-tab, ipad.js), sonst Tageskarten wie auf dem iPad. Spalten: Tag | Beginn – Ende ⚠ | Baustelle | Art der Arbeit | Std. ✕ | Gesamt */
+   Immer am Mac (mac-tab); im engeren Fenster (mac-eng) schmalere Spalten. Spalten: Tag | Beginn – Ende ⚠ | Baustelle | Art der Arbeit | Std. ✕ | Gesamt */
 html.mac { --mt-day: 150px; --mt-sum: 190px; --mt-row: 84px 12px 84px 22px minmax(0, 1.25fr) minmax(0, 1fr) 56px 28px; }
+html.mac.mac-eng { --mt-day: 112px; --mt-sum: 136px; --mt-row: 66px 8px 66px 18px minmax(0, 1.25fr) minmax(0, 1fr) 50px 24px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .time { font-size: 14px; padding: 6px 2px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .row { column-gap: 6px; padding: 3px 8px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .txt { font-size: 14px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] .mac-th > div { column-gap: 6px; padding-left: 8px; padding-right: 8px; }
 html.ipad.mac.mac-tab[data-view='editor'] #days { display: block; max-width: 1500px; margin: 0 auto; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
 html.mac.mac-tab[data-view='editor'] .mac-th { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--sep); }
 html.mac.mac-tab[data-view='editor'] .mac-th > span { padding: 12px 14px 8px; }
@@ -293,3 +298,8 @@ html.mac #modal-layer .modal.mt-pop { width: 260px; padding: 8px; }
 .ipad-side-list .list-gap { width: 100%; min-width: 0; }
 .ipad-side-list .list-main { min-width: 0; overflow: hidden; }
 .ipad-side-list .list-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Tabelle: Summen und Pause nie umbrechen, Wochentag im engeren Fenster kleiner */
+html.mac.mac-tab[data-view='editor'] #days .day-total, html.mac.mac-tab[data-view='editor'] #days .day-foot .pill { white-space: nowrap; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .day-when b { font-size: 15px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .day-total { font-size: 14px; }
+html.mac.mac-eng.mac-tab[data-view='editor'] #days .day-foot { padding-left: 8px; padding-right: 10px; }
