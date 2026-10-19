@@ -18,11 +18,11 @@ const kdArtNorm = (s) => kdNorm(String(s ?? '').toLowerCase().replace(/([aou])e/
 // Kundendienst, dann Baustelle, dann schwache Hinweise auf Kundendienst, sonst Sonstiges
 const ART_WERKSTATT = /^\W*(firma|halle|werkstatt|lager)/;
 const ART_KUNDENDIENST =
-  /storung|gestort|wartung|repar|lecksuche|uberpruf|kontroll|getauscht|gewechselt|nachgefullt|undicht|defekt|fehler|gereinigt|geholt|geliefert|(?<!an)gebracht|wechseln|tauschen/;
+  /storung|gestort|wartung|gewartet|repar|lecksuche|uberpruf|kontroll|getauscht|gewechselt|nachgefullt|undicht|defekt|fehler|gereinigt|geholt|geliefert|(?<!an)gebracht|wechseln|tauschen/;
 // schwächere Hinweise auf Kundendienst: zählen erst, wenn nichts für Baustelle spricht
 const ART_KD_SCHWACH = /abgesaugt|aufgefullt|gemessen|eingestellt|erneuert/;
 const ART_BAUSTELLE =
-  /montage|montiert|inbetriebnahme|aufbau|aufgebaut|verlegt|eingebaut|angeschlossen|vorbereitet|leitung|verkabelt|verdrahtet|lotet|isoliert|abgedruckt|evakuiert|abgebaut|aufgestellt|gebaut|restarbeit|verdrahtung|verkabelung|in betrieb genommen|abgeklemmt|aufgehang|befestigt|vakuum/;
+  /montage|montiert|inbetriebnahme|in betrieb genommen|aufbau|aufgebaut|verlegt|eingebaut|vorbereitet|leitung|verkabelt|verkabelung|verdrahtet|verdrahtung|isoliert|abgebaut|gebaut|restarbeit|aufgehang|befestigt/;
 
 /** Arbeitsart einer Zeile */
 function arbeitsart(r) {
