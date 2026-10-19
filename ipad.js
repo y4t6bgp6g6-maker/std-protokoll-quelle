@@ -59,6 +59,8 @@ function ipadSync() {
   // zwei Spalten im Zettel, wenn je Tag mindestens so viel Platz bleibt wie auf einem großen iPhone (drei am Mac abgelehnt)
   const room = innerWidth - (quer ? ipadSide.offsetWidth : 0) - 40;
   root.classList.toggle('ipad-cols', room >= 760);
+  // Mac: Tabelle nur, wenn alle Spalten Platz haben (sonst Tageskarten)
+  root.classList.toggle('mac-tab', ipadMac() && room >= 1050);
   const tab = TABS.find((t) => t && t[3].includes(currentView));
   document.querySelectorAll('[data-ipad-tab]').forEach((b) => b.classList.toggle('on', !!tab && b.dataset.ipadTab === tab[0]));
   // quer: Liste links nur im Bereich „Zettel“ und nicht, wenn die Liste selbst die Seite ist
@@ -72,7 +74,7 @@ function ipadSync() {
 }
 /** Hoch: Zurück im Zettel wird zum Knopf für die Zettel-Liste; Mac: Spaltenköpfe der Tabelle */
 function ipadEditorNav() {
-  const days = currentView === 'editor' && document.documentElement.classList.contains('mac') && document.getElementById('days');
+  const days = currentView === 'editor' && document.documentElement.classList.contains('mac-tab') && document.getElementById('days');
   if (days && !days.querySelector('.mac-th'))
     days.insertAdjacentHTML(
       'afterbegin',

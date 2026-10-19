@@ -47,10 +47,10 @@ html.ipad #ipad-side {
   padding: calc(env(safe-area-inset-top) + 14px) 12px 0;
   background: var(--ipad-side);
   border-right: 1px solid var(--ipad-line);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
 }
+/* Titel und Bereiche stehen fest, nur die Liste darunter scrollt */
+.ipad-side-title, .ipad-side-nav, .ipad-side-sep { flex: none; }
 .ipad-side-title { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 8px 12px; }
 .ipad-side-nav { display: flex; flex-direction: column; gap: 2px; }
 .ipad-side-row {
@@ -68,8 +68,8 @@ html.ipad #ipad-side {
 .ipad-side-row:active { background: var(--fill); }
 .ipad-side-row.on { background: var(--accent-fill); color: var(--on-accent); }
 .ipad-side-row.on svg { color: var(--on-accent); }
-.ipad-side-sep { height: 1px; background: var(--ipad-line); margin: 12px 12px 4px; }
-.ipad-side-list { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+.ipad-side-sep { height: 1px; background: var(--ipad-line); }
+.ipad-side-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 -12px; padding: 0 12px calc(24px + env(safe-area-inset-bottom)); }
 .ipad-side-list .bh-switch { margin: 10px 0 2px; }
 .ipad-side-list .list-row.sel { background: var(--accent-soft); }
 .ipad-side-list:empty, .ipad-side-sep:has(+ .ipad-side-list:empty) { display: none; }
@@ -153,46 +153,46 @@ html.ipad .tm-z-row { grid-template-columns: repeat(var(--n), calc((100cqw - 64p
 }
 
 /* ───────── Mac: Zettel als Tabelle (dieselben Tageskarten, anders angeordnet; Kopfzeile .mac-th setzt ipad.js) ─────────
-   Spalten: Tag | Beginn – Ende ⚠ | Baustelle | Art der Arbeit | Std. ✕ | Gesamt */
+   Nur bei genug Breite (mac-tab, ipad.js), sonst Tageskarten wie auf dem iPad. Spalten: Tag | Beginn – Ende ⚠ | Baustelle | Art der Arbeit | Std. ✕ | Gesamt */
 html.mac { --mt-day: 150px; --mt-sum: 190px; --mt-row: 84px 12px 84px 22px minmax(0, 1.25fr) minmax(0, 1fr) 56px 28px; }
-html.ipad.mac[data-view='editor'] #days { display: block; max-width: 1500px; margin: 0 auto; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
-html.mac[data-view='editor'] .mac-th { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--sep); }
-html.mac[data-view='editor'] .mac-th > span { padding: 12px 14px 8px; }
-html.mac[data-view='editor'] .mac-th > div { display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; padding: 12px 10px 8px; }
-html.mac[data-view='editor'] .mac-th > span:last-child { text-align: right; }
+html.ipad.mac.mac-tab[data-view='editor'] #days { display: block; max-width: 1500px; margin: 0 auto; background: var(--card); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden; }
+html.mac.mac-tab[data-view='editor'] .mac-th { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--sep); }
+html.mac.mac-tab[data-view='editor'] .mac-th > span { padding: 12px 14px 8px; }
+html.mac.mac-tab[data-view='editor'] .mac-th > div { display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; padding: 12px 10px 8px; }
+html.mac.mac-tab[data-view='editor'] .mac-th > span:last-child { text-align: right; }
 .mac-th { display: none; }
-html.mac[data-view='editor'] #days .day { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); margin: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--ipad-line); }
-html.mac[data-view='editor'] #days .day:last-child { border-bottom: 0; }
-html.mac[data-view='editor'] #days .day::before { border-radius: 0; }
-html.mac[data-view='editor'] #days .day.unsaved { box-shadow: inset 0 0 0 2px var(--text); }
-html.mac[data-view='editor'] #days .day-head { grid-column: 1; grid-row: 1 / span 40; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 8px; padding: 12px 10px 12px 16px; border-bottom: 0; border-right: 0.5px solid var(--sep); }
-html.mac[data-view='editor'] #days .day-when { flex-wrap: wrap; white-space: normal; }
-html.mac[data-view='editor'] #days .day-when b { display: block; width: 100%; }
-html.mac[data-view='editor'] #days .row { grid-column: 2; display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; align-items: center; padding: 3px 10px; position: relative; }
-html.mac[data-view='editor'] #days .row-times { display: contents; }
-html.mac[data-view='editor'] #days .row > * , html.mac[data-view='editor'] #days .row-times > * { grid-row: 1; }
-html.mac[data-view='editor'] #days .time { grid-column: 1; min-width: 0; padding: 6px 4px; }
-html.mac[data-view='editor'] #days .arrow { grid-column: 2; text-align: center; }
-html.mac[data-view='editor'] #days .time[data-which='end'] { grid-column: 3; }
-html.mac[data-view='editor'] #days .time-warn { grid-column: 4; }
-html.mac[data-view='editor'] #days .row > .suggest-wrap:has([data-f='site']) { grid-column: 5; }
-html.mac[data-view='editor'] #days .row > .suggest-wrap:has([data-f='work']) { grid-column: 6; }
-html.mac[data-view='editor'] #days .row-hours { grid-column: 7; flex: none; }
-html.mac[data-view='editor'] #days .row-del, html.mac[data-view='editor'] #days .row-del-space { grid-column: 8; position: static; display: grid; width: 28px; height: 28px; }
-html.mac[data-view='editor'] #days .row-del-space { visibility: hidden; }
-html.mac[data-view='editor'] #days .row .typo-hint { grid-row: 2; grid-column: 5 / 7; }
-html.mac[data-view='editor'] #days .field-icon { display: none; }
-html.mac[data-view='editor'] #days .txt { padding: 7px 0 5px; border-bottom-color: transparent; font-size: 15px; }
-html.mac[data-view='editor'] #days .txt:focus { border-bottom-color: var(--accent); }
-html.mac[data-view='editor'] #days .txt::placeholder { opacity: 0.45; }
-html.mac[data-view='editor'] #days .day-foot { grid-column: 3; grid-row: 1 / span 40; flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 8px; padding: 12px 14px; border-left: 0.5px solid var(--sep); }
-html.mac[data-view='editor'] #days .day-total { order: -1; margin-left: 0; font-size: 16px; }
-html.mac[data-view='editor'] #days .day-save-btn { margin-left: 0; }
-html.mac[data-view='editor'] #days .expand-btn { grid-column: 2; align-self: center; padding: 12px 10px; }
-html.mac[data-view='editor'] #days .status-day .status-head { grid-column: 1 / -1; grid-row: auto; flex-direction: row; align-items: center; justify-content: space-between; border-right: 0; }
-html.mac[data-view='editor'] #days .status-day.has-work .status-head { border-bottom: 0.5px solid var(--sep); }
-html.mac[data-view='editor'] #days .status-day.has-work .row, html.mac[data-view='editor'] #days .status-day.has-work .day-foot { grid-row: auto; }
-html.mac[data-view='editor'] #days .other-month { margin: 0; border-radius: 0; border-bottom: 1px solid var(--ipad-line); }
+html.mac.mac-tab[data-view='editor'] #days .day { display: grid; grid-template-columns: var(--mt-day) minmax(0, 1fr) var(--mt-sum); margin: 0; border-radius: 0; box-shadow: none; border-bottom: 1px solid var(--ipad-line); }
+html.mac.mac-tab[data-view='editor'] #days .day:last-child { border-bottom: 0; }
+html.mac.mac-tab[data-view='editor'] #days .day::before { border-radius: 0; }
+html.mac.mac-tab[data-view='editor'] #days .day.unsaved { box-shadow: inset 0 0 0 2px var(--text); }
+html.mac.mac-tab[data-view='editor'] #days .day-head { grid-column: 1; grid-row: 1 / span 40; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 8px; padding: 12px 10px 12px 16px; border-bottom: 0; border-right: 0.5px solid var(--sep); }
+html.mac.mac-tab[data-view='editor'] #days .day-when { flex-wrap: wrap; white-space: normal; }
+html.mac.mac-tab[data-view='editor'] #days .day-when b { display: block; width: 100%; }
+html.mac.mac-tab[data-view='editor'] #days .row { grid-column: 2; display: grid; grid-template-columns: var(--mt-row); column-gap: 8px; align-items: center; padding: 3px 10px; position: relative; }
+html.mac.mac-tab[data-view='editor'] #days .row-times { display: contents; }
+html.mac.mac-tab[data-view='editor'] #days .row > * , html.mac.mac-tab[data-view='editor'] #days .row-times > * { grid-row: 1; }
+html.mac.mac-tab[data-view='editor'] #days .time { grid-column: 1; min-width: 0; padding: 6px 4px; }
+html.mac.mac-tab[data-view='editor'] #days .arrow { grid-column: 2; text-align: center; }
+html.mac.mac-tab[data-view='editor'] #days .time[data-which='end'] { grid-column: 3; }
+html.mac.mac-tab[data-view='editor'] #days .time-warn { grid-column: 4; }
+html.mac.mac-tab[data-view='editor'] #days .row > .suggest-wrap:has([data-f='site']) { grid-column: 5; }
+html.mac.mac-tab[data-view='editor'] #days .row > .suggest-wrap:has([data-f='work']) { grid-column: 6; }
+html.mac.mac-tab[data-view='editor'] #days .row-hours { grid-column: 7; flex: none; }
+html.mac.mac-tab[data-view='editor'] #days .row-del, html.mac.mac-tab[data-view='editor'] #days .row-del-space { grid-column: 8; position: static; display: grid; width: 28px; height: 28px; }
+html.mac.mac-tab[data-view='editor'] #days .row-del-space { visibility: hidden; }
+html.mac.mac-tab[data-view='editor'] #days .row .typo-hint { grid-row: 2; grid-column: 5 / 7; }
+html.mac.mac-tab[data-view='editor'] #days .field-icon { display: none; }
+html.mac.mac-tab[data-view='editor'] #days .txt { padding: 7px 0 5px; border-bottom-color: transparent; font-size: 15px; }
+html.mac.mac-tab[data-view='editor'] #days .txt:focus { border-bottom-color: var(--accent); }
+html.mac.mac-tab[data-view='editor'] #days .txt::placeholder { opacity: 0.45; }
+html.mac.mac-tab[data-view='editor'] #days .day-foot { grid-column: 3; grid-row: 1 / span 40; flex-direction: column; align-items: flex-end; justify-content: flex-start; gap: 8px; padding: 12px 14px; border-left: 0.5px solid var(--sep); }
+html.mac.mac-tab[data-view='editor'] #days .day-total { order: -1; margin-left: 0; font-size: 16px; }
+html.mac.mac-tab[data-view='editor'] #days .day-save-btn { margin-left: 0; }
+html.mac.mac-tab[data-view='editor'] #days .expand-btn { grid-column: 2; align-self: center; padding: 12px 10px; }
+html.mac.mac-tab[data-view='editor'] #days .status-day .status-head { grid-column: 1 / -1; grid-row: auto; flex-direction: row; align-items: center; justify-content: space-between; border-right: 0; }
+html.mac.mac-tab[data-view='editor'] #days .status-day.has-work .status-head { border-bottom: 0.5px solid var(--sep); }
+html.mac.mac-tab[data-view='editor'] #days .status-day.has-work .row, html.mac.mac-tab[data-view='editor'] #days .status-day.has-work .day-foot { grid-row: auto; }
+html.mac.mac-tab[data-view='editor'] #days .other-month { margin: 0; border-radius: 0; border-bottom: 1px solid var(--ipad-line); }
 /* Uhrzeit tippen (ipad.js): Tastatur-Fokus und laufende Eingabe sichtbar */
 html.mac #days .time:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 1px; }
 html.mac #days .time.typing { background: var(--card); color: var(--text); box-shadow: inset 0 0 0 2px var(--accent-fill); }
@@ -283,3 +283,13 @@ html.mac #modal-layer .modal.mt-pop { width: 260px; padding: 8px; }
 .mt-input:focus { box-shadow: inset 0 0 0 2px var(--accent-fill); }
 .mt-step { height: 40px; border-radius: 10px; background: var(--fill); font-size: 22px; font-weight: 500; }
 .mt-quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; margin-top: 8px; border-top: 0.5px solid var(--sep); padding-top: 8px; }
+
+/* Bereiche und Liste deutlich getrennt: Linie über die ganze Breite (Linie und Liste gewählt; „eingelassen“ und „Karte“ gezeigt,
+   nicht genommen) */
+.ipad-side-sep { margin: 12px -12px 0; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5); }
+:root[data-theme='dark'] .ipad-side-sep { box-shadow: none; }
+.ipad-side-list { padding-top: 4px; }
+/* lange Zeilen (fehlende Teilwoche) kürzen statt abschneiden */
+.ipad-side-list .list-gap { width: 100%; min-width: 0; }
+.ipad-side-list .list-main { min-width: 0; overflow: hidden; }
+.ipad-side-list .list-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
