@@ -245,6 +245,7 @@ html.mac #modal-layer .modal:not(.alert):not(.pv-modal) {
   transition: opacity 0.14s ease, transform 0.14s ease; transform: scale(0.97);
 }
 html.mac #modal-layer.show .modal:not(.alert):not(.pv-modal) { opacity: 1; transform: none; }
+html.mac[data-theme='dark'] #modal-layer .modal:not(.alert):not(.pv-modal) { box-shadow: 0 0 0 0.5px rgba(255, 255, 255, 0.22), 0 12px 40px rgba(0, 0, 0, 0.55); }
 html.mac #modal-layer .modal.sheet { width: 400px; max-height: calc(100vh - 80px); overflow: auto; }
 html.mac #modal-layer .modal.sheet.tm-dw-sheet, html.mac #modal-layer .modal.sheet.ws-sheet { width: 560px; }
 html.mac #modal-layer .modal-head { padding: 4px 6px; } html.mac #modal-layer .modal-head b { font-size: 14px; }
@@ -267,3 +268,5 @@ html.mac #modal-layer.show .modal:not(.alert):not(.pv-modal):not(.mac-anchored) 
 html.mac #modal-layer .modal.mac-anchored { transform-origin: var(--mac-origin, top right); }
 html.mac #modal-layer.mac-anchor .backdrop { background: transparent; }
 html.mac #modal-layer .modal.sheet.mac-anchored { width: 300px; }
+/* Wochenauswahl braucht Platz für KW + 7 Tage – sonst schieben sich die Nachbarmonate (Wischstreifen) ins Bild */
+html.mac #modal-layer .modal.sheet.wp-sheet.mac-anchored { width: 400px; }
