@@ -235,3 +235,35 @@ html.ipad:not(.mac) #days[data-sel] .field-icon { top: 13px; }
 html.ipad:not(.mac) #days[data-sel] .day-foot { padding: 14px 18px 16px; }
 html.ipad:not(.mac) #days[data-sel] .day-total { font-size: 17px; }
 html.ipad:not(.mac)[data-view='editor'] .sum-bar { width: 100%; max-width: none; }
+
+/* ───────── Mac: Menüs und Auswahl als Fenster statt Blatt von unten ─────────
+   Menüs und kleine Auswahl klappen am angeklickten Knopf auf (Position setzt ipad.js, Klasse mac-anchored), alles andere
+   als Fenster in der Mitte (so gewählt; „alles mittig“ wurde gezeigt und nicht genommen) */
+html.mac #modal-layer .modal:not(.alert):not(.pv-modal) {
+  right: auto; bottom: auto; max-width: none; margin: 0; border-radius: 12px; background: var(--sheet); padding-bottom: 0;
+  box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12), 0 12px 40px rgba(0, 0, 0, 0.22); opacity: 0;
+  transition: opacity 0.14s ease, transform 0.14s ease; transform: scale(0.97);
+}
+html.mac #modal-layer.show .modal:not(.alert):not(.pv-modal) { opacity: 1; transform: none; }
+html.mac #modal-layer .modal.sheet { width: 400px; max-height: calc(100vh - 80px); overflow: auto; }
+html.mac #modal-layer .modal.sheet.tm-dw-sheet, html.mac #modal-layer .modal.sheet.ws-sheet { width: 560px; }
+html.mac #modal-layer .modal-head { padding: 4px 6px; } html.mac #modal-layer .modal-head b { font-size: 14px; }
+html.mac #modal-layer .modal-btn { font-size: 14px; padding: 8px; }
+html.mac #modal-layer .modal-wide { font-size: 14px; padding: 8px 16px 12px; }
+/* Menü: kompakte Liste, links bündig, Hervorhebung beim Überfahren, kein „Abbrechen“ (Esc oder daneben klicken) */
+html.mac #modal-layer .modal.actions { width: 260px; padding: 5px; }
+html.mac .action-group { background: none; border-radius: 0; }
+html.mac .action { text-align: left; padding: 6px 10px; font-size: 14px; color: var(--text); border-radius: 6px; }
+html.mac .action-group .action + .action { border-top: 0; }
+html.mac .action.destructive { color: var(--danger); }
+html.mac .action.cancel { display: none; }
+@media (hover: hover) { html.mac .action:hover { background: var(--accent-fill); color: var(--on-accent); } html.mac .action.destructive:hover { background: var(--danger); color: #fff; } }
+/* Rad kleiner */
+html.mac .wheel { height: 180px; width: 90px; }
+/* ohne Knopf (große Fenster): mittig */
+html.mac #modal-layer .modal:not(.alert):not(.pv-modal):not(.mac-anchored) { top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.97); }
+html.mac #modal-layer.show .modal:not(.alert):not(.pv-modal):not(.mac-anchored) { transform: translate(-50%, -50%); }
+/* am Knopf: Hintergrund nicht abgedunkelt */
+html.mac #modal-layer .modal.mac-anchored { transform-origin: var(--mac-origin, top right); }
+html.mac #modal-layer.mac-anchor .backdrop { background: transparent; }
+html.mac #modal-layer .modal.sheet.mac-anchored { width: 300px; }

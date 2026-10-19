@@ -337,3 +337,39 @@ ipadEditorNav = function () {
 };
 // beim Start: ipadSync oben lief schon, bevor es die Woche gab
 wkRender();
+
+// ───────── Mac: Menüs am Knopf (ipad.css) ─────────
+// Merkt den zuletzt angeklickten bzw. per Tastatur ausgelösten Knopf; Menüs (actionSheet) und kleine Auswahl (Rad, Woche)
+// klappen daran auf – darunter, sonst darüber, immer im Fenster. Große Fenster bleiben mittig
+let macAnchor = null; // { rect, at }
+const macAnchorOf = (el) => el?.closest?.('button, [role="button"], [data-act], .time, .pill, .chip-btn');
+document.addEventListener('pointerdown', (e) => {
+  const el = macAnchorOf(e.target);
+  if (el && !layer.contains(el)) macAnchor = { rect: el.getBoundingClientRect(), at: Date.now() };
+}, true);
+document.addEventListener('keydown', (e) => {
+  const el = (e.key === 'Enter' || e.key === ' ') && macAnchorOf(document.activeElement);
+  if (el && !layer.contains(el)) macAnchor = { rect: el.getBoundingClientRect(), at: Date.now() };
+}, true);
+const macShowModal = showModal;
+showModal = function (box) {
+  macShowModal(box);
+  const root = document.documentElement;
+  layer.classList.remove('mac-anchor');
+  if (!root.classList.contains('mac')) return;
+  const modal = layer.querySelector('.modal');
+  const small = modal && (modal.classList.contains('actions') || modal.querySelector('.wheels') || modal.classList.contains('wp-sheet'));
+  if (!small || !macAnchor || Date.now() - macAnchor.at > 1500) return;
+  const r = macAnchor.rect;
+  modal.classList.add('mac-anchored');
+  layer.classList.add('mac-anchor');
+  const w = modal.offsetWidth;
+  const h = modal.offsetHeight;
+  const right = r.left + r.width / 2 > innerWidth / 2;
+  const below = r.bottom + 6 + h <= innerHeight - 8 || r.top < innerHeight / 2;
+  const left = Math.max(8, Math.min(innerWidth - w - 8, right ? r.right - w : r.left));
+  const top = Math.max(8, Math.min(innerHeight - h - 8, below ? r.bottom + 6 : r.top - 6 - h));
+  modal.style.left = `${left}px`;
+  modal.style.top = `${top}px`;
+  modal.style.setProperty('--mac-origin', `${right ? 'right' : 'left'} ${below ? 'top' : 'bottom'}`);
+};
