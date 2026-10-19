@@ -507,5 +507,20 @@ if (LANG === 'ru') {
       [/(\d+) Berichtsheft-Seiten?\b/g, (m, n) => `${n} ${pl(n, 'страница дневника', 'страницы дневника', 'страниц дневника')}`],
     ],
   });
+
+  // Arbeitsarten und Kunden (kunden.js)
+  i18nAdd({
+    exact: {
+      Arbeitsarten: 'Виды работ', 'Arbeitsarten pro Monat': 'Виды работ по месяцам', Kundendienst: 'Сервис', Werkstatt: 'Мастерская',
+      Sonstiges: 'Прочее', Kunden: 'Клиенты', 'Noch keine Kunden': 'Клиентов пока нет', 'Kette auflösen': 'Расформировать сеть',
+      'Aus der Kette lösen': 'Убрать из сети', 'Neue Kette …': 'Новая сеть …', 'Neue Kette': 'Новая сеть', Zusammenfassen: 'Объединить',
+      'Zu Kette zusammenfassen …': 'Объединить в сеть …',
+    },
+    patterns: [
+      [/^(\d+) (Filiale|Filialen)$/, (m, n) => `${n} ${pl(n, 'филиал', 'филиала', 'филиалов')}`],
+      [/^\+ (\d+) weitere$/, '+ ещё $1'],
+      [/^(\d{4}) · (\d+) (Kunde|Kunden) · ([\d.]+) h$/, (m, y, n, k, h) => `${y} · ${n} ${pl(n, 'клиент', 'клиента', 'клиентов')} · ${h} ч`],
+    ],
+  });
 }
 

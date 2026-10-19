@@ -97,6 +97,7 @@ function ovcFacts(year) {
   f.avgNet = avg(f.m.filter((m) => m.net != null).map((m) => m.net));
   f.anspruch = Math.max(0, Math.round(parseNum(settings.vacationDays)));
   f.rest = f.anspruch - f.urlaub - f.urlaubPlan;
+  f.kd = kundenFacts(year); // Arbeitsarten und Kunden (kunden.js)
   return f;
 }
 
@@ -283,6 +284,9 @@ const OVC_BIG = {
       </div>`;
     },
   },
+  arbeitsarten: { label: 'Arbeitsarten', html: kdArtenRingHTML },
+  arbeitsartenMonat: { label: 'Arbeitsarten pro Monat', html: kdArtenBarsHTML },
+  kunden: { label: 'Kunden', html: kdKundenCardHTML },
   netto: {
     label: 'Netto pro Monat',
     wage: true,

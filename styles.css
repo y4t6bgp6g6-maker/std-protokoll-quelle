@@ -26,6 +26,10 @@
   --holiday-ink: #7432ad;
   --off: #8e8e93;
   --off-ink: #5f6862;
+  /* Arbeitsarten (Übersicht): Baustelle = Akzent, Kundendienst, Werkstatt, Sonstiges */
+  --art-k: #13887e;
+  --art-w: #c0661a;
+  --art-s: #b9b8ae;
   --school: #1f9d8a;
   --school-ink: #0f6e60;
   --vac-plan: #c06a08;
@@ -64,6 +68,9 @@
   --holiday-ink: #c9a0ff;
   --off: #97a2ac;
   --off-ink: #97a2ac;
+  --art-k: #34d3c1;
+  --art-w: #ff9447;
+  --art-s: #4a5576;
   --school: #3ccfb4;
   --school-ink: #5fdcc4;
   --vac-plan: #b8680a;
@@ -1909,6 +1916,48 @@ a.s-row:active { background: var(--fill); }
 .ovc-m { margin-top: 6px; text-align: center; font-size: 11px; font-weight: 600; color: var(--muted); }
 .ovc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; font-size: 13px; }
 .ovc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+/* Arbeitsarten */
+.ovc-arc.art-b { stroke: var(--accent-fill); }
+.ovc-arc.art-k { stroke: var(--art-k); }
+.ovc-arc.art-w { stroke: var(--art-w); }
+.ovc-arc.art-s { stroke: var(--art-s); }
+:is(.ovc-dot, .ovc-bar).art-b { background: var(--accent-fill); }
+:is(.ovc-dot, .ovc-bar).art-k { background: var(--art-k); }
+:is(.ovc-dot, .ovc-bar).art-w { background: var(--art-w); }
+:is(.ovc-dot, .ovc-bar).art-s { background: var(--art-s); }
+/* vierstellige Stundenzahl passt nur kleiner in den Ring */
+.ovc-arbeitsarten .ovc-donut-c b { font-size: 28px; }
+/* gestapelte Säulen: ohne Lücke, nur oben gerundet */
+.ovc-up:has(> .art-b, > .art-k, > .art-w, > .art-s) { gap: 0; }
+.ovc-up:has(> .art-b, > .art-k, > .art-w, > .art-s) .ovc-val { margin-bottom: 3px; }
+.ovc-up > .ovc-bar[class*='art-'] { border-radius: 0; }
+.ovc-up > .ovc-val + .ovc-bar[class*='art-'] { border-radius: 5px 5px 0 0; }
+/* Kunden (Karte und Seite) */
+.kd-card { display: block; }
+.kd-row { padding: 7px 0 5px; }
+.kd-top { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.kd-name { flex: 0 1 auto; overflow: hidden; font-size: 17px; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+/* wird es eng, weichen erst Filialen und Tage, dann der Name */
+.kd-fil, .kd-days { flex: 0 1000 auto; overflow: hidden; min-width: 0; white-space: nowrap; color: var(--muted); }
+.kd-fil { font-size: 13.5px; font-weight: 600; }
+.kd-days { font-size: 14px; }
+.kd-h { flex: none; margin-left: auto; padding-left: 8px; font-size: 17px; font-variant-numeric: tabular-nums; }
+.kd-bar { height: 7px; margin-top: 7px; border-radius: 4px; background: var(--fill); overflow: hidden; }
+.kd-bar i { display: block; height: 100%; border-radius: 4px; background: var(--accent-fill); }
+.kd-more { margin-top: 8px; font-size: 15px; color: var(--muted); }
+.kd-none { padding: 6px 0 2px; font-size: 15px; color: var(--muted); }
+.kd-list { padding: 4px 16px; }
+.kd-list .kd-item { padding: 12px 0 11px; transition: transform 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+.kd-list .kd-item + .kd-item { border-top: 1px solid var(--sep); }
+.kd-item[data-kd-chain] { cursor: pointer; }
+.kd-arrow { flex: none; align-self: center; display: inline-flex; color: var(--muted); transform: rotate(-90deg); transition: transform 0.25s ease; }
+.kd-arrow svg { width: 13px; height: 13px; stroke-width: 3; }
+.kd-arrow.open { transform: none; }
+.kd-branches { margin-top: 6px; }
+.kd-branch { display: flex; align-items: baseline; gap: 7px; padding: 5px 0 5px 20px; }
+.kd-branch .kd-name { font-size: 15.5px; font-weight: 500; }
+.kd-branch .kd-h { font-size: 15.5px; font-weight: 600; }
+:is(.kd-item, .kd-branch).pressing { transform: scale(0.97); transition: transform 0.45s cubic-bezier(0.4, 0, 0.6, 1); }
 
 @media (prefers-reduced-motion: no-preference) {
   .ovc-arc { animation: ovc-arc 0.9s cubic-bezier(0.3, 0.8, 0.3, 1) both; animation-delay: calc(140ms + var(--d, 0ms)); }

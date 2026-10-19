@@ -202,6 +202,7 @@ const DEFAULT_SETTINGS = {
   bav: '',
   vacationDays: 30, // Urlaubsanspruch im Jahr (Karte „Urlaub“ in der Übersicht)
   ovCards: null, // Inhalt der Karten in der Übersicht (karten.js), null = Vorgabe
+  kunden: null, // Ketten von Hand auf der Kunden-Seite (kunden.js): { merge: { Kunde: Kette }, split: [Kunde] }
   theme: 'auto', // Darstellung: auto (wie iPhone), light, dark
   encryptBackup: false, // Sicherungen mit Passwort verschlüsseln (Schlüssel nur auf diesem iPhone, nie in der Sicherung)
 };
@@ -1942,7 +1943,7 @@ function enterReport(rep, s, dayIndex, draft) {
 
 // Ziel, Beschriftung, Symbol und die Seiten, bei denen der Eintrag hervorgehoben ist (Unterseiten gehören zu ihrer Hauptseite)
 const TABS = [
-  ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year']],
+  ['#/uebersicht', 'Übersicht', 'tabStats', ['stats', 'payslip', 'year', 'kunden']],
   ['#/', 'Zettel', 'tabZettel', ['list', 'editor', 'trip', 'heft', 'bhWeek', 'bhMonth', 'bhInfo']],
   null,
   ['#/team', 'Team', 'tabTeam', ['team', 'teamSheet']],
@@ -2097,7 +2098,7 @@ function route() {
     renderSettings();
     syncNav();
     window.scrollTo(0, 0);
-  } else if (bhRoute(hash) || fehlerRoute(hash)) {
+  } else if (bhRoute(hash) || fehlerRoute(hash) || kundenRoute(hash)) {
     syncNav();
     window.scrollTo(0, 0);
   } else if (hash === '#/team') {
@@ -2160,7 +2161,7 @@ function route() {
 window.addEventListener('hashchange', route);
 
 /** Ebene jeder Seite: tiefer = von rechts herein, höher = von links, gleich (Leiste) = leicht von unten */
-const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, editor: 1, payslip: 1, year: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
+const VIEW_DEPTH = { list: 0, stats: 0, team: 0, teamSheet: 1, settings: 0, settingsSub: 1, trips: 1, reports: 1, editor: 1, payslip: 1, year: 1, kunden: 1, trip: 2, report: 2, heft: 1, bhWeek: 2, bhMonth: 2, bhInfo: 2 };
 function pageAnim(from, to) {
   if (!from) return;
   const app = document.getElementById('app');
@@ -2254,6 +2255,7 @@ window.addEventListener('popstate', () => backTarget && location.hash === routed
  */
 const BACK_TARGETS = [
   [/^#\/(lohn|jahr)\//, '#/uebersicht'],
+  [/^#\/kunden$/, '#/uebersicht'],
   [/^#\/arbeitsschein\//, '#/arbeitsscheine'],
   [/^#\/arbeitsscheine$/, '#/einstellungen/scheine'],
   [/^#\/(anleitung|einstellungen\/[a-z]+)$/, '#/einstellungen'], // #/anleitung gab es bis v92
