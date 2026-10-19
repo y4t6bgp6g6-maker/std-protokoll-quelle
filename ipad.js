@@ -373,3 +373,55 @@ showModal = function (box) {
   modal.style.top = `${top}px`;
   modal.style.setProperty('--mac-origin', `${right ? 'right' : 'left'} ${below ? 'top' : 'bottom'}`);
 };
+
+// ───────── Mac: Uhrzeit wählen (statt des Rads) ─────────
+// Klappt am Knopf auf (Klasse actions → showModal oben): Feld zum Tippen (markiert, „730“ oder „7:30“), − / + und ↑ / ↓
+// um einen Schritt, Enter übernimmt; darunter die eigenen häufigsten Zeiten zum Anklicken. Raster und Liste wurden gezeigt
+// und nicht genommen
+/** Die acht am häufigsten eingetragenen Zeiten (Beginn und Ende aller Zettel), sonst übliche */
+function macTimeFavs() {
+  const n = new Map();
+  for (const s of sheets) for (const d of s.days) for (const r of d.rows) for (const m of [r.start, r.end]) if (m != null) n.set(m % 1440, (n.get(m % 1440) || 0) + 1);
+  const top = [...n].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m]) => m);
+  return (top.length >= 4 ? top : [360, 420, 480, 720, 750, 900, 960, 1020]).sort((a, b) => a - b);
+}
+const macTimePickerWheel = timePicker;
+timePicker = function (title, initial, hasValue, onDone, onCancel = null) {
+  if (!document.documentElement.classList.contains('mac')) return macTimePickerWheel(title, initial, hasValue, onDone, onCancel);
+  const step = settings.minuteStep;
+  const snapped = Math.floor((initial % 1440) / step) * step;
+  const modal = openModal(
+    `<div class="mt-head"><b>${title}</b>${hasValue ? '<button class="mt-clear" data-mt-clear>Löschen</button>' : ''}</div>
+    <div class="mt-field"><button class="mt-step" data-mt-step="-1" aria-label="früher">−</button><input class="mt-input" value="${fmtTime(hasValue ? initial % 1440 : snapped)}" inputmode="numeric" autocomplete="off"><button class="mt-step" data-mt-step="1" aria-label="später">+</button></div>
+    <div class="mt-quick">${macTimeFavs().map((m) => `<button class="mt-slot${hasValue && m === snapped ? ' on' : ''}" data-mt="${m}">${fmtTime(m)}</button>`).join('')}</div>`,
+    'actions mt-pop'
+  );
+  if (onCancel) modal.previousElementSibling.addEventListener('click', onCancel);
+  const input = modal.querySelector('.mt-input');
+  const pick = (m) => {
+    closeModal();
+    onDone(hasValue && m === snapped ? initial : m);
+  };
+  const shift = (d) => {
+    const now = macTimeParse(input.value.replace(/[^0-9:.,]/g, '')) ?? snapped;
+    input.value = fmtTime((now + d * step + 1440) % 1440);
+    input.select();
+  };
+  modal.addEventListener('click', (e) => {
+    const s = e.target.closest('[data-mt]');
+    const st = e.target.closest('[data-mt-step]');
+    if (s) pick(Number(s.dataset.mt));
+    else if (e.target.closest('[data-mt-clear]')) closeModal(), onDone(null);
+    else if (st) shift(Number(st.dataset.mtStep));
+  });
+  setTimeout(() => (input.focus(), input.select()), 50);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') e.preventDefault(), shift(e.key === 'ArrowUp' ? 1 : -1);
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const m = macTimeParse(input.value.replace(/[^0-9:.,]/g, ''));
+      if (m != null) pick(m);
+      else input.select();
+    }
+  });
+};
