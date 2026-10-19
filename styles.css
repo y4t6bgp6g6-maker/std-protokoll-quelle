@@ -2067,3 +2067,54 @@ a.s-row:active { background: var(--fill); }
   #dreh-hinweis svg { color: var(--accent); }
   body:has(.sig-canvas) #dreh-hinweis { display: none; }
 }
+
+/* Regel-Seiten (nur Admin, regeln-seiten.js) */
+.rg-intro { margin: -4px 4px 16px; font-size: 15px; line-height: 1.4; color: var(--muted); }
+.rg-list { padding: 0; margin-bottom: 14px; }
+.rg-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; text-decoration: none; }
+.rg-row + .rg-row { border-top: 1px solid var(--sep); }
+.rg-row > span:first-child { flex: 1; }
+.rg-val { color: var(--muted); white-space: nowrap; }
+.rg-row svg, .rg-rrow svg, .kr-row > svg, .sa-row > svg { flex: none; color: var(--muted); }
+.rg-sub { display: block; font-size: 14px; color: var(--muted); }
+.rv-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+.rv-cap { display: inline-flex; align-items: center; padding: 4px 11px; border: 0; border-radius: 15px; background: color-mix(in srgb, var(--c, var(--accent)) 14%, var(--card)); color: var(--c, var(--accent)); font: inherit; font-size: 15px; font-weight: 500; }
+.rv-cap.add { background: none; box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--c, var(--accent)) 45%, transparent); font-weight: 700; padding: 4px 12px; }
+.rv-cap.aus { text-decoration: line-through; background: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c, var(--accent)) 35%, transparent); }
+.rv-to { font-weight: 700; color: var(--c); white-space: nowrap; }
+.rg-rule + .rg-rule { border-top: 1px solid var(--sep); }
+.rg-rrow { display: grid; grid-template-columns: 5px 1fr auto auto; align-items: center; gap: 0 12px; width: 100%; padding: 12px 14px 12px 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.rg-rrow i { align-self: stretch; border-radius: 0 3px 3px 0; background: var(--c); }
+.rg-rrow b { display: block; font-size: 16px; }
+.rg-open { padding: 0 14px 14px 17px; }
+.rg-aus { margin: 10px 0 6px; font-size: 13px; }
+.rg-edit { margin-top: 12px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 600; }
+.rg-add { display: block; width: 100%; padding: 13px 16px; border: 0; border-top: 1px solid var(--sep); background: none; color: var(--accent); font: inherit; font-weight: 600; text-align: left; }
+.rg-list > .rg-add:first-child { border-top: 0; }
+.rg-probe { padding: 12px 14px; margin-bottom: 14px; }
+.rg-probe-in { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+.rg-probe-in input { min-width: 0; padding: 8px 10px; border: 1px solid var(--sep); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 15px; }
+.rg-probe-out { min-height: 22px; font-size: 15px; }
+.rg-probe-out .rg-sub { display: inline; }
+.kr-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px 12px; width: 100%; padding: 12px 14px 12px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.kr-row + .kr-row { border-top: 1px solid var(--sep); }
+.kr-row b { font-size: 16px; }
+.kr-row .rv-caps { grid-column: 1 / -1; }
+.kr-row .rv-cap { padding: 3px 9px; font-size: 14px; }
+.kr-fil { font-size: 13.5px; color: var(--muted); font-weight: 500; }
+.rg-kf { display: grid; gap: 10px; text-align: left; }
+.rg-kf-l { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+.rg-kf select { padding: 9px 10px; border: 1px solid var(--sep); border-radius: 10px; background: var(--bg); color: var(--text); font: inherit; font-size: 16px; }
+.rg-kf .pw-input { margin: 0; }
+.sw-seg { display: flex; margin: 0 0 6px; padding: 3px; border-radius: 12px; background: var(--fill); }
+.sw-seg button { flex: 1; padding: 7px 0; border: 0; border-radius: 9px; background: none; color: var(--muted); font: inherit; font-weight: 600; font-size: 15px; }
+.sw-seg button.on { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.sa-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; }
+.sa-row + .sa-row { border-top: 1px solid var(--sep); }
+.sa-row > span:first-child { flex: 1; min-width: 0; }
+.sa-row small { display: block; font-size: 13px; color: var(--muted); }
+.sw-row { padding: 12px 16px; }
+.sw-row + .sw-row { border-top: 1px solid var(--sep); }
+.rg-gname { display: block; margin-bottom: 7px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 16px; font-weight: 700; }
+.rg-wl { padding: 12px 16px 14px; margin-bottom: 6px; }
+.rg-wl .rg-sub { margin-bottom: 8px; }

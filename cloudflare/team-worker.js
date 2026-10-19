@@ -299,6 +299,20 @@ function currentMonth() {
   return `${p.find((x) => x.type === 'year').value}-${p.find((x) => x.type === 'month').value}`;
 }
 
+// Regeln der App (Arbeitsarten, Kunden-Regeln, Schreibweisen, Ketten): der Admin ändert sie in der App, alle im Team
+// bekommen sie. config 'regeln' = { rev, zeit, regeln }, 'regeln_alt' = die vorigen Fassungen (neueste zuerst)
+const REGELN_MAX = 150_000; // Bytes je Fassung
+const REGELN_KEEP = 20; // so viele frühere Fassungen bleiben (alle zusammen unter ~900 KB je Zeile)
+async function regelnRead(db, key = 'regeln') {
+  try {
+    const row = await db.prepare('SELECT value FROM config WHERE key = ?').bind(key).first();
+    return row ? JSON.parse(row.value) : null;
+  } catch (e) {
+    if (/no such table/i.test(String(e && e.message))) return null;
+    throw e;
+  }
+}
+
 /** Team-Code: auf der Server-Seite änderbar (Tabelle config), sonst das Secret TEAM_CODE.
  *  Kurz zwischengespeichert, damit nicht jede Anfrage die Datenbank fragt (andere Instanzen nehmen den alten Code
  *  danach noch bis zu TEAM_CODE_CACHE ms an) */
@@ -1263,7 +1277,17 @@ export default {
           db.prepare('SELECT id, member, name, text, created FROM posts ORDER BY created DESC LIMIT ?').bind(POSTS_KEEP),
         ]);
         const list = (rows) => rows.results.map((r) => ({ member: r.member, name: r.name, updated: r.updated, sheets: JSON.parse(r.data) }));
-        return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)), trV: AI_TR_V }, 200, h);
+        const regeln = await regelnRead(db);
+        return json({ month, members: list(cur), prev: { month: prevMonth, members: list(prev) }, posts: posts.results, spellV: await spellVersion(await loadDict(db)), trV: AI_TR_V, regelnRev: regeln ? regeln.rev : 0 }, 200, h);
+      }
+      // Regeln holen (wie /team nur mit Konto); die App fragt nur, wenn regelnRev sich geändert hat
+      if (path === '/regeln' && req.method === 'GET') {
+        const acc = await checkAccount(db, headerUser(req), req.headers.get('X-Auth'), clientIp(req));
+        if (acc.error === 'id') return json({ error: 'konto' }, 403, h);
+        if (acc.error) return json({ error: acc.error }, acc.status, h);
+        const devErr = await deviceError(db, acc, req.headers.get('X-Token'));
+        if (devErr) return json({ error: devErr }, 403, h);
+        return json((await regelnRead(db)) || { rev: 0 }, 200, h);
       }
 
       if (path === '/post' && (req.method === 'POST' || req.method === 'DELETE')) {
@@ -1430,7 +1454,7 @@ export default {
         return json({ ok: true }, 200, h);
       }
 
-      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias' || path === '/code' || path === '/sync-switch') {
+      if (path === '/errors' || path === '/push' || path === '/dict' || path === '/member' || path === '/account' || path === '/alias' || path === '/code' || path === '/sync-switch' || path === '/regeln' || path === '/regeln-alt') {
         // Nur für den Admin: falscher Code wie beim Team-Code mit kurzer Pause
         if (!sameCode(req.headers.get('X-Admin-Code'), env.ADMIN_CODE)) {
           await new Promise((r) => setTimeout(r, 400));
@@ -1490,6 +1514,32 @@ export default {
           teamCodeCache = { code, at: Date.now() };
           return json({ code }, 200, h);
         }
+        // Regeln speichern: base = bekannte rev (zwei Admin-Geräte gleichzeitig → abgelehnt mit der Server-Fassung)
+        if (path === '/regeln' && req.method === 'PUT') {
+          const body = await readBody(req);
+          const regeln = body && body.regeln;
+          if (!regeln || typeof regeln !== 'object' || Array.isArray(regeln)) return json({ error: 'regeln' }, 400, h);
+          const text = JSON.stringify(regeln);
+          if (text.length > REGELN_MAX) return json({ error: 'size' }, 413, h);
+          await db.prepare('CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL)').run();
+          const cur = await regelnRead(db);
+          const rev = cur ? cur.rev : 0;
+          if (Number(body.base) !== rev) return json({ error: 'rev', ...(cur || { rev: 0 }) }, 409, h);
+          const next = { rev: rev + 1, zeit: Date.now(), regeln };
+          const alt = cur ? [cur, ...((await regelnRead(db, 'regeln_alt')) || [])] : (await regelnRead(db, 'regeln_alt')) || [];
+          // so viele frühere Fassungen, wie zusammen in eine Zeile passen
+          const keep = [];
+          let bytes = 0;
+          for (const a of alt.slice(0, REGELN_KEEP)) {
+            bytes += JSON.stringify(a).length;
+            if (bytes > 850_000) break;
+            keep.push(a);
+          }
+          const put = "INSERT INTO config (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
+          await db.batch([db.prepare(put).bind('regeln', JSON.stringify(next)), db.prepare(put).bind('regeln_alt', JSON.stringify(keep))]);
+          return json({ rev: next.rev, zeit: next.zeit }, 200, h);
+        }
+        if (path === '/regeln-alt' && req.method === 'GET') return json({ alt: (await regelnRead(db, 'regeln_alt')) || [] }, 200, h);
         if (path === '/alias' && (req.method === 'PUT' || req.method === 'DELETE')) {
           const body = await readBody(req);
           const key = String(body.key ?? '');

@@ -578,6 +578,8 @@ async function teamLoad() {
       aiSpellReset(data.spellV);
       saveAi();
     }
+    // Regeln (Seite „Regeln“ des Admins) auf dem Server geändert: neu holen (kunden.js)
+    if (data.regelnRev != null) regelnPruefen(data.regelnRev);
     // Übersetzungs-Anweisung auf dem Server geändert: gemerkte Übersetzungen verwerfen
     if (data.trV && data.trV !== aiStore.trV) {
       aiStore.tr = { de: {}, ru: {} };

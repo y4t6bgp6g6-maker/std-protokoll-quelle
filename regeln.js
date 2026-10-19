@@ -118,6 +118,45 @@ const REGELN = {
     ]
    },
    {
+    "id": "kundenregeln",
+    "typ": "kundenregeln",
+    "titel": "Kunden-Regeln",
+    "text": "Nur auf dem Server (in der App bearbeiten), weil sie Kundennamen enthalten.",
+    "regeln": []
+   },
+   {
+    "id": "schreibweisen",
+    "typ": "schreibweisen",
+    "titel": "Schreibweisen",
+    "text": "Allgemeine Regeln und Gleiche Namen. In der App bearbeiten; hier nur die Vorgaben.",
+    "kunden": {
+     "allgemein": {
+      "gross": true,
+      "akzente": true,
+      "satz": true,
+      "strasse": true,
+      "hausnr": true,
+      "ortHinten": true,
+      "ortVorne": true,
+      "komma": "leer",
+      "orteNie": true,
+      "tipp": "5/12",
+      "artikel": true
+     },
+     "gruppen": []
+    },
+    "taetigkeiten": {
+     "allgemein": {
+      "gross": true,
+      "umlaute": true,
+      "wortteil": true,
+      "bindestrich": false,
+      "tipp": "aus"
+     },
+     "gruppen": []
+    }
+   },
+   {
     "id": "stunden",
     "typ": "text",
     "titel": "Stunden",

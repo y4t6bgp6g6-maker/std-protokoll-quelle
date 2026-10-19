@@ -47,7 +47,7 @@ async function adminRequest(method, path, body, code = admin && admin.code) {
     cache: 'no-store',
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || 'fehler'), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || 'fehler'), { status: res.status, data });
   return data;
 }
 
@@ -125,6 +125,7 @@ function renderFehler(full = false) {
     ${adminUsageHTML(adminUsage)}
     ${adminTeamHTML(adminTeam, adminAccounts)}
     ${adminCodeHTML(adminCode)}
+    ${regelnEintragHTML()}
     ${adminOpenHTML(adminOpen)}
     <h2 class="section-title">Fehlerberichte</h2>
     <label class="card fb-row fb-push">

@@ -14,56 +14,235 @@ const ARTEN = [
 const kdNorm = (s) => String(s ?? '').toLowerCase().replace(/ß/g, 'ss').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 /** Für die Regeln auch „ae/oe/ue“ wie ä/ö/ü: „Störung“ = „Stoerung“ = „Storung“ */
 const kdArtNorm = (s) => kdNorm(String(s ?? '').toLowerCase().replace(/([aou])e/g, '$1'));
-// Die Regeln selbst stehen in regeln.js (REGELN.arbeitsarten), erzeugt vom Regel-Werkzeug aus
-// „Regeln und Logiken/Arbeitsarten-und-Kunden.json“ außerhalb des Repos – dort ändern, nicht hier.
-const kdRegel = (id) => REGELN.arbeitsarten.abschnitte.find((a) => a.id === id);
+// Regeln: vom Server (der Admin ändert sie in der App, alle im Team bekommen sie; gemerkt unter REGELN_KEY) oder –
+// bis dahin und ohne Team – regeln.js (REGELN, erzeugt vom Regel-Werkzeug am Mac aus „Regeln und Logiken/*.json“).
+// Abschnitte, die die Server-Fassung nicht kennt, kommen aus regeln.js.
+const REGELN_KEY = 'stdprotokoll.regeln.v1';
+let regelnServer = null; // { rev, zeit, regeln }
+try {
+  regelnServer = JSON.parse(localStorage.getItem(REGELN_KEY) || 'null');
+} catch {}
+const regelnAktiv = () => (regelnServer?.regeln?.arbeitsarten?.abschnitte ? regelnServer.regeln : REGELN);
+const kdRegelIn = (regeln, id) =>
+  regeln.arbeitsarten.abschnitte.find((a) => a.id === id) || REGELN.arbeitsarten.abschnitte.find((a) => a.id === id);
+const kdRegel = (id) => kdRegelIn(regelnAktiv(), id);
+const kdEscRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/**
- * Regelliste → Funktion Zeile → { art, regel (Nummer ab 0, -1 = keine), wort }. Regeln von oben nach unten, die
- * erste passende gilt. Wörter als Wortteil („teil“) oder am Anfang des Feldes („anfang“); Ausnahmen werden vor dem
- * Vergleich aus dem Text genommen („angebracht“ zählt nicht als „gebracht“). Auch für das Regel-Werkzeug.
- */
-function artMatcher(def) {
-  const rules = def.regeln.map((g) => ({
-    ...g,
-    w: g.woerter.map((x) => kdArtNorm(x).trim()).filter(Boolean),
-    x: (g.ausnahmen || []).map((x) => kdArtNorm(x).trim()).filter(Boolean),
-  }));
-  return (r) => {
-    for (let i = 0; i < rules.length; i++) {
-      const g = rules[i];
-      let t = kdArtNorm(g.feld === 'baustelle' ? r.site : r.work);
-      for (const x of g.x) t = t.split(x).join(' ');
-      const wort = g.wie === 'anfang' ? g.w.find((w) => t.replace(/^[^\p{L}\p{N}]+/u, '').startsWith(w)) : g.w.find((w) => t.includes(w));
-      if (wort) return { art: g.ziel, regel: i, wort };
-    }
-    return { art: def.sonst, regel: -1, wort: '' };
+// Allgemeine Schreibweisen-Regeln (Seite „Schreibweisen“); Vorgabe = Verhalten bis v139
+const SW_KUNDEN = { gross: true, akzente: true, satz: true, strasse: true, hausnr: true, ortHinten: true, ortVorne: true, komma: 'leer', orteNie: true, tipp: '5/12', artikel: true };
+const SW_TAET = { gross: true, umlaute: true, wortteil: true, bindestrich: false, tipp: 'aus' };
+const swOpt = (sw, teil) => ({ ...(teil === 'kunden' ? SW_KUNDEN : SW_TAET), ...(sw?.[teil]?.allgemein || {}) });
+/** Erlaubte Tippfehler für ein Wort der Länge n: „aus“, „5“ (1 ab 5 Buchstaben), „5/12“ (dazu 2 ab 12) */
+const swTipp = (tipp, n) => {
+  const [a, b] = String(tipp).split('/').map(Number);
+  return b && n >= b ? 2 : a && n >= a ? 1 : 0;
+};
+
+/** Gleiche Namen (Seite „Schreibweisen“): kdKey jeder Schreibweise → erster Name der Gruppe */
+function swGruppen(sw, teil) {
+  const m = new Map();
+  for (const g of sw?.[teil]?.gruppen || []) for (const n of [g.name, ...(g.auch || [])]) if (kdKey(n)) m.set(kdKey(n), g.name);
+  return m;
+}
+
+/** Baustelle zerlegt für den Vergleich (wie teamSiteParts auf der Team-Seite, aber nach den Schreibweisen-Regeln o) */
+function kdSiteParts(name, o) {
+  let s = String(name);
+  if (o.gross) s = s.toLowerCase();
+  if (o.akzente) s = s.replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '');
+  s = s.replace(/['’`´]/g, '');
+  if (o.strasse) s = s.replace(/stra(ss|ß)e/gi, 'str');
+  const core = o.komma === 'ignorieren' ? s.split(',')[0] : s.replace(/,/g, ' ');
+  const nums = o.hausnr ? (core.match(TEAM_SITE_ID) || []).map((x) => x.replace(/\s/g, '')).join(' ') : '';
+  const rest = core.replace(TEAM_SITE_ID, ' ');
+  const ws = rest.match(/\p{L}+/gu) || [];
+  let letters;
+  const ends = [];
+  if (o.satz) {
+    letters = ws.join('');
+    let n = 0;
+    for (const w of ws) ends.push((n += w.length));
+  } else {
+    letters = rest.trim().replace(/\s+/g, ' ');
+    for (const m of letters.matchAll(/\p{L}+/gu)) ends.push(m.index + m[0].length);
+  }
+  return { letters, ends, words: [...new Set(ws.filter((w) => w.length >= 2))], nums };
+}
+/** Gleiche Baustelle? (wie teamSameSite, nach den Schreibweisen-Regeln o) */
+function kdSameSite(a, b, o) {
+  if (a.nums && b.nums && a.nums !== b.nums) return false;
+  if (!a.letters || !b.letters) return a.letters === b.letters && a.nums === b.nums;
+  if (a.letters === b.letters) return true;
+  const [x, y] = a.letters.length <= b.letters.length ? [a, b] : [b, a];
+  const n = x.letters.length;
+  if (o.ortHinten && n >= 4 && y.letters.startsWith(x.letters) && y.ends.includes(n)) return true;
+  if (editDistance(x.letters, y.letters) <= swTipp(o.tipp, n)) return true;
+  if (!o.ortVorne) return false;
+  const [few, many] = a.words.length <= b.words.length ? [a.words, b.words] : [b.words, a.words];
+  const sameWord = (p, q) => p === q || (swTipp(o.tipp, Math.min(p.length, q.length)) >= 1 && editDistance(p, q) <= 1);
+  return few.join('').length >= 4 && few.every((w) => many.some((v) => sameWord(w, v)));
+}
+
+/** Baustelle einer Zeile gehört zum Kunden einer Kunden-Regel ({ kunde, filiale })? Gleiche Namen zuerst, dann
+ *  gleiche Baustelle oder der Kunde (bzw. „Kunde Filiale“) als ganze Wörter am Anfang – so gilt eine Kette für alle
+ *  Filialen –, mit „Ort darf vorne stehen“ auch am Ende */
+function kdKundeMatch(sw) {
+  const o = swOpt(sw, 'kunden');
+  const gruppe = swGruppen(sw, 'kunden');
+  const parts = new Map();
+  const partsOf = (n) => parts.get(n) || (parts.set(n, kdSiteParts(n, o)), parts.get(n));
+  const cache = new Map();
+  return (site, k) => {
+    const key = `${site}\u0000${k.kunde}\u0000${k.filiale || ''}`;
+    if (cache.has(key)) return cache.get(key);
+    const s = gruppe.get(kdKey(site)) || site;
+    const target = k.filiale ? `${k.kunde} ${k.filiale}` : k.kunde;
+    const sw2 = kdKey(s).split(' ');
+    const tw = kdKey(target).split(' ');
+    const starts = tw.every((w, i) => sw2[i] === w);
+    const ends = o.ortVorne && sw2.length > tw.length && tw.every((w, i) => sw2[sw2.length - tw.length + i] === w);
+    const v = !!kdKey(target) && (starts || ends || (gruppe.get(kdKey(target)) || target) === s || kdSameSite(partsOf(s), partsOf(target), o));
+    cache.set(key, v);
+    return v;
   };
 }
-const arbeitsartGrund = artMatcher(kdRegel('arbeitsart'));
-/** Arbeitsart einer Zeile */
-const arbeitsart = (r) => arbeitsartGrund(r).art;
+
+/**
+ * Regelliste → Funktion Zeile → { art, regel (Nummer ab 0, -1 = keine), kunde (Nummer der Kunden-Regel), wort }.
+ * Erst die Kunden-Regeln kr, dann die Regeln von oben nach unten; die erste passende gilt. Wörter als Wortteil
+ * („teil“) oder am Anfang des Feldes („anfang“); Ausnahmen werden vor dem Vergleich aus dem Text genommen
+ * („angebracht“ zählt nicht als „gebracht“); Tätigkeiten nach den Schreibweisen-Regeln sw (Gleiche Namen werden
+ * vorher auf den ersten Namen der Gruppe gebracht). Auch für das Regel-Werkzeug (nur def).
+ */
+function artMatcher(def, sw = null, kr = null) {
+  const o = swOpt(sw, 'taetigkeiten');
+  const base = (s) => {
+    let t = String(s ?? '');
+    if (o.gross) t = t.toLowerCase();
+    if (o.umlaute) t = t.replace(/([aouAOU])e/g, '$1').replace(/ß/g, 'ss').normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return t;
+  };
+  const fin = (t) => (o.bindestrich ? t.replace(/[-‐–\s]+/g, '') : t);
+  const norm = (s) => fin(base(s)).trim();
+  const alias = [];
+  for (const g of sw?.taetigkeiten?.gruppen || [])
+    for (const a of g.auch || []) {
+      const x = base(a).trim();
+      if (x) alias.push([new RegExp(`(^|[^\\p{L}\\p{N}])${kdEscRe(x)}(?=$|[^\\p{L}\\p{N}])`, 'gu'), `$1${base(g.name).trim()}`]);
+    }
+  const work = (s) => {
+    let t = base(s);
+    for (const [re, m] of alias) t = t.replace(re, m);
+    return fin(t);
+  };
+  const hit = (t, w) => {
+    if (o.wortteil ? t.includes(w) : new RegExp(`(^|[^\\p{L}\\p{N}])${kdEscRe(w)}(?=$|[^\\p{L}\\p{N}])`, 'u').test(t)) return true;
+    const k = swTipp(o.tipp, w.length);
+    if (!k || /[^\p{L}]/u.test(w)) return false;
+    // Tippfehler je Wort des Textes (mit „Wortteil genügt“ dessen Anfang in Länge des Regelworts)
+    for (const tok of t.split(/[^\p{L}]+/u)) {
+      if (!tok || tok[0] !== w[0]) continue;
+      const cands = o.wortteil ? [tok.slice(0, w.length), tok.slice(0, w.length + 1), tok.slice(0, w.length - 1)] : [tok];
+      if (cands.some((c) => c && editDistance(c, w) <= k)) return true;
+    }
+    return false;
+  };
+  const rules = def.regeln.map((g) => ({ ...g, w: g.woerter.map(norm).filter(Boolean), x: (g.ausnahmen || []).map(norm).filter(Boolean) }));
+  // Regeln für eine einzelne Filiale vor denen für den ganzen Kunden (sonst kämen sie nie zum Zug); i = Nummer in kr
+  const krs = (kr || [])
+    .map((k, i) => ({ ...k, i, w: (k.woerter || []).map(norm).filter(Boolean) }))
+    .filter((k) => k.kunde)
+    .sort((a, b) => !!b.filiale - !!a.filiale);
+  const kmatch = krs.length ? kdKundeMatch(sw) : null;
+  return (r) => {
+    if (kmatch && r.site)
+      for (let i = 0; i < krs.length; i++) {
+        const k = krs[i];
+        if (!kmatch(r.site, k)) continue;
+        if (!k.w.length) return { art: k.ziel, regel: -1, kunde: k.i, wort: '' };
+        const t = work(r.work);
+        const wort = k.w.find((w) => hit(t, w));
+        if (wort) return { art: k.ziel, regel: -1, kunde: k.i, wort };
+      }
+    for (let i = 0; i < rules.length; i++) {
+      const g = rules[i];
+      let t = g.feld === 'baustelle' ? norm(r.site) : work(r.work);
+      for (const x of g.x) t = t.split(x).join(' ');
+      const wort = g.wie === 'anfang' ? g.w.find((w) => t.replace(/^[^\p{L}\p{N}]+/u, '').startsWith(w)) : g.w.find((w) => hit(t, w));
+      if (wort) return { art: g.ziel, regel: i, kunde: -1, wort };
+    }
+    return { art: def.sonst, regel: -1, kunde: -1, wort: '' };
+  };
+}
 
 /** Ganze Stunden mit Tausenderpunkt: „357 h“ */
 const kdHours = (min) => `${Math.round(min / 60).toLocaleString('de-DE')} h`;
 /** Schlüssel eines Namens (für settings.kunden): Wörter klein, ohne Satzzeichen */
 const kdKey = (s) => kdNorm(s).replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
-// Wörter, die allein keine Kette bilden (Branche, Rechtsform, Straße …), Artikel vorne – aus regeln.js
-const kdWordSet = (id) => new Set(kdRegel(id).woerter.map((w) => kdNorm(w).replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean));
-const KD_GENERIC = kdWordSet('kettenwoerter');
-const KD_STREET_ENDS = [...kdWordSet('strassen')];
-const kdStreet = (w) => KD_STREET_ENDS.some((e) => w.endsWith(e));
+/** Aus den gültigen Regeln gebaut (neu bei neuen Regeln vom Server: kdRegelnNeu) */
+function kdKompilieren(regeln = regelnAktiv()) {
+  const ab = (id) => kdRegelIn(regeln, id);
+  const sw = ab('schreibweisen');
+  const set = (id) => new Set(ab(id).woerter.map((w) => kdNorm(w).replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean));
+  return {
+    art: artMatcher(ab('arbeitsart'), sw, ab('kundenregeln')?.regeln),
+    sw,
+    swK: swOpt(sw, 'kunden'),
+    gruppen: swGruppen(sw, 'kunden'),
+    generic: set('kettenwoerter'),
+    streetEnds: [...set('strassen')],
+    article: set('artikel'),
+  };
+}
+let KD = null;
+const kd = () => (KD ||= kdKompilieren());
+/** Neue Regeln (vom Server): neu bauen, Übersicht bzw. Kunden-Seite neu zeichnen */
+function kdRegelnNeu() {
+  KD = null;
+  if (currentView === 'stats') ovcRefresh(null, false);
+  else if (currentView === 'kunden') renderKunden();
+}
+const arbeitsartGrund = (r) => kd().art(r);
+/** Arbeitsart einer Zeile */
+const arbeitsart = (r) => kd().art(r).art;
+
+const kdStreet = (w) => kd().streetEnds.some((e) => w.endsWith(e));
 /** Kette aus diesen Wörtern möglich: mindestens ein Wort ab 3 Buchstaben, das keine Branche/Straße ist */
-const kdChainKeyOk = (words) => words.some((w) => w.length >= 3 && !KD_GENERIC.has(w) && !kdStreet(w) && !/\d/.test(w));
+const kdChainKeyOk = (words) => words.some((w) => w.length >= 3 && !kd().generic.has(w) && !kdStreet(w) && !/\d/.test(w));
 /** Wörter eines Namens: Original und verglichen (ohne Satzzeichen); Komma trennt wie ein Leerzeichen */
-const KD_ARTICLE = kdWordSet('artikel');
 function kdWords(name) {
   const orig = String(name).split(/[\s,]+/).filter(Boolean);
   const pairs = orig.map((o) => [o, kdNorm(o).replace(/[^\p{L}\p{N}]/gu, '')]).filter((p) => p[1]);
   // Artikel vorne zählen nicht („The Muster“ = „Muster, Musterstadt“)
-  while (pairs.length > 1 && KD_ARTICLE.has(pairs[0][1])) pairs.shift();
+  if (kd().swK.artikel) while (pairs.length > 1 && kd().article.has(pairs[0][1])) pairs.shift();
   return { orig: pairs.map((p) => p[0]), norm: pairs.map((p) => p[1]) };
+}
+
+/** Regeln vom Server holen, wenn sich ihre Fassung geändert hat (rev aus GET /team) */
+async function regelnPruefen(rev) {
+  if (rev === (regelnServer ? regelnServer.rev : 0) || regelnPruefen.busy) return;
+  if (!rev) {
+    regelnServer = null;
+    regelnMerken();
+    return kdRegelnNeu();
+  }
+  regelnPruefen.busy = true;
+  try {
+    const d = await teamRequest('GET', '/regeln');
+    if (d && d.rev && d.regeln) {
+      regelnServer = { rev: d.rev, zeit: d.zeit, regeln: d.regeln };
+      regelnMerken();
+      kdRegelnNeu();
+    }
+  } catch {}
+  regelnPruefen.busy = false;
+}
+function regelnMerken() {
+  try {
+    if (regelnServer) localStorage.setItem(REGELN_KEY, JSON.stringify(regelnServer));
+    else localStorage.removeItem(REGELN_KEY);
+  } catch {}
 }
 
 /** Kunden-Einstellung (nie undefined zurück, aber erst beim Ändern gespeichert) */
@@ -83,7 +262,7 @@ function kundenFacts(year) {
     s.days.forEach((d, i) => {
       if (!sheetIsActive(s, i) || !canWork(d)) return;
       const date = sheetDate(s, i);
-      if (date.getFullYear() !== year || date > today) return;
+      if ((year != null && date.getFullYear() !== year) || date > today) return;
       const gross = dayWorked(d);
       if (!gross) return;
       const f = workedNet(d) / gross;
@@ -110,16 +289,29 @@ function kundenFacts(year) {
 function kdGroup(spell) {
   // 1. gleiche Baustelle: zusammen nur, wenn jede Schreibweise der einen Gruppe zu jeder der anderen passt
   const names = [...spell.keys()].sort((a, b) => spell.get(b).min - spell.get(a).min);
-  // anders als auf der Team-Seite zählt der Ort nach dem Komma mit („Muster-Pizza, Nord“ ≠ „Muster-Pizza, Süd“)
-  // und zwei verschiedene Orte hinter dem Komma sind nie dieselbe Baustelle (auch nicht als Tippfehler)
-  const parts = names.map((n) => teamSiteParts(n.replace(/,/g, ' ')));
+  // nach den Schreibweisen-Regeln; Vorgabe: anders als auf der Team-Seite zählt der Ort nach dem Komma mit
+  // („Muster-Pizza, Nord“ ≠ „Muster-Pizza, Süd“) und zwei verschiedene Orte hinter dem Komma sind nie dieselbe
+  // Baustelle (auch nicht als Tippfehler)
+  const o = kd().swK;
+  const parts = names.map((n) => kdSiteParts(n, o));
   // (es sei denn, der eine Ort steht auch im anderen Namen: „Muster, Nord Mitte“ = „Muster Nord, Mitte“)
-  const place = names.map((n) => (n.includes(',') ? kdKey(n.slice(n.lastIndexOf(',') + 1)) : null));
+  const place = names.map((n) => (o.orteNie && o.komma !== 'ignorieren' && n.includes(',') ? kdKey(n.slice(n.lastIndexOf(',') + 1)) : null));
   const full = names.map((n) => ` ${kdKey(n)} `);
   const placeFits = (x, y) => !place[x] || !place[y] || full[y].includes(` ${place[x]} `) || full[x].includes(` ${place[y]} `);
-  const same = (x, y) => placeFits(x, y) && teamSameSite(parts[x], parts[y]);
+  const same = (x, y) => placeFits(x, y) && kdSameSite(parts[x], parts[y], o);
+  // Gleiche Namen (von Hand) gehören von Anfang an zusammen
   const groups = names.map((_, i) => [i]);
   const of = names.map((_, i) => i);
+  const manual = names.map((n) => kd().gruppen.get(kdKey(n)) || null);
+  const firstOf = new Map();
+  names.forEach((n, i) => {
+    if (!manual[i]) return;
+    if (!firstOf.has(manual[i])) return firstOf.set(manual[i], i);
+    const b = firstOf.get(manual[i]);
+    of[i] = b;
+    groups[b].push(i);
+    groups[i] = [];
+  });
   for (let i = 0; i < names.length; i++)
     for (let j = 0; j < i; j++) {
       const a = of[i], b = of[j];
@@ -138,7 +330,7 @@ function kdGroup(spell) {
         min += spell.get(names[x]).min;
         spell.get(names[x]).days.forEach((d) => days.add(d));
       }
-      return { name: names[g[0]], keys: g.map((x) => kdKey(names[x])), min, days };
+      return { name: manual[g.find((x) => manual[x]) ?? -1] || names[g[0]], keys: g.map((x) => kdKey(names[x])), min, days };
     });
 
   // 2. Ketten
@@ -421,6 +613,8 @@ function kdMenu(el) {
             ])
           : kdAskChain(k.name, into),
     },
+    // nur Admin: Kunden-Regel (Seite „Kunden-Regeln“, regeln-seiten.js)
+    ...(admin && team ? [{ label: 'Kunden-Regel anlegen …', run: () => rgKundenRegelFuer(k.name) }] : []),
   ]);
 }
 

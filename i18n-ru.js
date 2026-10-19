@@ -522,5 +522,60 @@ if (LANG === 'ru') {
       [/^(\d{4}) · (\d+) (Kunde|Kunden) · ([\d.]+) h$/, (m, y, n, k, h) => `${y} · ${n} ${pl(n, 'клиент', 'клиента', 'клиентов')} · ${h} ч`],
     ],
   });
-}
 
+  // Regel-Seiten (regeln-seiten.js, nur Admin)
+  i18nAdd({
+    exact: {
+      Regeln: 'Правила', 'Kunden-Regeln': 'Правила клиентов', Schreibweisen: 'Написания', Ketten: 'Сети', 'Frühere Fassungen': 'Прежние версии',
+      'Nach diesen Regeln erkennt die App Arbeitsarten und Kunden. Sie gelten auf allen Geräten im Team.':
+        'По этим правилам приложение определяет виды работ и клиентов. Они действуют на всех устройствах команды.',
+      'Noch die Regeln der App – die erste Änderung lädt sie auf den Server.': 'Пока правила приложения – первое изменение загрузит их на сервер.',
+      'Ordnet jede Zeile einer Arbeitsart zu. Die erste passende Regel gilt. Wirkt auf die Karten „Arbeitsarten“ und „Arbeitsarten pro Monat“ in der Übersicht – auf allen Geräten im Team.':
+        'Относит каждую строку к виду работ. Действует первое подходящее правило. Влияет на карточки «Виды работ» и «Виды работ по месяцам» в обзоре – на всех устройствах команды.',
+      'Gelten für einzelne Kunden vor allen anderen Regeln, z. B. Kunde + Wartung = Kundendienst. Eine Kette gilt mit allen Filialen. Wirkt auf die Arbeitsarten in der Übersicht – auf allen Geräten im Team.':
+        'Действуют для отдельных клиентов раньше всех других правил, например клиент + Wartung = сервис. Сеть – со всеми филиалами. Влияет на виды работ в обзоре – на всех устройствах команды.',
+      'Wann zwei Schreibweisen dasselbe meinen. Wirkt auf Kunden-Karte und -Seite, Ketten, Kunden-Regeln und Arbeitsarten – auf allen Geräten im Team.':
+        'Когда два написания означают одно и то же. Влияет на карточку и страницу клиентов, сети, правила клиентов и виды работ – на всех устройствах команды.',
+      'Wann Kunden mit gleichem Namensanfang zu einer Kette mit Filialen werden. Wirkt auf die Karte und die Seite „Kunden“ – auf allen Geräten im Team.':
+        'Когда клиенты с одинаковым началом названия становятся сетью с филиалами. Влияет на карточку и страницу «Клиенты» – на всех устройствах команды.',
+      'Ausprobieren: Baustelle und Arbeit eintippen': 'Проверить: введите объект и работу', Arbeit: 'Работа',
+      'Zählt nicht als Treffer': 'Не считается совпадением', 'Regel bearbeiten …': 'Изменить правило …', Sonst: 'Иначе',
+      'Regel hinzufügen': 'Добавить правило', 'Kunden-Regel hinzufügen': 'Добавить правило клиента', 'jede Arbeit': 'любая работа',
+      'alle Filialen': 'все филиалы', 'Kunden-Regel': 'Правило клиента', Kunde: 'Клиент', 'Wörter in der Arbeit': 'Слова в работе',
+      Ergebnis: 'Результат', 'leer = jede Arbeit': 'пусто = любая работа', Sichern: 'Сохранить', 'Kunde wählen …': 'Выбрать клиента …',
+      'Erst einen Kunden wählen': 'Сначала выберите клиента', Allgemein: 'Общие', 'Gleiche Namen': 'Одинаковые названия',
+      'Gruppe hinzufügen': 'Добавить группу', Tätigkeiten: 'Работы', 'Groß-/Kleinschreibung egal': 'Регистр не важен',
+      'Akzente und Umlaute egal': 'Акценты и умлауты не важны', 'Satzzeichen und Leerzeichen egal': 'Знаки и пробелы не важны',
+      'Hausnummern müssen gleich sein': 'Номера домов должны совпадать', 'Ort darf hinten fehlen': 'Город в конце можно опустить',
+      'Ort darf vorne stehen': 'Город может стоять в начале', Komma: 'Запятая', 'Verschiedene Orte nie gleich': 'Разные города – не одно и то же',
+      Tippfehler: 'Опечатки', 'Artikel vorne egal': 'Артикль в начале не важен', 'Umlaute egal': 'Умлауты не важны',
+      'Wortteil genügt': 'Достаточно части слова', 'Bindestrich und Leerzeichen egal': 'Дефис и пробел не важны',
+      'wie Leerzeichen': 'как пробел', 'Ort dahinter ignorieren': 'город после неё не учитывать', aus: 'выкл.',
+      '1 ab 5 Buchstaben': '1 от 5 букв', '1 ab 5, 2 ab 12 Buchstaben': '1 от 5, 2 от 12 букв', '1 ab 5, 2 ab 10 Buchstaben': '1 от 5, 2 от 10 букв',
+      'Bilden keine Kette': 'Не образуют сеть', 'Branche, Rechtsform, Füllwörter – ganze Wörter.': 'Отрасль, правовая форма, служебные слова – целые слова.',
+      'Artikel vorne': 'Артикли в начале', 'Am Anfang eines Namens übersprungen.': 'В начале названия пропускаются.', Straßen: 'Улицы',
+      'Wörter mit diesen Enden bilden keine Kette.': 'Слова с такими окончаниями не образуют сеть.',
+      'Umbenennen …': 'Переименовать …', 'Gruppe löschen': 'Удалить группу', 'Nach oben': 'Вверх', 'Nach unten': 'Вниз',
+      'Regel löschen': 'Удалить правило', 'Regel löschen?': 'Удалить правило?', 'Name der Regel': 'Название правила', 'Neue Regel': 'Новое правило',
+      Name: 'Название', 'Wörter hinzufügen': 'Добавить слова', 'Ausnahmen hinzufügen': 'Добавить исключения', 'mehrere mit Komma': 'несколько через запятую',
+      'Andere Schreibweisen': 'Другие написания', Tätigkeit: 'Работа', 'Fassung zurückholen?': 'Вернуть версию?', Zurückholen: 'Вернуть',
+      'Noch keine früheren Fassungen': 'Прежних версий пока нет', 'Auf einem anderen Gerät geändert – neu geladen': 'Изменено на другом устройстве – загружено заново',
+      'Nicht gespeichert': 'Не сохранено', 'Keine Verbindung – nicht gespeichert': 'Нет связи – не сохранено', 'Kunden-Regel anlegen …': 'Создать правило клиента …',
+      'Arbeit enthält': 'Работа содержит', 'Baustelle enthält': 'Объект содержит', 'Baustelle beginnt mit': 'Объект начинается с',
+    },
+    patterns: [
+      [/^(\d+) Bereiche$/, (m, n) => `${n} ${pl(n, 'раздел', 'раздела', 'разделов')}`],
+      [/^(\d+) (Regel|Regeln)$/, (m, n) => `${n} ${pl(n, 'правило', 'правила', 'правил')}`],
+      [/^(\d+) (Gruppe|Gruppen)$/, (m, n) => `${n} ${pl(n, 'группа', 'группы', 'групп')}`],
+      [/^(\d+) Listen$/, (m, n) => `${n} ${pl(n, 'список', 'списка', 'списков')}`],
+      [/^(Arbeit|Baustelle) (enthält|beginnt mit) · (\d+) (Wort|Wörter)$/, (m, f, w, n) => `${f === 'Arbeit' ? 'Работа' : 'Объект'} ${w === 'enthält' ? 'содержит' : 'начинается с'} · ${n} ${pl(n, 'слово', 'слова', 'слов')}`],
+      [/^Fassung (\d+) vom (.+) Uhr$/, 'Версия $1 от $2'],
+      [/^Fassung (\d+) · (.+) Uhr$/, 'Версия $1 · $2'],
+      [/^Ergebnis: (.+) …$/, (m, x) => `Результат: ${tr(x)} …`],
+      [/^Prüft: (Arbeit|Baustelle) (enthält|beginnt mit) …$/, (m, f, w) => `Проверяет: ${f === 'Arbeit' ? 'работа' : 'объект'} ${w === 'enthält' ? 'содержит' : 'начинается с'} …`],
+      [/^„(.+)“ löschen$/, 'Удалить «$1»'],
+      [/^Nach (\d+)\. (.+)$/, 'В $1. $2'],
+      [/^Die Regeln von (.+) Uhr gelten dann wieder für alle im Team\.$/, 'Правила от $1 снова будут действовать для всей команды.'],
+    ],
+  });
+}
